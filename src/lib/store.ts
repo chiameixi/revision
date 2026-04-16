@@ -1,0 +1,124 @@
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import type {
+  ProjectState,
+  Asset,
+  Generation,
+  Highlight,
+  ResultCard,
+} from "@/types";
+
+const STORAGE_KEY = "design_workspace_v0";
+
+const DEFAULT_STATE: ProjectState = {
+  title: "Untitled Project",
+  brief: "",
+  assets: [],
+  generations: [],
+  highlights: [],
+};
+
+function loadFromStorage(): ProjectState {
+  if (typeof window === "undefined") return DEFAULT_STATE;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return DEFAULT_STATE;
+    return JSON.parse(raw) as ProjectState;
+  } catch {
+    return DEFAULT_STATE;
+  }
+}
+
+function saveToStorage(state: ProjectState): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // Storage full — silently degrade
+  }
+}
+
+export function useProject() {
+  const [state, setState] = useState<ProjectState>(DEFAULT_STATE);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    setState(loadFromStorage());
+    setReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (ready) saveToStorage(state);
+  }, [state, ready]);
+
+  const update = useCallback(
+    (fn: (prev: ProjectState) => ProjectState) => setState(fn),
+    []
+  );
+
+  const actions = {
+    setTitle: (title: string) => update((s) => ({ ...s, title })),
+    setBrief: (brief: string) => update((s) => ({ ...s, brief })),
+
+    addAsset: (asset: Asset) =>
+      update((s) => ({ ...s, assets: [...s.assets, asset] })),
+    removeAsset: (id: string) =>
+      update((s) => ({ ...s, assets: s.assets.filter((a) => a.id !== id) })),
+    updateAssetNote: (id: string, note: string) =>
+      update((s) => ({
+        ...s,
+        assets: s.assets.map((a) => (a.id === id ? { ...a, note } : a)),
+      })),
+
+    addGeneration: (gen: Generation) =>
+      update((s) => ({ ...s, generations: [gen, ...s.generations] })),
+
+    saveHighlight: (card: ResultCard) =>
+      update((s) => {
+        if (s.highlights.some((h) => h.card.id === card.id)) return s;
+        const newH: Highlight = {
+          id: crypto.randomUUID(),
+          card,
+          note: "",
+          pinned: false,
+          orderIndex: s.highlights.length,
+          includeInNextCall: true,
+        };
+        return { ...s, highlights: [...s.highlights, newH] };
+      }),
+
+    removeHighlight: (id: string) =>
+      update((s) => ({
+        ...s,
+        highlights: s.highlights.filter((h) => h.id !== id),
+      })),
+
+    toggleHighlightInclude: (id: string) =>
+      update((s) => ({
+        ...s,
+        highlights: s.highlights.map((h) =>
+          h.id === id ? { ...h, includeInNextCall: !h.includeInNextCall } : h
+        ),
+      })),
+
+    toggleHighlightPin: (id: string) =>
+      update((s) => ({
+        ...s,
+        highlights: s.highlights.map((h) =>
+          h.id === id ? { ...h, pinned: !h.pinned } : h
+        ),
+      })),
+
+    updateHighlightNote: (id: string, note: string) =>
+      update((s) => ({
+        ...s,
+        highlights: s.highlights.map((h) =>
+          h.id === id ? { ...h, note } : h
+        ),
+      })),
+
+    clearGenerations: () => update((s) => ({ ...s, generations: [] })),
+  };
+
+  return { state, actions, ready };
+}

@@ -1,0 +1,27 @@
+[VISUAL_VARIATIONS]
+i am trying to come up with a design concept for [A CONCEPT]. i want you to analyse the attached image according to arnheim's 10 dimensions listed below for its effectiveness or ineffectiveness in conveying the theme
+
+- balance
+		- summary: what is the structural skeleton/spatial relation of a scene? what is the proper distance between objects? psychological and physical balance? visual weight of components? direction, equilibrium, movement
+		- importance:
+			- establishes the relationship between "forces in a visual system", making an artist's statement unambiguous
+			- highlights what is important and worth noticing
+	- shape
+		- how can we represent something to give it the illusion of shape
+		- *Recent psychological thinking, then, encourages us to call vision a creative activity of the human mind. Perceiving accomplishes at the sensory level what in the realm of reasoning is known as understanding. Every man's eyesight anticipates in a modest way the justly admired capacity of the artist to produce patterns that validly interpret experience by means of organized form. Eye­ sight is insight.*
+	- form
+		- *shapes the visual qualities of roundness or sharpness, strength or frailty, harmony or discord. It thereby reads them symbolically as images of the human condition. In fact, these purely visual qualities of appearance are the most powerful of all*
+	- growth
+		- intellectualistic theory: *drawings of children as well as other art at early stages are derived from a non-visual source, namely from "abstract" concepts.*
+		- visual thinking progresses from general forms -> specific ones and reflects something about the observer
+	- space
+	- light
+		- lets us understand how to create depth and volume
+	- color
+		- symbolic meaning, distinguish shapes
+	- dynamics
+		- sense of movement
+	- expression
+
+[CONCEPTUAL_VARIATIONS]
+perform a quick analysis of this illustration, and come up with possible concepts and visuals that the image used for expressing this theme and possible extensions for both concepts and visuals to create more variations of the illustrations for the same theme
