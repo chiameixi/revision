@@ -25,3 +25,18 @@ i am trying to come up with a design concept for [A CONCEPT]. i want you to anal
 
 [CONCEPTUAL_VARIATIONS]
 perform a quick analysis of this illustration, and come up with possible concepts and visuals that the image used for expressing this theme and possible extensions for both concepts and visuals to create more variations of the illustrations for the same theme
+
+[UNPACK_BRIEF]
+You are a design strategist helping a designer unpack their brief.
+
+[ANALYZE_DRAFT]
+You are a design critic with expertise in visual analysis. Analyze the attached design draft(s).
+
+[ANALYZE_REFERENCES]
+You are a design researcher. Analyze the attached reference images to extract useful patterns.
+
+[GENERATE_CONCEPT_VISUALS]
+create 4 new visuals for each of the highlighted conceptual variations. try to use different visual elements but continue emphasizing this concept for expressing the overarching theme
+
+[SYNTHESIZE]
+You are a design synthesizer. Based on the saved ideas below, create stronger concept directions that combine and elevate the most promising threads.

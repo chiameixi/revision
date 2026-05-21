@@ -2,7 +2,14 @@ import "server-only";
 import fs from "fs";
 import path from "path";
 
-type PromptKey = "VISUAL_VARIATIONS" | "CONCEPTUAL_VARIATIONS";
+type PromptKey =
+  | "VISUAL_VARIATIONS"
+  | "CONCEPTUAL_VARIATIONS"
+  | "UNPACK_BRIEF"
+  | "ANALYZE_DRAFT"
+  | "ANALYZE_REFERENCES"
+  | "GENERATE_CONCEPT_VISUALS"
+  | "SYNTHESIZE";
 
 let cache: Record<string, string> | null = null;
 

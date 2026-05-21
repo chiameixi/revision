@@ -161,7 +161,7 @@ const insightSchema = {
 };
 
 async function handleUnpackBrief(req: GenerateRequest, log: BatchLogger): Promise<InsightCard[]> {
-  const prompt = `You are a design strategist helping a designer unpack their brief.
+  const prompt = `${getPrompt("UNPACK_BRIEF")}
 
 Design Brief:
 ${req.brief || "(none provided)"}
@@ -195,7 +195,7 @@ Generate 5–8 insights covering: design goals, constraints, tensions or ambigui
 async function handleAnalyzeDraft(req: GenerateRequest, log: BatchLogger): Promise<InsightCard[]> {
   if (!req.draftDataUrls.length) throw new Error("No draft images provided.");
 
-  const prompt = `You are a design critic with expertise in visual analysis. Analyze the attached design draft(s).
+  const prompt = `${getPrompt("ANALYZE_DRAFT")}
 
 Design Context:
 ${req.brief || "(none provided)"}
@@ -229,7 +229,7 @@ Generate 5–8 insights covering: what the draft does well, missing opportunitie
 async function handleAnalyzeReferences(req: GenerateRequest, log: BatchLogger): Promise<InsightCard[]> {
   if (!req.referenceDataUrls.length) throw new Error("No reference images provided.");
 
-  const prompt = `You are a design researcher. Analyze the attached reference images to extract useful patterns.
+  const prompt = `${getPrompt("ANALYZE_REFERENCES")}
 
 Design Context:
 ${req.brief || "(none provided)"}
@@ -473,7 +473,7 @@ const conceptSchema = {
 async function handleSynthesize(req: GenerateRequest, log: BatchLogger): Promise<ConceptCard[]> {
   if (!req.highlightSummaries.length) throw new Error("No saved highlights to synthesize.");
 
-  const prompt = `You are a design synthesizer. Based on the saved ideas below, create stronger concept directions that combine and elevate the most promising threads.
+  const prompt = `${getPrompt("SYNTHESIZE")}
 
 Design Context:
 ${req.brief || "(none provided)"}
@@ -544,7 +544,7 @@ async function handleGenerateConceptVisuals(req: GenerateRequest, log: BatchLogg
       const safeName = card.title.slice(0, 30).replace(/\W+/g, "_");
       const cardDir = log.subdir(safeName);
 
-      const prompt = `create 4 new visuals for each of the highlighted conceptual variations. try to use different visual elements but continue emphasizing this concept for expressing the overarching theme
+      const prompt = `${getPrompt("GENERATE_CONCEPT_VISUALS")}
 
 Conceptual variation: "${card.title}"
 Core idea: ${card.coreIdea}
