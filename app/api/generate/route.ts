@@ -192,58 +192,36 @@ Generate 5–8 insights covering: design goals, constraints, tensions or ambigui
   return cards;
 }
 
-async function handleAnalyzeDraft(req: GenerateRequest, log: BatchLogger): Promise<InsightCard[]> {
-  if (!req.draftDataUrls.length) throw new Error("No draft images provided.");
+async function handleAnalyze(req: GenerateRequest, log: BatchLogger): Promise<InsightCard[]> {
+  const allImages = [...req.draftDataUrls, ...req.referenceDataUrls];
+  if (!allImages.length) throw new Error("No images provided for analysis.");
 
-  const prompt = `${getPrompt("ANALYZE_DRAFT")}
+  const hasDrafts = req.draftDataUrls.length > 0;
+  const hasRefs = req.referenceDataUrls.length > 0;
 
-Design Context:
-${req.brief || "(none provided)"}
-${buildHighlightContext(req.highlightSummaries)}${buildUserInstructions(req.userInstructions)}
-Examine the draft carefully. Return a JSON object with an "insights" array. Each insight has: title (3–6 words), summary (1–2 sentences), evidence (specific visual observations — what you actually see), implication (what this means for the design direction).
+  const contextNote = hasDrafts && hasRefs
+    ? `You are looking at ${req.draftDataUrls.length} draft image(s) followed by ${req.referenceDataUrls.length} reference image(s).`
+    : hasDrafts
+    ? `You are looking at ${req.draftDataUrls.length} draft image(s).`
+    : `You are looking at ${req.referenceDataUrls.length} reference image(s).`;
 
-Generate 5–8 insights covering: what the draft does well, missing opportunities, inferred design priorities, weaknesses or blind spots, and next directions.`;
+  const prompt = `You are an expert design critic analyzing visual design assets.
 
-  log.write("request.json", { model: JSON_MODEL, imageCount: req.draftDataUrls.length, prompt });
-
-  const startedAt = nowIso();
-  const { result: data, rawText } = await generateJson<{
-    insights: Omit<InsightCard, "id" | "type" | "createdAt">[];
-  }>(prompt, insightSchema, req.draftDataUrls);
-  const endedAt = nowIso();
-
-  log.write("response.json", { rawText });
-
-  const cards = (data.insights ?? []).map((item) => ({
-    id: crypto.randomUUID(),
-    type: "insight" as const,
-    createdAt: new Date().toISOString(),
-    ...item,
-  }));
-
-  log.write("result.json", cards);
-  log.write("timing.json", { startedAt, endedAt, durationSeconds: msDiff(startedAt, endedAt) });
-  return cards;
-}
-
-async function handleAnalyzeReferences(req: GenerateRequest, log: BatchLogger): Promise<InsightCard[]> {
-  if (!req.referenceDataUrls.length) throw new Error("No reference images provided.");
-
-  const prompt = `${getPrompt("ANALYZE_REFERENCES")}
+${contextNote}
 
 Design Context:
 ${req.brief || "(none provided)"}
 ${buildHighlightContext(req.highlightSummaries)}${buildUserInstructions(req.userInstructions)}
-Return a JSON object with an "insights" array. Each insight has: title (3–6 words), summary (1–2 sentences), evidence (specific observations from the references), implication (how this could be applied to the design).
+Analyze all provided images together. Return a JSON object with an "insights" array. Each insight has: title (3–6 words), summary (1–2 sentences), evidence (specific visual observations — what you actually see), implication (what this means for the design direction).
 
-Generate 5–8 insights covering: reusable patterns, noteworthy layout or interaction ideas, stylistic cues, what seems worth borrowing, and what may be risky to overcopy.`;
+Generate 6–9 insights covering: strengths, weaknesses or blind spots, missing opportunities, inferred design priorities, reusable patterns or ideas worth borrowing, and concrete next directions.`;
 
-  log.write("request.json", { model: JSON_MODEL, imageCount: req.referenceDataUrls.length, prompt });
+  log.write("request.json", { model: JSON_MODEL, imageCount: allImages.length, prompt });
 
   const startedAt = nowIso();
   const { result: data, rawText } = await generateJson<{
     insights: Omit<InsightCard, "id" | "type" | "createdAt">[];
-  }>(prompt, insightSchema, req.referenceDataUrls);
+  }>(prompt, insightSchema, allImages);
   const endedAt = nowIso();
 
   log.write("response.json", { rawText });
@@ -644,12 +622,12 @@ Generate a 2×2 panel of 4 distinct visuals. Each visual should use clearly diff
 
 const handlers: Record<ActionType, (req: GenerateRequest, log: BatchLogger) => Promise<ResultCard[]>> = {
   unpack_brief: handleUnpackBrief,
-  analyze_draft: handleAnalyzeDraft,
-  analyze_references: handleAnalyzeReferences,
+  analyze: handleAnalyze,
   visual_variations: handleVisualVariations,
   conceptual_variations: handleConceptualVariations,
   generate_concept_visuals: handleGenerateConceptVisuals,
   synthesize: handleSynthesize,
+  user_added: async () => [],
 };
 
 export async function POST(request: NextRequest): Promise<NextResponse<GenerateResponse>> {

@@ -1,7 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import type { ActionType, ConceptualVariationCard, Generation, ResultCard } from "@/types";
 import ResultCardComponent from "./cards/ResultCard";
+import TreeView from "./TreeView";
+import ClusterView from "./ClusterView";
 
 interface Props {
   generations: Generation[];
@@ -11,13 +14,15 @@ interface Props {
   onActionClick: (action: ActionType) => void;
   onSaveCard: (card: ResultCard) => void;
   onDismissCard: (genId: string, cardId: string) => void;
+  onUpdateCard: (card: ResultCard) => void;
   onGenerateVisuals: (card: ConceptualVariationCard) => void;
+  onBranchFrom: (card: ResultCard, action: ActionType) => void;
+  onAddUserCard: (title: string, body: string) => void;
 }
 
 const TOOLBAR_ACTIONS: { id: ActionType; label: string; desc: string }[] = [
   { id: "unpack_brief", label: "Unpack Brief", desc: "Turn brief into idea directions" },
-  { id: "analyze_draft", label: "Analyze Draft", desc: "Examine your draft" },
-  { id: "analyze_references", label: "Analyze References", desc: "Extract patterns from refs" },
+  { id: "analyze", label: "Analyze", desc: "Examine drafts and references" },
   { id: "visual_variations", label: "Visual Variations", desc: "Arnheim dimension variations" },
   { id: "conceptual_variations", label: "Conceptual Variations", desc: "Deeper concept alternatives" },
   { id: "synthesize", label: "Synthesize", desc: "Combine highlights into concepts" },
@@ -25,12 +30,12 @@ const TOOLBAR_ACTIONS: { id: ActionType; label: string; desc: string }[] = [
 
 const ACTION_LABELS: Record<ActionType, string> = {
   unpack_brief: "Unpack Brief",
-  analyze_draft: "Analyze Draft",
-  analyze_references: "Analyze References",
+  analyze: "Analyze",
   visual_variations: "Visual Variations",
   conceptual_variations: "Conceptual Variations",
   generate_concept_visuals: "Generate Concept Visuals",
   synthesize: "Synthesize",
+  user_added: "Your Idea",
 };
 
 export default function CenterPanel({
@@ -41,38 +46,87 @@ export default function CenterPanel({
   onActionClick,
   onSaveCard,
   onDismissCard,
+  onUpdateCard,
   onGenerateVisuals,
+  onBranchFrom,
+  onAddUserCard,
 }: Props) {
+  const [view, setView] = useState<"feed" | "tree" | "clusters">("feed");
+
   return (
     <main className="flex-1 min-w-0 h-screen flex flex-col overflow-hidden">
       {/* Action toolbar */}
-      <div className="px-5 pt-5 pb-4 border-b border-[#e4e3e0] bg-white">
-        <div className="flex flex-wrap gap-2">
+      <div className="px-5 pt-5 pb-4 border-b bg-white" style={{ borderColor: "#ccc9c0" }}>
+        <div className="flex flex-wrap gap-2 mb-3">
           {TOOLBAR_ACTIONS.map((action) => (
             <button
               key={action.id}
               onClick={() => onActionClick(action.id)}
               disabled={isGenerating}
               title={action.desc}
-              className="text-[12px] font-medium px-3.5 py-1.5 rounded-full border border-[#e4e3e0] text-[#333] hover:border-[#2563eb]/50 hover:text-[#2563eb] hover:bg-blue-50/50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="text-[12px] px-3.5 py-1.5 rounded-sm border border-[#111] text-[#111] bg-white hover:bg-[#111] hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             >
               {action.label}
             </button>
           ))}
         </div>
+        {/* View toggle */}
+        <div className="flex items-center gap-1">
+          {(["feed", "tree", "clusters"] as const).map((v) => (
+            <button
+              key={v}
+              onClick={() => setView(v)}
+              className={`text-[11px] px-3 py-1 rounded-sm border transition-colors capitalize ${
+                view === v
+                  ? "bg-[#111] text-white border-[#111]"
+                  : "text-[#888] border-transparent hover:border-[#ccc] hover:text-[#111]"
+              }`}
+            >
+              {v}
+            </button>
+          ))}
+        </div>
       </div>
 
+      {/* Tree view */}
+      {view === "tree" && (
+        <div className="flex-1 overflow-hidden flex">
+          <TreeView
+            generations={generations}
+            savedCardIds={savedCardIds}
+            onSaveCard={onSaveCard}
+            onBranchFrom={onBranchFrom}
+            onDismissCard={onDismissCard}
+          />
+        </div>
+      )}
+
+      {/* Cluster view */}
+      {view === "clusters" && (
+        <div className="flex-1 overflow-hidden flex">
+          <ClusterView
+            generations={generations}
+            savedCardIds={savedCardIds}
+            onSaveCard={onSaveCard}
+            onBranchFrom={onBranchFrom}
+            onDismissCard={onDismissCard}
+            onAddUserCard={onAddUserCard}
+          />
+        </div>
+      )}
+
+
       {/* Feed */}
-      <div className="flex-1 overflow-y-auto px-5 py-5 flex flex-col gap-6">
+      {view === "feed" && <div className="flex-1 overflow-y-auto px-5 py-5 flex flex-col gap-6">
         {isGenerating && (
-          <div className="flex items-center gap-3 text-sm text-[#888] bg-white border border-[#e4e3e0] rounded-xl px-4 py-3">
-            <span className="inline-block w-4 h-4 border-2 border-[#2563eb] border-t-transparent rounded-full animate-spin" />
+          <div className="flex items-center gap-3 text-sm text-[#555] bg-white border border-[#111] rounded-sm px-4 py-3">
+            <span className="inline-block w-4 h-4 border-2 border-[#111] border-t-transparent rounded-full animate-spin" />
             Running {generatingAction ? ACTION_LABELS[generatingAction] : "generation"}…
           </div>
         )}
 
         {generations.length === 0 && !isGenerating && (
-          <div className="flex flex-col items-center justify-center h-full text-center py-24 text-[#bbb]">
+          <div className="flex flex-col items-center justify-center h-full text-center py-24 text-[#aaa]">
             <p className="text-sm mb-1">Add inputs on the left, then choose an action above.</p>
             <p className="text-xs">Results will appear here as structured cards.</p>
           </div>
@@ -85,10 +139,11 @@ export default function CenterPanel({
             savedCardIds={savedCardIds}
             onSaveCard={onSaveCard}
             onDismissCard={(cardId) => onDismissCard(gen.id, cardId)}
+            onUpdateCard={onUpdateCard}
             onGenerateVisuals={onGenerateVisuals}
           />
         ))}
-      </div>
+      </div>}
     </main>
   );
 }
@@ -98,12 +153,14 @@ function GenerationBlock({
   savedCardIds,
   onSaveCard,
   onDismissCard,
+  onUpdateCard,
   onGenerateVisuals,
 }: {
   gen: Generation;
   savedCardIds: Set<string>;
   onSaveCard: (card: ResultCard) => void;
   onDismissCard: (cardId: string) => void;
+  onUpdateCard: (card: ResultCard) => void;
   onGenerateVisuals: (card: ConceptualVariationCard) => void;
 }) {
   const label = ACTION_LABELS[gen.actionType] ?? gen.actionType;
@@ -139,6 +196,7 @@ function GenerationBlock({
               isSaved={savedCardIds.has(card.id)}
               onSave={() => onSaveCard(card)}
               onDismiss={() => onDismissCard(card.id)}
+              onUpdate={onUpdateCard}
               onGenerateVisuals={onGenerateVisuals}
             />
           ))}

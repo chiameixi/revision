@@ -14,6 +14,7 @@ import type {
   Generation,
   GenerateRequest,
   GenerateResponse,
+  NoteCard,
   ResultCard,
 } from "@/types";
 
@@ -42,6 +43,8 @@ function formatHighlightForContext(h: { card: ResultCard; note: string }): strin
   } else if (card.type === "concept") {
     lines.push(`Core idea: ${card.coreIdea}`);
     lines.push(`Best for: ${card.bestFor}`);
+  } else if (card.type === "note") {
+    if (card.body) lines.push(`Note: ${card.body}`);
   }
   if (h.note) lines.push(`Note: ${h.note}`);
   return lines.join("\n");
@@ -72,10 +75,10 @@ export default function WorkspacePage() {
       let includedDraftIds: string[] = [];
       let includedReferenceIds: string[] = [];
 
-      if (["analyze_draft", "visual_variations", "conceptual_variations"].includes(action)) {
+      if (["analyze", "visual_variations", "conceptual_variations"].includes(action)) {
         includedDraftIds = drafts.map((a) => a.id);
       }
-      if (["analyze_references", "conceptual_variations"].includes(action)) {
+      if (["analyze", "conceptual_variations"].includes(action)) {
         includedReferenceIds = refs.map((a) => a.id);
       }
 
@@ -107,9 +110,11 @@ export default function WorkspacePage() {
         .filter((a) => a.type === "reference" && cfg.includedReferenceIds.includes(a.id))
         .map((a) => a.dataUrl);
 
-      const highlightSummaries = state.highlights
-        .filter((h) => cfg.includedHighlightIds.includes(h.id))
-        .map(formatHighlightForContext);
+      const includedHighlights = state.highlights.filter((h) =>
+        cfg.includedHighlightIds.includes(h.id)
+      );
+      const highlightSummaries = includedHighlights.map(formatHighlightForContext);
+      const sourceCardIds = includedHighlights.map((h) => h.card.id);
 
       const body: GenerateRequest = {
         action: cfg.action,
@@ -137,6 +142,7 @@ export default function WorkspacePage() {
           cards: data.cards ?? [],
           createdAt: new Date().toISOString(),
           error: data.error,
+          sourceCardIds,
         };
         actions.addGeneration(gen);
       } catch (err) {
@@ -173,6 +179,30 @@ export default function WorkspacePage() {
     [state.assets]
   );
 
+  const handleBranchFrom = useCallback(
+    (card: ResultCard, action: ActionType) => {
+      actions.saveHighlight(card);
+      handleActionClick(action);
+    },
+    [actions, handleActionClick]
+  );
+
+  const handleAddNote = useCallback(
+    (title: string, body: string) => {
+      const card: NoteCard = { id: crypto.randomUUID(), type: "note", title, body, createdAt: new Date().toISOString() };
+      actions.saveHighlight(card);
+    },
+    [actions]
+  );
+
+  const handleAddUserCard = useCallback(
+    (title: string, body: string) => {
+      const card: NoteCard = { id: crypto.randomUUID(), type: "note", title, body, createdAt: new Date().toISOString() };
+      actions.addGeneration({ id: crypto.randomUUID(), actionType: "user_added", cards: [card], createdAt: new Date().toISOString() });
+    },
+    [actions]
+  );
+
   const handleDismissCard = useCallback((genId: string, cardId: string) => {
     setDismissed((prev) => {
       const set = new Set(prev[genId] ?? []);
@@ -200,7 +230,7 @@ export default function WorkspacePage() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#f7f6f3]">
+    <div className="flex h-screen overflow-hidden bg-[#f0eeea]">
       <InputsSidebar
         title={state.title}
         brief={state.brief}
@@ -219,7 +249,10 @@ export default function WorkspacePage() {
         onActionClick={handleActionClick}
         onSaveCard={actions.saveHighlight}
         onDismissCard={handleDismissCard}
+        onUpdateCard={actions.updateCard}
         onGenerateVisuals={handleGenerateVisuals}
+        onBranchFrom={handleBranchFrom}
+        onAddUserCard={handleAddUserCard}
       />
 
       <HighlightsPanel
@@ -228,6 +261,9 @@ export default function WorkspacePage() {
         onToggleInclude={actions.toggleHighlightInclude}
         onTogglePin={actions.toggleHighlightPin}
         onUpdateNote={actions.updateHighlightNote}
+        onUpdateCard={actions.updateCard}
+        onDropCard={actions.saveHighlight}
+        onAddNote={handleAddNote}
       />
 
       {composer.open && (

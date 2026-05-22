@@ -117,6 +117,18 @@ export function useProject() {
         ),
       })),
 
+    updateCard: (card: ResultCard) =>
+      update((s) => ({
+        ...s,
+        generations: s.generations.map((gen) => ({
+          ...gen,
+          cards: gen.cards.map((c) => (c.id === card.id ? card : c)),
+        })),
+        highlights: s.highlights.map((h) =>
+          h.card.id === card.id ? { ...h, card } : h
+        ),
+      })),
+
     clearGenerations: () => update((s) => ({ ...s, generations: [] })),
   };
 

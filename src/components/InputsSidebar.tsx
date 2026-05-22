@@ -49,20 +49,20 @@ export default function InputsSidebar({
   }
 
   return (
-    <aside className="w-72 shrink-0 h-screen flex flex-col bg-white border-r border-[#e4e3e0] overflow-y-auto">
+    <aside className="w-72 shrink-0 h-screen flex flex-col bg-white border-r overflow-y-auto" style={{ borderColor: "#ccc9c0" }}>
       {/* Header */}
-      <div className="px-4 pt-5 pb-3 border-b border-[#e4e3e0]">
+      <div className="px-4 pt-5 pb-3 border-b" style={{ borderColor: "#ccc9c0" }}>
         <input
           value={title}
           onChange={(e) => onTitleChange(e.target.value)}
-          className="w-full text-sm font-semibold text-[#111] bg-transparent outline-none placeholder-[#aaa]"
+          className="w-full text-sm text-[#111] bg-transparent outline-none placeholder-[#bbb]"
           placeholder="Project title"
         />
       </div>
 
       {/* Brief */}
-      <section className="px-4 py-4 border-b border-[#e4e3e0]">
-        <label className="text-[10px] font-semibold uppercase tracking-widest text-[#aaa] block mb-2">
+      <section className="px-4 py-4 border-b" style={{ borderColor: "#ccc9c0" }}>
+        <label className="text-[10px] uppercase tracking-widest text-[#888] block mb-2">
           Design Brief
         </label>
         <textarea
@@ -70,35 +70,25 @@ export default function InputsSidebar({
           onChange={(e) => onBriefChange(e.target.value)}
           placeholder="Describe your design challenge, target users, goals, constraints..."
           rows={6}
-          className="w-full text-sm text-[#333] bg-[#fafaf8] border border-[#e4e3e0] rounded-lg px-3 py-2.5 resize-none outline-none focus:border-[#2563eb]/40 placeholder-[#bbb] leading-relaxed"
+          className="w-full text-sm text-[#333] bg-white border border-[#ccc] rounded px-3 py-2.5 resize-none outline-none focus:border-[#111] placeholder-[#bbb] leading-relaxed"
         />
       </section>
 
       {/* Drafts */}
-      <section className="px-4 py-4 border-b border-[#e4e3e0]">
+      <section className="px-4 py-4 border-b" style={{ borderColor: "#ccc9c0" }}>
         <div className="flex items-center justify-between mb-2">
-          <label className="text-[10px] font-semibold uppercase tracking-widest text-[#aaa]">
+          <label className="text-[10px] uppercase tracking-widest text-[#888]">
             Drafts ({drafts.length})
           </label>
-          <button
-            onClick={() => draftInput.current?.click()}
-            className="text-[11px] text-[#2563eb] hover:underline"
-          >
+          <button onClick={() => draftInput.current?.click()} className="text-[11px] text-[#111] underline hover:no-underline">
             + Add
           </button>
         </div>
-        <input
-          ref={draftInput}
-          type="file"
-          accept="image/*"
-          multiple
-          className="hidden"
-          onChange={handleFileUpload("draft")}
-        />
+        <input ref={draftInput} type="file" accept="image/*" multiple className="hidden" onChange={handleFileUpload("draft")} />
         {drafts.length === 0 ? (
           <button
             onClick={() => draftInput.current?.click()}
-            className="w-full border-2 border-dashed border-[#e4e3e0] rounded-lg py-4 text-xs text-[#bbb] hover:border-[#2563eb]/30 hover:text-[#2563eb]/60 transition-colors"
+            className="w-full border-2 border-dashed border-[#ccc] rounded py-4 text-xs text-[#bbb] hover:border-[#111] hover:text-[#555] transition-colors"
           >
             Upload sketches, wireframes, screenshots
           </button>
@@ -110,28 +100,18 @@ export default function InputsSidebar({
       {/* References */}
       <section className="px-4 py-4">
         <div className="flex items-center justify-between mb-2">
-          <label className="text-[10px] font-semibold uppercase tracking-widest text-[#aaa]">
+          <label className="text-[10px] uppercase tracking-widest text-[#888]">
             References ({refs.length})
           </label>
-          <button
-            onClick={() => refInput.current?.click()}
-            className="text-[11px] text-[#2563eb] hover:underline"
-          >
+          <button onClick={() => refInput.current?.click()} className="text-[11px] text-[#111] underline hover:no-underline">
             + Add
           </button>
         </div>
-        <input
-          ref={refInput}
-          type="file"
-          accept="image/*"
-          multiple
-          className="hidden"
-          onChange={handleFileUpload("reference")}
-        />
+        <input ref={refInput} type="file" accept="image/*" multiple className="hidden" onChange={handleFileUpload("reference")} />
         {refs.length === 0 ? (
           <button
             onClick={() => refInput.current?.click()}
-            className="w-full border-2 border-dashed border-[#e4e3e0] rounded-lg py-4 text-xs text-[#bbb] hover:border-[#2563eb]/30 hover:text-[#2563eb]/60 transition-colors"
+            className="w-full border-2 border-dashed border-[#ccc] rounded py-4 text-xs text-[#bbb] hover:border-[#111] hover:text-[#555] transition-colors"
           >
             Upload inspiration, style references
           </button>
@@ -147,15 +127,13 @@ function AssetGrid({ assets, onRemove }: { assets: Asset[]; onRemove: (id: strin
   return (
     <div className="grid grid-cols-3 gap-1.5">
       {assets.map((a) => (
-        <div key={a.id} className="relative group aspect-square rounded-lg overflow-hidden bg-[#f5f4f1] border border-[#e4e3e0]">
+        <div key={a.id} className="relative group aspect-square rounded overflow-hidden bg-[#f5f5f4] border border-[#ccc]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={a.dataUrl} alt={a.fileName} className="w-full h-full object-cover" />
           <button
             onClick={() => onRemove(a.id)}
             className="absolute inset-0 bg-black/50 text-white text-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
-          >
-            ×
-          </button>
+          >×</button>
         </div>
       ))}
     </div>

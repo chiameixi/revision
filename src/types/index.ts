@@ -1,17 +1,18 @@
 export type ActionType =
   | "unpack_brief"
-  | "analyze_draft"
-  | "analyze_references"
+  | "analyze"
   | "visual_variations"
   | "conceptual_variations"
   | "generate_concept_visuals"
-  | "synthesize";
+  | "synthesize"
+  | "user_added";
 
 export type CardType =
   | "insight"
   | "visual_variation"
   | "conceptual_variation"
-  | "concept";
+  | "concept"
+  | "note";
 
 export interface BaseCard {
   id: string;
@@ -57,11 +58,17 @@ export interface ConceptCard extends BaseCard {
   nextStep: string;
 }
 
+export interface NoteCard extends BaseCard {
+  type: "note";
+  body: string;
+}
+
 export type ResultCard =
   | InsightCard
   | VisualVariationCard
   | ConceptualVariationCard
-  | ConceptCard;
+  | ConceptCard
+  | NoteCard;
 
 export interface Asset {
   id: string;
@@ -86,6 +93,7 @@ export interface Generation {
   cards: ResultCard[];
   createdAt: string;
   error?: string;
+  sourceCardIds?: string[]; // card IDs of highlights that seeded this generation
 }
 
 export interface ProjectState {
