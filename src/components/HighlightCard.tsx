@@ -27,6 +27,7 @@ interface Props {
   onTogglePin: () => void;
   onUpdateNote: (note: string) => void;
   onUpdateCard?: (card: ResultCard) => void;
+  isHighlighted?: boolean;
 }
 
 export default function HighlightCard({
@@ -36,6 +37,7 @@ export default function HighlightCard({
   onTogglePin,
   onUpdateNote,
   onUpdateCard,
+  isHighlighted = false,
 }: Props) {
   const { card, note, pinned, includeInNextCall } = highlight;
   const [editingNote, setEditingNote] = useState(false);
@@ -97,8 +99,14 @@ export default function HighlightCard({
 
   return (
     <div
-      className="rounded bg-white border border-[#111] overflow-hidden transition-shadow hover:shadow-[2px_2px_0px_#111] group"
-      style={{ borderLeft: `3px solid ${pinned ? "#111" : "#555"}` }}
+      className="rounded overflow-hidden group"
+      style={{
+        border: `1px solid ${isHighlighted ? "#f59e0b" : "#111"}`,
+        borderLeft: `3px solid ${isHighlighted ? "#f59e0b" : pinned ? "#111" : "#555"}`,
+        boxShadow: isHighlighted ? "0 0 0 3px rgba(251,191,36,0.25)" : undefined,
+        background: isHighlighted ? "#fffbeb" : "white",
+        transition: "border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease",
+      }}
     >
       <div className="p-3 flex flex-col gap-2">
         {/* Header */}

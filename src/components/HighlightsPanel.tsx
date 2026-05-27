@@ -13,6 +13,7 @@ interface Props {
   onUpdateCard: (card: ResultCard) => void;
   onDropCard: (card: ResultCard) => void;
   onAddNote: (title: string, body: string) => void;
+  hoveredSourceIds?: Set<string>;
 }
 
 export default function HighlightsPanel({
@@ -24,6 +25,7 @@ export default function HighlightsPanel({
   onUpdateCard,
   onDropCard,
   onAddNote,
+  hoveredSourceIds,
 }: Props) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [addingNote, setAddingNote] = useState(false);
@@ -146,6 +148,7 @@ export default function HighlightsPanel({
               onTogglePin={() => onTogglePin(h.id)}
               onUpdateNote={(note) => onUpdateNote(h.id, note)}
               onUpdateCard={onUpdateCard}
+              isHighlighted={hoveredSourceIds?.has(h.card.id)}
             />
           ))
         )}

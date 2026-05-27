@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import type { Generation, ResultCard, ActionType, VisualVariationCard } from "@/types";
+import { useMemo, useState } from "react";
+import type { Asset, Generation, Highlight, ResultCard, ActionType, VisualVariationCard } from "@/types";
 
 // ── Style maps ────────────────────────────────────────────────────────────────
 const TYPE_STYLE: Record<string, {
@@ -71,6 +71,9 @@ interface ClusterItem {
 interface Props {
   generations: Generation[];
   savedCardIds: Set<string>;
+  highlights: Highlight[];
+  assets: Asset[];
+  onHoverSources: (cardIds: Set<string>, assetIds: Set<string>) => void;
   onSaveCard: (card: ResultCard) => void;
   onBranchFrom: (card: ResultCard, action: ActionType) => void;
   onDismissCard: (genId: string, cardId: string) => void;
@@ -78,7 +81,7 @@ interface Props {
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function ClusterView({ generations, savedCardIds, onSaveCard, onBranchFrom, onDismissCard, onAddUserCard }: Props) {
+export default function ClusterView({ generations, savedCardIds, highlights, assets, onHoverSources, onSaveCard, onBranchFrom, onDismissCard, onAddUserCard }: Props) {
   const [selectedItem, setSelectedItem] = useState<ClusterItem | null>(null);
   const [addingToGroup, setAddingToGroup] = useState<string | null>(null);
   const [addTitle, setAddTitle] = useState("");
@@ -95,6 +98,18 @@ export default function ClusterView({ generations, savedCardIds, onSaveCard, onB
   const allItems: ClusterItem[] = generations.flatMap((gen) =>
     gen.cards.map((card) => ({ card, genId: gen.id, actionType: gen.actionType }))
   );
+
+  function handleCardMouseEnter(genId: string) {
+    const gen = generations.find((g) => g.id === genId);
+    if (!gen) return;
+    const cardIds = new Set(gen.sourceCardIds ?? []);
+    const assetIds = new Set([...(gen.includedDraftIds ?? []), ...(gen.includedReferenceIds ?? [])]);
+    if (cardIds.size > 0 || assetIds.size > 0) onHoverSources(cardIds, assetIds);
+  }
+
+  function handleCardMouseLeave() {
+    onHoverSources(new Set(), new Set());
+  }
 
   function submitAddCard(groupType: string) {
     if (!addTitle.trim()) return;
@@ -230,6 +245,8 @@ export default function ClusterView({ generations, savedCardIds, onSaveCard, onB
                             e.dataTransfer.setData("cluster-card", JSON.stringify({ cardId: item.card.id }));
                             e.dataTransfer.effectAllowed = "copyMove";
                           }}
+                          onMouseEnter={() => handleCardMouseEnter(item.genId)}
+                          onMouseLeave={handleCardMouseLeave}
                           style={{
                             background: isSelected ? ts.bg : "#ffffff",
                             border: `1.5px solid ${isSelected ? ts.selectedBorder : ts.border}`,
@@ -397,6 +414,8 @@ export default function ClusterView({ generations, savedCardIds, onSaveCard, onB
                             e.dataTransfer.setData("cluster-card", JSON.stringify({ cardId: item.card.id }));
                             e.dataTransfer.effectAllowed = "copyMove";
                           }}
+                          onMouseEnter={() => handleCardMouseEnter(item.genId)}
+                          onMouseLeave={handleCardMouseLeave}
                           style={{
                             aspectRatio: "2/3",
                             background: visCard.imageDataUrl ? "transparent" : s.bg,
@@ -450,6 +469,8 @@ export default function ClusterView({ generations, savedCardIds, onSaveCard, onB
                             e.dataTransfer.setData("cluster-card", JSON.stringify({ cardId: item.card.id }));
                             e.dataTransfer.effectAllowed = "copyMove";
                           }}
+                          onMouseEnter={() => handleCardMouseEnter(item.genId)}
+                          onMouseLeave={handleCardMouseLeave}
                           style={{
                             background: isSelected ? s.bg : "#ffffff",
                             border: `1.5px solid ${isSelected ? s.selectedBorder : s.border}`,
@@ -483,6 +504,11 @@ export default function ClusterView({ generations, savedCardIds, onSaveCard, onB
         <ClusterDetailPanel
           item={selectedItem}
           genSiblings={genSiblings}
+          highlights={highlights}
+          assets={assets}
+          sourceCardIds={generations.find((g) => g.id === selectedItem.genId)?.sourceCardIds ?? []}
+          sourceDraftIds={generations.find((g) => g.id === selectedItem.genId)?.includedDraftIds ?? []}
+          sourceRefIds={generations.find((g) => g.id === selectedItem.genId)?.includedReferenceIds ?? []}
           isSaved={savedCardIds.has(selectedItem.card.id)}
           savedCardIds={savedCardIds}
           onSave={() => onSaveCard(selectedItem.card)}
@@ -515,6 +541,11 @@ export default function ClusterView({ generations, savedCardIds, onSaveCard, onB
 function ClusterDetailPanel({
   item,
   genSiblings,
+  highlights,
+  assets,
+  sourceCardIds,
+  sourceDraftIds,
+  sourceRefIds,
   isSaved,
   savedCardIds,
   onSave,
@@ -525,6 +556,11 @@ function ClusterDetailPanel({
 }: {
   item: ClusterItem;
   genSiblings: ClusterItem[];
+  highlights: Highlight[];
+  assets: Asset[];
+  sourceCardIds: string[];
+  sourceDraftIds: string[];
+  sourceRefIds: string[];
   isSaved: boolean;
   savedCardIds: Set<string>;
   onSave: () => void;
@@ -538,6 +574,18 @@ function ClusterDetailPanel({
   const s = TYPE_STYLE[card.type] ?? TYPE_STYLE.insight;
   const isVisual = card.type === "visual_variation";
   const mainImage = isVisual ? (card as VisualVariationCard).imageDataUrl : undefined;
+
+  const sourceHighlights = sourceCardIds
+    .map((pid) => highlights.find((h) => h.card.id === pid))
+    .filter((h): h is Highlight => h !== undefined);
+
+  const sourceDrafts = sourceDraftIds
+    .map((id) => assets.find((a) => a.id === id))
+    .filter((a): a is Asset => a !== undefined);
+
+  const sourceRefs = sourceRefIds
+    .map((id) => assets.find((a) => a.id === id))
+    .filter((a): a is Asset => a !== undefined);
 
   const imageSiblings = genSiblings.filter(
     (sib): sib is ClusterItem & { card: VisualVariationCard } =>
@@ -577,6 +625,41 @@ function ClusterDetailPanel({
         </div>
 
         <div className="flex-1 overflow-y-auto">
+          {/* All sources */}
+          {(sourceHighlights.length > 0 || sourceDrafts.length > 0 || sourceRefs.length > 0) && (
+            <div className="px-4 py-3 border-b border-[#f0efec]">
+              <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold mb-2">Sources</p>
+              <div className="flex flex-col gap-1.5">
+                {sourceHighlights.map((h) => (
+                  <div key={h.card.id} className="px-2.5 py-2 rounded-lg" style={{ background: "#fffbeb", border: "1px solid #f0d89a" }}>
+                    <p className="text-[9px] text-[#b45309] uppercase tracking-wide font-semibold mb-0.5">★ highlight · {h.card.type.replace("_", " ")}</p>
+                    <p className="text-[10px] font-medium text-[#333] leading-snug line-clamp-2">{h.card.title}</p>
+                  </div>
+                ))}
+                {sourceDrafts.map((a) => (
+                  <div key={a.id} className="px-2.5 py-2 rounded-lg flex items-center gap-2" style={{ background: "#f5f5f4", border: "1px solid #ccc" }}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={a.dataUrl} alt={a.fileName} className="w-8 h-8 rounded object-cover shrink-0" />
+                    <div>
+                      <p className="text-[9px] text-[#888] uppercase tracking-wide font-semibold mb-0.5">✎ draft</p>
+                      <p className="text-[10px] text-[#333] truncate max-w-[160px]">{a.fileName}</p>
+                    </div>
+                  </div>
+                ))}
+                {sourceRefs.map((a) => (
+                  <div key={a.id} className="px-2.5 py-2 rounded-lg flex items-center gap-2" style={{ background: "#f0f0ff", border: "1px solid #c5c5e8" }}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={a.dataUrl} alt={a.fileName} className="w-8 h-8 rounded object-cover shrink-0" />
+                    <div>
+                      <p className="text-[9px] text-[#4444aa] uppercase tracking-wide font-semibold mb-0.5">◈ reference</p>
+                      <p className="text-[10px] text-[#333] truncate max-w-[160px]">{a.fileName}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {mainImage && (
             <div className="border-b border-[#f0efec]">
               {/* eslint-disable-next-line @next/next/no-img-element */}

@@ -7,6 +7,7 @@ interface Props {
   title: string;
   brief: string;
   assets: Asset[];
+  hoveredAssetIds?: Set<string>;
   onTitleChange: (v: string) => void;
   onBriefChange: (v: string) => void;
   onAddAsset: (asset: Asset) => void;
@@ -17,6 +18,7 @@ export default function InputsSidebar({
   title,
   brief,
   assets,
+  hoveredAssetIds,
   onTitleChange,
   onBriefChange,
   onAddAsset,
@@ -93,7 +95,7 @@ export default function InputsSidebar({
             Upload sketches, wireframes, screenshots
           </button>
         ) : (
-          <AssetGrid assets={drafts} onRemove={onRemoveAsset} />
+          <AssetGrid assets={drafts} onRemove={onRemoveAsset} hoveredAssetIds={hoveredAssetIds} />
         )}
       </section>
 
@@ -116,26 +118,37 @@ export default function InputsSidebar({
             Upload inspiration, style references
           </button>
         ) : (
-          <AssetGrid assets={refs} onRemove={onRemoveAsset} />
+          <AssetGrid assets={refs} onRemove={onRemoveAsset} hoveredAssetIds={hoveredAssetIds} />
         )}
       </section>
     </aside>
   );
 }
 
-function AssetGrid({ assets, onRemove }: { assets: Asset[]; onRemove: (id: string) => void }) {
+function AssetGrid({ assets, onRemove, hoveredAssetIds }: { assets: Asset[]; onRemove: (id: string) => void; hoveredAssetIds?: Set<string> }) {
   return (
     <div className="grid grid-cols-3 gap-1.5">
-      {assets.map((a) => (
-        <div key={a.id} className="relative group aspect-square rounded overflow-hidden bg-[#f5f5f4] border border-[#ccc]">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={a.dataUrl} alt={a.fileName} className="w-full h-full object-cover" />
-          <button
-            onClick={() => onRemove(a.id)}
-            className="absolute inset-0 bg-black/50 text-white text-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
-          >×</button>
-        </div>
-      ))}
+      {assets.map((a) => {
+        const isHighlighted = hoveredAssetIds?.has(a.id) ?? false;
+        return (
+          <div
+            key={a.id}
+            className="relative group aspect-square rounded overflow-hidden bg-[#f5f5f4]"
+            style={{
+              border: `2px solid ${isHighlighted ? "#f59e0b" : "#ccc"}`,
+              boxShadow: isHighlighted ? "0 0 0 3px rgba(251,191,36,0.25)" : undefined,
+              transition: "border-color 0.2s ease, box-shadow 0.2s ease",
+            }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={a.dataUrl} alt={a.fileName} className="w-full h-full object-cover" />
+            <button
+              onClick={() => onRemove(a.id)}
+              className="absolute inset-0 bg-black/50 text-white text-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+            >×</button>
+          </div>
+        );
+      })}
     </div>
   );
 }

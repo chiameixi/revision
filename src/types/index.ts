@@ -93,7 +93,9 @@ export interface Generation {
   cards: ResultCard[];
   createdAt: string;
   error?: string;
-  sourceCardIds?: string[]; // card IDs of highlights that seeded this generation
+  sourceCardIds?: string[];       // highlight card IDs that seeded this generation
+  includedDraftIds?: string[];    // asset IDs of drafts sent
+  includedReferenceIds?: string[]; // asset IDs of references sent
 }
 
 export interface ProjectState {

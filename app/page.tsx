@@ -55,6 +55,13 @@ export default function WorkspacePage() {
   const [composer, setComposer] = useState<ComposerState>(DEFAULT_COMPOSER);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingAction, setGeneratingAction] = useState<ActionType | null>(null);
+  const [hoveredSourceIds, setHoveredSourceIds] = useState<Set<string>>(new Set());
+  const [hoveredAssetIds, setHoveredAssetIds] = useState<Set<string>>(new Set());
+
+  const handleHoverSources = useCallback((cardIds: Set<string>, assetIds: Set<string>) => {
+    setHoveredSourceIds(cardIds);
+    setHoveredAssetIds(assetIds);
+  }, []);
   // Track dismissed cards per generation
   const [dismissed, setDismissed] = useState<Record<string, Set<string>>>({});
 
@@ -143,6 +150,8 @@ export default function WorkspacePage() {
           createdAt: new Date().toISOString(),
           error: data.error,
           sourceCardIds,
+          includedDraftIds: cfg.includedDraftIds,
+          includedReferenceIds: cfg.includedReferenceIds,
         };
         actions.addGeneration(gen);
       } catch (err) {
@@ -235,6 +244,7 @@ export default function WorkspacePage() {
         title={state.title}
         brief={state.brief}
         assets={state.assets}
+        hoveredAssetIds={hoveredAssetIds}
         onTitleChange={actions.setTitle}
         onBriefChange={actions.setBrief}
         onAddAsset={actions.addAsset}
@@ -246,6 +256,10 @@ export default function WorkspacePage() {
         isGenerating={isGenerating}
         generatingAction={generatingAction}
         savedCardIds={savedCardIds}
+        highlights={state.highlights}
+        assets={state.assets}
+        hoveredSourceIds={hoveredSourceIds}
+        onHoverSources={handleHoverSources}
         onActionClick={handleActionClick}
         onSaveCard={actions.saveHighlight}
         onDismissCard={handleDismissCard}
@@ -264,6 +278,7 @@ export default function WorkspacePage() {
         onUpdateCard={actions.updateCard}
         onDropCard={actions.saveHighlight}
         onAddNote={handleAddNote}
+        hoveredSourceIds={hoveredSourceIds}
       />
 
       {composer.open && (

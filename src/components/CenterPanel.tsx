@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { ActionType, ConceptualVariationCard, Generation, ResultCard } from "@/types";
+import type { ActionType, Asset, ConceptualVariationCard, Generation, Highlight, ResultCard } from "@/types";
 import ResultCardComponent from "./cards/ResultCard";
 import TreeView from "./TreeView";
 import ClusterView from "./ClusterView";
@@ -11,6 +11,10 @@ interface Props {
   isGenerating: boolean;
   generatingAction: ActionType | null;
   savedCardIds: Set<string>;
+  highlights: Highlight[];
+  assets: Asset[];
+  hoveredSourceIds: Set<string>;
+  onHoverSources: (cardIds: Set<string>, assetIds: Set<string>) => void;
   onActionClick: (action: ActionType) => void;
   onSaveCard: (card: ResultCard) => void;
   onDismissCard: (genId: string, cardId: string) => void;
@@ -43,6 +47,10 @@ export default function CenterPanel({
   isGenerating,
   generatingAction,
   savedCardIds,
+  highlights,
+  assets,
+  hoveredSourceIds,
+  onHoverSources,
   onActionClick,
   onSaveCard,
   onDismissCard,
@@ -94,6 +102,9 @@ export default function CenterPanel({
           <TreeView
             generations={generations}
             savedCardIds={savedCardIds}
+            highlights={highlights}
+            assets={assets}
+            onHoverSources={onHoverSources}
             onSaveCard={onSaveCard}
             onBranchFrom={onBranchFrom}
             onDismissCard={onDismissCard}
@@ -107,6 +118,9 @@ export default function CenterPanel({
           <ClusterView
             generations={generations}
             savedCardIds={savedCardIds}
+            highlights={highlights}
+            assets={assets}
+            onHoverSources={onHoverSources}
             onSaveCard={onSaveCard}
             onBranchFrom={onBranchFrom}
             onDismissCard={onDismissCard}
@@ -137,6 +151,9 @@ export default function CenterPanel({
             key={gen.id}
             gen={gen}
             savedCardIds={savedCardIds}
+            highlights={highlights}
+            assets={assets}
+            onHoverSources={onHoverSources}
             onSaveCard={onSaveCard}
             onDismissCard={(cardId) => onDismissCard(gen.id, cardId)}
             onUpdateCard={onUpdateCard}
@@ -151,6 +168,9 @@ export default function CenterPanel({
 function GenerationBlock({
   gen,
   savedCardIds,
+  highlights,
+  assets,
+  onHoverSources,
   onSaveCard,
   onDismissCard,
   onUpdateCard,
@@ -158,6 +178,9 @@ function GenerationBlock({
 }: {
   gen: Generation;
   savedCardIds: Set<string>;
+  highlights: Highlight[];
+  assets: Asset[];
+  onHoverSources: (cardIds: Set<string>, assetIds: Set<string>) => void;
   onSaveCard: (card: ResultCard) => void;
   onDismissCard: (cardId: string) => void;
   onUpdateCard: (card: ResultCard) => void;
@@ -167,9 +190,42 @@ function GenerationBlock({
   const time = new Date(gen.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const isImageGrid = gen.actionType === "visual_variations" || gen.actionType === "generate_concept_visuals";
 
+  const sourceHighlights = (gen.sourceCardIds ?? [])
+    .map((id) => highlights.find((h) => h.card.id === id))
+    .filter((h): h is Highlight => h !== undefined);
+
+  const sourceDrafts = (gen.includedDraftIds ?? [])
+    .map((id) => assets.find((a) => a.id === id))
+    .filter((a): a is Asset => a !== undefined);
+
+  const sourceRefs = (gen.includedReferenceIds ?? [])
+    .map((id) => assets.find((a) => a.id === id))
+    .filter((a): a is Asset => a !== undefined);
+
+  const hasAnySources = sourceHighlights.length > 0 || sourceDrafts.length > 0 || sourceRefs.length > 0;
+
+  function handleMouseEnter() {
+    if (hasAnySources) {
+      onHoverSources(
+        new Set(sourceHighlights.map((h) => h.card.id)),
+        new Set([...sourceDrafts, ...sourceRefs].map((a) => a.id))
+      );
+    }
+  }
+
+  function handleMouseLeave() {
+    onHoverSources(new Set(), new Set());
+  }
+
+  function truncate(s: string, n = 24) { return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-2 text-[11px] text-[#aaa]">
+    <div
+      className="flex flex-col gap-3"
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
+      <div className="flex items-center gap-2 text-[11px] text-[#aaa] flex-wrap">
         <span className="font-semibold text-[#888]">{label}</span>
         <span>·</span>
         <span>{time}</span>
@@ -177,6 +233,42 @@ function GenerationBlock({
           <>
             <span>·</span>
             <span>{gen.cards.length} card{gen.cards.length !== 1 ? "s" : ""}</span>
+          </>
+        )}
+        {hasAnySources && (
+          <>
+            <span>·</span>
+            <span className="text-[10px] text-[#bbb]">from</span>
+            {sourceHighlights.map((h) => (
+              <span
+                key={h.card.id}
+                className="text-[10px] px-1.5 py-0.5 rounded-sm border"
+                style={{ background: "#fffbeb", borderColor: "#f0d89a", color: "#92721a" }}
+                title={h.card.title}
+              >
+                {truncate(h.card.title)}
+              </span>
+            ))}
+            {sourceDrafts.map((a) => (
+              <span
+                key={a.id}
+                className="text-[10px] px-1.5 py-0.5 rounded-sm border"
+                style={{ background: "#f5f5f4", borderColor: "#ccc", color: "#555" }}
+                title={`Draft: ${a.fileName}`}
+              >
+                ✎ {truncate(a.fileName)}
+              </span>
+            ))}
+            {sourceRefs.map((a) => (
+              <span
+                key={a.id}
+                className="text-[10px] px-1.5 py-0.5 rounded-sm border"
+                style={{ background: "#f0f0ff", borderColor: "#c5c5e8", color: "#4444aa" }}
+                title={`Reference: ${a.fileName}`}
+              >
+                ◈ {truncate(a.fileName)}
+              </span>
+            ))}
           </>
         )}
       </div>

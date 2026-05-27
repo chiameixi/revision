@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import type { Generation, ResultCard, ActionType, VisualVariationCard } from "@/types";
+import { useMemo, useRef, useState } from "react";
+import type { Asset, Generation, Highlight, ResultCard, ActionType, VisualVariationCard } from "@/types";
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 const NODE_W = 168;
@@ -54,6 +54,8 @@ interface LayoutNode {
   genId: string;
   actionType: ActionType;
   parentCardIds: string[];
+  includedDraftIds: string[];
+  includedReferenceIds: string[];
   x: number;
   y: number;
 }
@@ -76,12 +78,21 @@ function computeLayout(generations: Generation[]): {
     genId: string;
     actionType: ActionType;
     parentCardIds: string[];
+    includedDraftIds: string[];
+    includedReferenceIds: string[];
   }
 
   const entries: Entry[] = [];
   for (const gen of [...generations].reverse()) {
     for (const card of gen.cards) {
-      entries.push({ card, genId: gen.id, actionType: gen.actionType, parentCardIds: gen.sourceCardIds ?? [] });
+      entries.push({
+        card,
+        genId: gen.id,
+        actionType: gen.actionType,
+        parentCardIds: gen.sourceCardIds ?? [],
+        includedDraftIds: gen.includedDraftIds ?? [],
+        includedReferenceIds: gen.includedReferenceIds ?? [],
+      });
     }
   }
 
@@ -157,21 +168,54 @@ function computeLayout(generations: Generation[]): {
 interface Props {
   generations: Generation[];
   savedCardIds: Set<string>;
+  highlights: Highlight[];
+  assets: Asset[];
+  onHoverSources: (cardIds: Set<string>, assetIds: Set<string>) => void;
   onSaveCard: (card: ResultCard) => void;
   onBranchFrom: (card: ResultCard, action: ActionType) => void;
   onDismissCard: (genId: string, cardId: string) => void;
 }
 
-export default function TreeView({ generations, savedCardIds, onSaveCard, onBranchFrom, onDismissCard }: Props) {
+export default function TreeView({ generations, savedCardIds, highlights, assets, onHoverSources, onSaveCard, onBranchFrom, onDismissCard }: Props) {
   const { nodes, edges, width, height } = useMemo(() => computeLayout(generations), [generations]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(1.0);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const posMap = useMemo(() => new Map(nodes.map((n) => [n.card.id, { x: n.x, y: n.y }])), [nodes]);
+  const cardIds = useMemo(() => new Set(nodes.map((n) => n.card.id)), [nodes]);
 
   const selectedNode = nodes.find((n) => n.card.id === selectedId) ?? null;
   const siblings = selectedNode
     ? nodes.filter((n) => n.genId === selectedNode.genId && n.card.id !== selectedNode.card.id)
     : [];
+
+  // IDs of ancestor nodes (in-tree) of the hovered node
+  const hoveredAncestorIds = useMemo(() => {
+    if (!hoveredId) return new Set<string>();
+    const hNode = nodes.find((n) => n.card.id === hoveredId);
+    return new Set((hNode?.parentCardIds ?? []).filter((pid) => cardIds.has(pid)));
+  }, [hoveredId, nodes, cardIds]);
+
+  function handleNodeMouseEnter(node: LayoutNode) {
+    setHoveredId(node.card.id);
+    const offTreeCardIds = node.parentCardIds.filter((pid) => !cardIds.has(pid));
+    const assetIds = new Set([...node.includedDraftIds, ...node.includedReferenceIds]);
+    onHoverSources(new Set(offTreeCardIds), assetIds);
+  }
+
+  function handleNodeMouseLeave() {
+    setHoveredId(null);
+    onHoverSources(new Set(), new Set());
+  }
+
+  function handleFitZoom() {
+    const container = containerRef.current;
+    if (!container || width === 0 || height === 0) return;
+    const { clientWidth, clientHeight } = container;
+    setZoom(Math.min((clientWidth - 32) / width, (clientHeight - 32) / height, 1.0));
+  }
 
   const handleRemove = (node: LayoutNode) => {
     onDismissCard(node.genId, node.card.id);
@@ -191,6 +235,7 @@ export default function TreeView({ generations, savedCardIds, onSaveCard, onBran
     <div className="flex h-full overflow-hidden">
       {/* ── Tree canvas ─────────────────────────────────────────────────────── */}
       <div
+        ref={containerRef}
         className="flex-1 overflow-auto relative"
         style={{
           background: "radial-gradient(circle, #bbb 1px, transparent 1px)",
@@ -199,9 +244,39 @@ export default function TreeView({ generations, savedCardIds, onSaveCard, onBran
         }}
         onClick={() => setSelectedId(null)}
       >
+        {/* Zoom controls */}
+        <div className="absolute bottom-4 right-4 z-20 flex items-center gap-1 bg-white border border-[#e4e3e0] rounded-lg shadow-sm px-2 py-1.5">
+          <button
+            onClick={(e) => { e.stopPropagation(); setZoom((z) => Math.max(0.2, z - 0.1)); }}
+            className="text-[13px] text-[#555] hover:text-[#111] w-6 h-6 flex items-center justify-center transition-colors"
+            title="Zoom out"
+          >−</button>
+          <span className="text-[10px] text-[#888] w-10 text-center tabular-nums">
+            {Math.round(zoom * 100)}%
+          </span>
+          <button
+            onClick={(e) => { e.stopPropagation(); setZoom((z) => Math.min(2.0, z + 0.1)); }}
+            className="text-[13px] text-[#555] hover:text-[#111] w-6 h-6 flex items-center justify-center transition-colors"
+            title="Zoom in"
+          >+</button>
+          <div className="w-px h-4 bg-[#e4e3e0] mx-0.5" />
+          <button
+            onClick={(e) => { e.stopPropagation(); setZoom(1.0); }}
+            className="text-[10px] text-[#888] hover:text-[#111] px-1 transition-colors"
+            title="Reset zoom"
+          >1:1</button>
+          <button
+            onClick={(e) => { e.stopPropagation(); handleFitZoom(); }}
+            className="text-[10px] text-[#888] hover:text-[#111] px-1 transition-colors"
+            title="Fit all nodes in view"
+          >Fit</button>
+        </div>
+
+        {/* Scaled content wrapper */}
+        <div style={{ width: Math.max(width * zoom, 1), height: Math.max(height * zoom, 1), minWidth: "100%", minHeight: "100%" }}>
         <div
           className="relative"
-          style={{ width: Math.max(width, 1), height: Math.max(height, 1), minWidth: "100%", minHeight: "100%" }}
+          style={{ width: Math.max(width, 1), height: Math.max(height, 1), transform: `scale(${zoom})`, transformOrigin: "top left" }}
         >
           {/* SVG edges */}
           <svg
@@ -216,6 +291,9 @@ export default function TreeView({ generations, savedCardIds, onSaveCard, onBran
                   <path d="M0,0 L6,3 L0,6 Z" fill={s.line} opacity={0.6} />
                 </marker>
               ))}
+              <marker id="arrow-amber" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                <path d="M0,0 L6,3 L0,6 Z" fill="#f59e0b" opacity={0.9} />
+              </marker>
             </defs>
             {edges.map((edge, i) => {
               const from = posMap.get(edge.fromId);
@@ -227,15 +305,17 @@ export default function TreeView({ generations, savedCardIds, onSaveCard, onBran
               const y2 = to.y + NODE_H / 2;
               const mid = x1 + (x2 - x1) * 0.5;
               const s = TYPE_STYLE[edge.toType] ?? TYPE_STYLE.insight;
+              const isActive = hoveredId === edge.toId || hoveredId === edge.fromId;
               return (
                 <path
                   key={i}
                   d={`M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`}
                   fill="none"
-                  stroke={s.line}
-                  strokeWidth={1.5}
-                  strokeOpacity={0.55}
-                  markerEnd={`url(#arrow-${edge.toType})`}
+                  stroke={isActive ? "#f59e0b" : s.line}
+                  strokeWidth={isActive ? 2.5 : 1.5}
+                  strokeOpacity={isActive ? 0.9 : 0.55}
+                  markerEnd={isActive ? `url(#arrow-amber)` : `url(#arrow-${edge.toType})`}
+                  style={{ transition: "stroke 0.15s, stroke-width 0.15s" }}
                 />
               );
             })}
@@ -245,6 +325,8 @@ export default function TreeView({ generations, savedCardIds, onSaveCard, onBran
           {nodes.map((node) => {
             const s = TYPE_STYLE[node.card.type] ?? TYPE_STYLE.insight;
             const isSelected = node.card.id === selectedId;
+            const isHovered = node.card.id === hoveredId;
+            const isAncestor = hoveredAncestorIds.has(node.card.id);
             const isSaved = savedCardIds.has(node.card.id);
             const hasImage =
               node.card.type === "visual_variation" && !!(node.card as VisualVariationCard).imageDataUrl;
@@ -259,16 +341,22 @@ export default function TreeView({ generations, savedCardIds, onSaveCard, onBran
                   e.dataTransfer.setData("card-drag", JSON.stringify({ card: node.card, genId: node.genId }));
                   e.dataTransfer.effectAllowed = "copy";
                 }}
+                onMouseEnter={() => handleNodeMouseEnter(node)}
+                onMouseLeave={handleNodeMouseLeave}
                 style={{
                   left: node.x,
                   top: node.y,
                   width: NODE_W,
                   height: NODE_H,
-                  background: isSelected ? s.bg : "#ffffff",
-                  border: `1.5px solid ${isSelected ? s.selectedBorder : s.border}`,
+                  background: isAncestor ? "#fffbeb" : isSelected ? s.bg : "#ffffff",
+                  border: `1.5px solid ${isAncestor ? "#f59e0b" : isSelected ? s.selectedBorder : s.border}`,
                   borderRadius: 10,
-                  boxShadow: isSelected
+                  boxShadow: isAncestor
+                    ? "0 0 0 3px rgba(251,191,36,0.3)"
+                    : isSelected
                     ? "3px 3px 0px #111111"
+                    : isHovered
+                    ? "2px 2px 0px #888"
                     : "1px 1px 0px #cccccc",
                   transition: "all 0.15s ease",
                   overflow: "hidden",
@@ -342,6 +430,7 @@ export default function TreeView({ generations, savedCardIds, onSaveCard, onBran
             );
           })}
         </div>
+        </div>
       </div>
 
       {/* ── Detail / gallery panel ────────────────────────────────────────── */}
@@ -349,6 +438,8 @@ export default function TreeView({ generations, savedCardIds, onSaveCard, onBran
         <DetailPanel
           node={selectedNode}
           siblings={siblings}
+          highlights={highlights}
+          assets={assets}
           isSaved={savedCardIds.has(selectedNode.card.id)}
           onSave={() => onSaveCard(selectedNode.card)}
           onBranch={(action) => {
@@ -375,6 +466,8 @@ export default function TreeView({ generations, savedCardIds, onSaveCard, onBran
 function DetailPanel({
   node,
   siblings,
+  highlights,
+  assets,
   isSaved,
   onSave,
   onBranch,
@@ -385,6 +478,8 @@ function DetailPanel({
 }: {
   node: LayoutNode;
   siblings: LayoutNode[];
+  highlights: Highlight[];
+  assets: Asset[];
   isSaved: boolean;
   onSave: () => void;
   onBranch: (action: ActionType) => void;
@@ -399,6 +494,18 @@ function DetailPanel({
   const card = node.card;
   const isVisual = card.type === "visual_variation";
   const mainImage = isVisual ? (card as VisualVariationCard).imageDataUrl : undefined;
+
+  const sourceHighlights = node.parentCardIds
+    .map((pid) => highlights.find((h) => h.card.id === pid))
+    .filter((h): h is Highlight => h !== undefined);
+
+  const sourceDrafts = node.includedDraftIds
+    .map((id) => assets.find((a) => a.id === id))
+    .filter((a): a is Asset => a !== undefined);
+
+  const sourceRefs = node.includedReferenceIds
+    .map((id) => assets.find((a) => a.id === id))
+    .filter((a): a is Asset => a !== undefined);
 
   // Siblings that are visual variations with images (for gallery strip)
   const imageSiblings = siblings.filter(
@@ -441,6 +548,45 @@ function DetailPanel({
 
         {/* Scrollable body */}
         <div className="flex-1 overflow-y-auto">
+          {/* All sources */}
+          {(sourceHighlights.length > 0 || sourceDrafts.length > 0 || sourceRefs.length > 0) && (
+            <div className="px-4 py-3 border-b border-[#f0efec]">
+              <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold mb-2">
+                Sources
+              </p>
+              <div className="flex flex-col gap-1.5">
+                {sourceHighlights.map((h) => (
+                  <div key={h.card.id} className="px-2.5 py-2 rounded-lg" style={{ background: "#fffbeb", border: "1px solid #f0d89a" }}>
+                    <p className="text-[9px] text-[#b45309] uppercase tracking-wide font-semibold mb-0.5">
+                      ★ highlight · {h.card.type.replace("_", " ")}
+                    </p>
+                    <p className="text-[10px] font-medium text-[#333] leading-snug line-clamp-2">{h.card.title}</p>
+                  </div>
+                ))}
+                {sourceDrafts.map((a) => (
+                  <div key={a.id} className="px-2.5 py-2 rounded-lg flex items-center gap-2" style={{ background: "#f5f5f4", border: "1px solid #ccc" }}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={a.dataUrl} alt={a.fileName} className="w-8 h-8 rounded object-cover shrink-0" />
+                    <div>
+                      <p className="text-[9px] text-[#888] uppercase tracking-wide font-semibold mb-0.5">✎ draft</p>
+                      <p className="text-[10px] text-[#333] truncate max-w-[160px]">{a.fileName}</p>
+                    </div>
+                  </div>
+                ))}
+                {sourceRefs.map((a) => (
+                  <div key={a.id} className="px-2.5 py-2 rounded-lg flex items-center gap-2" style={{ background: "#f0f0ff", border: "1px solid #c5c5e8" }}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={a.dataUrl} alt={a.fileName} className="w-8 h-8 rounded object-cover shrink-0" />
+                    <div>
+                      <p className="text-[9px] text-[#4444aa] uppercase tracking-wide font-semibold mb-0.5">◈ reference</p>
+                      <p className="text-[10px] text-[#333] truncate max-w-[160px]">{a.fileName}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Main image */}
           {mainImage && (
             <div className="border-b border-[#f0efec]">
