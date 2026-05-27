@@ -130,3 +130,4 @@ The Highlights panel shows `X / Y included` — keep this to the most relevant c
 - The brief and all cards are saved to `localStorage` automatically — your work persists across page refreshes.
 - only highlights can be selected for inclusion into further calls/branching
     - selecting an action from the `branch from here` section in the gallery view automatically adds a card as a highlight, which **you must then select** for it to be included in a call
+    - removal of a highlight removes all connections from a card to its related cards
