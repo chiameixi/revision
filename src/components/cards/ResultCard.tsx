@@ -1,50 +1,39 @@
 "use client";
 
+/**
+ * src/components/cards/ResultCard.tsx
+ *
+ * Responsibility: Top-level dispatcher that renders the correct card component
+ * based on `card.type`.  Acts as a thin switch so the Feed and Tree/Cluster
+ * views only need to import one component instead of handling the union
+ * themselves.
+ *
+ * `NoteCard` is defined inline here (not in its own file) because it is simple
+ * enough to live alongside the dispatcher and does not need the full editing
+ * affordances of the other card types.
+ */
+
 import { useState } from "react";
-import type {
-  ConceptualVariationCard as ConceptualVariationCardType,
-  NoteCard,
-  ResultCard as ResultCardType,
-} from "@/types";
-import InsightCard from "./InsightCard";
-import VisualVariationCard from "./VisualVariationCard";
-import ConceptualVariationCard from "./ConceptualVariationCard";
+import type { ConceptCard as ConceptCardType, NoteCard, ResultCard as ResultCardType } from "@/types";
 import ConceptCard from "./ConceptCard";
+import MotifCard from "./MotifCard";
+import VisualCard from "./VisualVariationCard";
 
 interface Props {
   card: ResultCardType;
   isSaved: boolean;
   onSave: () => void;
   onDismiss: () => void;
-  onGenerateVisuals?: (card: ConceptualVariationCardType) => void;
+  onGenerateVisuals?: (card: ConceptCardType) => void;
+  onAddAsReference?: (dataUrl: string, label: string) => void;
   onUpdate?: (card: ResultCardType) => void;
 }
 
-export default function ResultCard({ card, isSaved, onSave, onDismiss, onGenerateVisuals, onUpdate }: Props) {
+export default function ResultCard({ card, isSaved, onSave, onDismiss, onGenerateVisuals, onAddAsReference, onUpdate }: Props) {
   switch (card.type) {
-    case "insight":
+    case "concept":
       return (
-        <InsightCard
-          card={card}
-          isSaved={isSaved}
-          onSave={onSave}
-          onDismiss={onDismiss}
-          onUpdate={onUpdate}
-        />
-      );
-    case "visual_variation":
-      return (
-        <VisualVariationCard
-          card={card}
-          isSaved={isSaved}
-          onSave={onSave}
-          onDismiss={onDismiss}
-          onUpdate={onUpdate}
-        />
-      );
-    case "conceptual_variation":
-      return (
-        <ConceptualVariationCard
+        <ConceptCard
           card={card}
           isSaved={isSaved}
           onSave={onSave}
@@ -53,13 +42,24 @@ export default function ResultCard({ card, isSaved, onSave, onDismiss, onGenerat
           onUpdate={onUpdate}
         />
       );
-    case "concept":
+    case "motif":
       return (
-        <ConceptCard
+        <MotifCard
           card={card}
           isSaved={isSaved}
           onSave={onSave}
           onDismiss={onDismiss}
+          onUpdate={onUpdate}
+        />
+      );
+    case "visual":
+      return (
+        <VisualCard
+          card={card}
+          isSaved={isSaved}
+          onSave={onSave}
+          onDismiss={onDismiss}
+          onAddAsReference={onAddAsReference}
           onUpdate={onUpdate}
         />
       );
@@ -96,7 +96,7 @@ function NoteCardComponent({
     return (
       <div className="bg-white border-2 border-[#111] rounded p-4 flex flex-col gap-3" style={{ boxShadow: "3px 3px 0px #111" }}>
         <div className="flex items-center justify-between">
-          <span className="text-[10px] uppercase tracking-widest bg-[#111] text-white px-2 py-0.5 rounded-sm">Note</span>
+          <span className="text-[10px] uppercase tracking-widest bg-[#888] text-white px-2 py-0.5 rounded-sm">Note</span>
           <div className="flex items-center gap-2 shrink-0">
             <button onClick={commitEdit} className="text-xs font-medium text-white bg-[#111] px-2.5 py-1 rounded-sm hover:bg-[#333] transition-colors">Save</button>
             <button onClick={cancelEdit} className="text-xs text-[#888] hover:text-[#111] transition-colors">Cancel</button>
@@ -104,40 +104,25 @@ function NoteCardComponent({
         </div>
         <div>
           <p className="text-[10px] uppercase tracking-widest text-[#888] mb-0.5">Title</p>
-          <input
-            value={draft.title}
-            onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-            className="w-full text-[15px] text-[#111] border border-[#111] rounded px-3 py-2 outline-none focus:ring-1 focus:ring-black bg-white"
-          />
+          <input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} className="w-full text-[15px] text-[#111] border border-[#111] rounded px-3 py-2 outline-none focus:ring-1 focus:ring-black bg-white" />
         </div>
         <div>
           <p className="text-[10px] uppercase tracking-widest text-[#888] mb-0.5">Body</p>
-          <textarea
-            value={draft.body}
-            onChange={(e) => setDraft({ ...draft, body: e.target.value })}
-            rows={4}
-            className="w-full text-sm text-[#111] border border-[#111] rounded px-3 py-2 resize-y outline-none focus:ring-1 focus:ring-black bg-white leading-relaxed"
-          />
+          <textarea value={draft.body} onChange={(e) => setDraft({ ...draft, body: e.target.value })} rows={4} className="w-full text-sm text-[#111] border border-[#111] rounded px-3 py-2 resize-y outline-none focus:ring-1 focus:ring-black bg-white leading-relaxed" />
         </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-white border border-[#111] rounded p-4 flex flex-col gap-3 group hover:shadow-[2px_2px_0px_#111] transition-shadow">
+    <div className="bg-white border border-[#888] rounded p-4 flex flex-col gap-3 group hover:shadow-[2px_2px_0px_#888] transition-shadow">
       <div className="flex items-start justify-between gap-2">
         <span className="text-[10px] uppercase tracking-widest bg-[#888] text-white px-2 py-0.5 rounded-sm shrink-0">Note</span>
         <div className="flex items-center gap-1.5 shrink-0">
           {onUpdate && (
             <button onClick={startEdit} className="text-[#ccc] hover:text-[#111] text-sm transition-colors opacity-0 group-hover:opacity-100" title="Edit">✎</button>
           )}
-          <button
-            onClick={onSave}
-            disabled={isSaved}
-            className={`text-xs px-2.5 py-1 rounded-sm border transition-colors ${
-              isSaved ? "text-[#aaa] border-[#ccc] cursor-default" : "text-[#111] border-[#111] hover:bg-[#111] hover:text-white"
-            }`}
-          >
+          <button onClick={onSave} disabled={isSaved} className={`text-xs px-2.5 py-1 rounded-sm border transition-colors ${isSaved ? "text-[#aaa] border-[#ccc] cursor-default" : "text-[#111] border-[#111] hover:bg-[#111] hover:text-white"}`}>
             {isSaved ? "Saved" : "Save"}
           </button>
           <button onClick={onDismiss} className="text-[#bbb] hover:text-[#111] text-lg leading-none">×</button>

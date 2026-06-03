@@ -1,21 +1,36 @@
 "use client";
 
+/**
+ * src/components/HighlightCard.tsx
+ *
+ * Responsibility: Renders a single saved highlight in the HighlightsPanel,
+ * including its type badge, preview text, optional image (for visual cards),
+ * researcher note, and controls (pin, include toggle, edit, remove).
+ *
+ * The card supports inline editing: clicking the pencil icon replaces the
+ * read-only view with a form that commits changes through `onUpdateCard`.
+ * Edits propagate to both the highlights list and the original generation via
+ * `store.updateCard`.
+ *
+ * `isHighlighted` is set by the parent when the user hovers a result card in
+ * the center panel that was seeded by this highlight — a visual cue showing
+ * which saved ideas influenced a given output.
+ */
+
 import { useState } from "react";
-import type { Highlight, ResultCard } from "@/types";
+import type { Highlight, ResultCard, VisualCard } from "@/types";
 
 const TYPE_LABELS: Record<string, string> = {
-  insight: "Insight",
-  visual_variation: "Visual",
-  conceptual_variation: "Conceptual",
   concept: "Concept",
+  motif: "Motif",
+  visual: "Visual",
   note: "Note",
 };
 
 function getSubtext(card: Highlight["card"]): string {
-  if (card.type === "insight") return card.summary;
-  if (card.type === "visual_variation") return card.analysisText;
-  if (card.type === "conceptual_variation") return card.coreIdea;
-  if (card.type === "concept") return card.coreIdea;
+  if (card.type === "concept") return card.description;
+  if (card.type === "motif") return card.visualQuality;
+  if (card.type === "visual") return card.analysisText;
   if (card.type === "note") return card.body;
   return "";
 }
@@ -47,19 +62,19 @@ export default function HighlightCard({
   const [cardDraft, setCardDraft] = useState(card);
 
   const subtext = getSubtext(card);
-  const isVisual = card.type === "visual_variation";
+  const isVisual = card.type === "visual";
+
+  // Each card type has one primary editable text field; map it by type.
+  const mainField = card.type === "concept" ? "description"
+    : card.type === "motif" ? "visualQuality"
+    : card.type === "visual" ? "analysisText"
+    : "body";
+  const mainLabel = card.type === "concept" ? "Description"
+    : card.type === "motif" ? "Visual Quality"
+    : card.type === "visual" ? "Analysis"
+    : "Body";
 
   if (editingCard) {
-    const mainField = card.type === "insight" ? "summary"
-      : card.type === "visual_variation" ? "analysisText"
-      : card.type === "conceptual_variation" ? "coreIdea"
-      : card.type === "concept" ? "coreIdea"
-      : "body";
-    const mainLabel = card.type === "insight" ? "Summary"
-      : card.type === "visual_variation" ? "Analysis"
-      : card.type === "conceptual_variation" ? "Core idea"
-      : card.type === "concept" ? "Core idea"
-      : "Body";
     return (
       <div className="rounded bg-white border-2 border-[#111] overflow-hidden" style={{ borderLeft: `3px solid #111` }}>
         <div className="p-3 flex flex-col gap-2">
@@ -126,10 +141,10 @@ export default function HighlightCard({
         </div>
 
         {/* Image for visual cards */}
-        {isVisual && card.imageDataUrl && (
+        {isVisual && (card as VisualCard).imageDataUrl && (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={card.imageDataUrl}
+            src={(card as VisualCard).imageDataUrl}
             alt={card.title}
             className="w-full rounded object-cover transition-all border border-[#eee]"
             style={{ maxHeight: expanded ? 200 : 96, objectPosition: "top" }}
@@ -177,20 +192,11 @@ export default function HighlightCard({
 
         {/* Controls */}
         <div className="flex items-center justify-between pt-1.5 border-t border-[#eee]">
-          <button
-            onClick={onTogglePin}
-            title={pinned ? "Unpin" : "Pin to top"}
-            className={`text-[11px] transition-colors ${pinned ? "text-[#111]" : "text-[#ccc] hover:text-[#555]"}`}
-          >
+          <button onClick={onTogglePin} title={pinned ? "Unpin" : "Pin to top"} className={`text-[11px] transition-colors ${pinned ? "text-[#111]" : "text-[#ccc] hover:text-[#555]"}`}>
             {pinned ? "★ pinned" : "☆ pin"}
           </button>
           <label className="flex items-center gap-1.5 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={includeInNextCall}
-              onChange={onToggleInclude}
-              className="w-3 h-3 accent-black"
-            />
+            <input type="checkbox" checked={includeInNextCall} onChange={onToggleInclude} className="w-3 h-3 accent-black" />
             <span className="text-[10px] text-[#888]">Include</span>
           </label>
         </div>

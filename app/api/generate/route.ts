@@ -1,3 +1,40 @@
+/**
+ * app/api/generate/route.ts
+ *
+ * Responsibility: Single POST endpoint for all six generation actions.
+ *
+ * Request: `GenerateRequest` (action, brief, userInstructions, draftDataUrls,
+ * referenceDataUrls, highlightSummaries, dimensionIds, conceptCards?)
+ * Response: `GenerateResponse` ({ cards, error? })
+ *
+ * Each action is handled by a dedicated async function:
+ *   unpack_brief          → `handleUnpackBrief`  → ConceptCard[]
+ *   analyze               → `handleAnalyze`       → MotifCard[]
+ *   visual_variations     → `handleVisualVariations` → VisualCard[]  (parallel)
+ *   conceptual_variations → `handleConceptualVariations` → ConceptCard[]
+ *   generate_concept_visuals → `handleGenerateConceptVisuals` → VisualCard[] (parallel)
+ *   user_added            → no-op (returns [])
+ *
+ * Two Gemini call patterns are used:
+ *
+ * 1. JSON mode (`generateJson`): uses `@google/genai` SDK with
+ *    `responseMimeType: "application/json"` and a `responseJsonSchema` to get
+ *    structured output in a single call.  Model: `gemini-2.5-flash`.
+ *
+ * 2. Image output (`generateImageOutput`): uses a direct REST fetch because
+ *    the `@google/genai` SDK does not cleanly expose `responseModalities`.
+ *    Requests both TEXT and IMAGE modalities.  Model: `gemini-2.5-flash-image`.
+ *    Visual variations and concept-visual generation both use this pattern with
+ *    `Promise.allSettled` so one failing dimension does not abort the batch.
+ *
+ * Logging: every call writes JSON artefacts to `logs/<timestamp>/<action>/`
+ * via `BatchLogger`.  Image bytes are also saved to disk for inspection.
+ * `scrubBase64` removes raw base64 strings before writing response logs to
+ * keep file sizes manageable.
+ *
+ * `maxDuration = 300` allows up to 5 minutes; needed for large parallel batches.
+ */
+
 import { NextRequest, NextResponse } from "next/server";
 import { Type } from "@google/genai";
 import { getGeminiClient } from "@/lib/gemini/client";
@@ -6,13 +43,12 @@ import { DIMENSION_MAP, DIMENSIONS } from "@/lib/dimensions";
 import { BatchLogger, nowIso, scrubBase64 } from "@/lib/logger";
 import type {
   ActionType,
+  ConceptCard,
   ConceptCardRef,
   GenerateRequest,
   GenerateResponse,
-  InsightCard,
-  VisualVariationCard,
-  ConceptualVariationCard,
-  ConceptCard,
+  MotifCard,
+  VisualCard,
   ResultCard,
 } from "@/types";
 
@@ -71,7 +107,9 @@ async function generateJson<T>(
   return { result: JSON.parse(rawText) as T, rawText };
 }
 
-// ─── Image output generator (direct REST — SDK doesn't expose responseModalities) ──
+// ─── Image output generator ────────────────────────────────────────────────────
+// Uses direct REST rather than the SDK because `@google/genai` does not expose
+// `responseModalities` in its typed config surface.
 
 const IMAGE_MODEL = "gemini-2.5-flash-image";
 
@@ -83,7 +121,6 @@ type ImageOutputResult = {
   rawResponse: any;
 };
 
-/** Call Gemini with image output. imageDataUrl is optional — omit for text-only input. */
 async function generateImageOutput(
   promptText: string,
   imageDataUrl?: string
@@ -135,64 +172,85 @@ async function generateImageOutput(
   };
 }
 
-// Keep the old name as an alias used by visual variations handler below
 const generateWithImageOutput = (prompt: string, url: string) => generateImageOutput(prompt, url);
 
-// ─── Action handlers ─────────────────────────────────────────────────────────
+// ─── Schemas ──────────────────────────────────────────────────────────────────
 
-const insightSchema = {
+// Shared by unpack_brief, conceptual_variations, synthesize
+const conceptSchema = {
   type: Type.OBJECT,
-  required: ["insights"],
+  required: ["concepts"],
   properties: {
-    insights: {
+    concepts: {
       type: Type.ARRAY,
       items: {
         type: Type.OBJECT,
-        required: ["title", "summary", "evidence", "implication"],
+        required: ["title", "description", "rationale"],
         properties: {
           title: { type: Type.STRING },
-          summary: { type: Type.STRING },
-          evidence: { type: Type.STRING },
-          implication: { type: Type.STRING },
+          description: { type: Type.STRING },
+          rationale: { type: Type.STRING },
         },
       },
     },
   },
 };
 
-async function handleUnpackBrief(req: GenerateRequest, log: BatchLogger): Promise<InsightCard[]> {
+// Used by analyze
+const motifSchema = {
+  type: Type.OBJECT,
+  required: ["motifs"],
+  properties: {
+    motifs: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        required: ["title", "visualQuality", "howItConveysIdea", "category"],
+        properties: {
+          title: { type: Type.STRING },
+          visualQuality: { type: Type.STRING },
+          howItConveysIdea: { type: Type.STRING },
+          category: { type: Type.STRING },
+        },
+      },
+    },
+  },
+};
+
+// ─── Action handlers ─────────────────────────────────────────────────────────
+
+async function handleUnpackBrief(req: GenerateRequest, log: BatchLogger): Promise<ConceptCard[]> {
   const prompt = `${getPrompt("UNPACK_BRIEF")}
 
 Design Brief:
 ${req.brief || "(none provided)"}
 ${buildHighlightContext(req.highlightSummaries)}${buildUserInstructions(req.userInstructions)}
-Return a JSON object with an "insights" array. Each insight has: title (3–6 words), summary (1–2 sentences), evidence (what in the brief suggests this), implication (what this means for the design direction).
+Return a JSON object with a "concepts" array. Each concept has:
+- title (3–6 words)
+- description (1–2 sentences: what this concept means for the design, its core approach)
+- rationale (1–2 sentences: why this direction is promising or worth pursuing)
 
-Generate 5–8 insights covering: design goals, constraints, tensions or ambiguities, promising design dimensions to explore, and distinct idea directions.`;
+Generate 5–8 distinct concept directions covering: core design goals, key tensions or ambiguities, distinct aesthetic or interaction directions, and promising areas to explore.`;
 
   log.write("request.json", { model: JSON_MODEL, imageCount: 0, prompt });
-
   const startedAt = nowIso();
   const { result: data, rawText } = await generateJson<{
-    insights: Omit<InsightCard, "id" | "type" | "createdAt">[];
-  }>(prompt, insightSchema);
+    concepts: Omit<ConceptCard, "id" | "type" | "createdAt">[];
+  }>(prompt, conceptSchema);
   const endedAt = nowIso();
-
   log.write("response.json", { rawText });
-
-  const cards = (data.insights ?? []).map((item) => ({
+  const cards = (data.concepts ?? []).map((item) => ({
     id: crypto.randomUUID(),
-    type: "insight" as const,
+    type: "concept" as const,
     createdAt: new Date().toISOString(),
     ...item,
   }));
-
   log.write("result.json", cards);
   log.write("timing.json", { startedAt, endedAt, durationSeconds: msDiff(startedAt, endedAt) });
   return cards;
 }
 
-async function handleAnalyze(req: GenerateRequest, log: BatchLogger): Promise<InsightCard[]> {
+async function handleAnalyze(req: GenerateRequest, log: BatchLogger): Promise<MotifCard[]> {
   const allImages = [...req.draftDataUrls, ...req.referenceDataUrls];
   if (!allImages.length) throw new Error("No images provided for analysis.");
 
@@ -205,40 +263,45 @@ async function handleAnalyze(req: GenerateRequest, log: BatchLogger): Promise<In
     ? `You are looking at ${req.draftDataUrls.length} draft image(s).`
     : `You are looking at ${req.referenceDataUrls.length} reference image(s).`;
 
-  const prompt = `You are an expert design critic analyzing visual design assets.
+  // If highlights are present, ground the analysis in them; otherwise use the brief
+  // so the model has at least some design context.
+  const conceptContext = req.highlightSummaries.length
+    ? `\nDesign concepts to consider:\n${req.highlightSummaries.join("\n")}\n`
+    : `\nDesign context: ${req.brief || "(none provided)"}\n`;
+
+  const prompt = `You are an expert visual designer analyzing design images to extract visual motifs.
 
 ${contextNote}
+${conceptContext}${buildUserInstructions(req.userInstructions)}
+Examine all provided images. For each significant visual element, pattern, or quality you observe, extract it as a motif. A motif is a distinctive visual characteristic that could be reused or adapted in new designs to convey specific ideas.
 
-Design Context:
-${req.brief || "(none provided)"}
-${buildHighlightContext(req.highlightSummaries)}${buildUserInstructions(req.userInstructions)}
-Analyze all provided images together. Return a JSON object with an "insights" array. Each insight has: title (3–6 words), summary (1–2 sentences), evidence (specific visual observations — what you actually see), implication (what this means for the design direction).
+Return a JSON object with a "motifs" array. Each motif has:
+- title (2–5 words, the name of this motif)
+- visualQuality (1–2 sentences: what it looks like, how it manifests visually in the image)
+- howItConveysIdea (1–2 sentences: what concept, feeling, or meaning this visual quality communicates)
+- category (one of: color, texture, form, composition, subject, style, typography)
 
-Generate 6–9 insights covering: strengths, weaknesses or blind spots, missing opportunities, inferred design priorities, reusable patterns or ideas worth borrowing, and concrete next directions.`;
+Generate 5–9 distinct motifs covering different visual dimensions of the images.`;
 
   log.write("request.json", { model: JSON_MODEL, imageCount: allImages.length, prompt });
-
   const startedAt = nowIso();
   const { result: data, rawText } = await generateJson<{
-    insights: Omit<InsightCard, "id" | "type" | "createdAt">[];
-  }>(prompt, insightSchema, allImages);
+    motifs: Omit<MotifCard, "id" | "type" | "createdAt">[];
+  }>(prompt, motifSchema, allImages);
   const endedAt = nowIso();
-
   log.write("response.json", { rawText });
-
-  const cards = (data.insights ?? []).map((item) => ({
+  const cards = (data.motifs ?? []).map((item) => ({
     id: crypto.randomUUID(),
-    type: "insight" as const,
+    type: "motif" as const,
     createdAt: new Date().toISOString(),
     ...item,
   }));
-
   log.write("result.json", cards);
   log.write("timing.json", { startedAt, endedAt, durationSeconds: msDiff(startedAt, endedAt) });
   return cards;
 }
 
-async function handleVisualVariations(req: GenerateRequest, log: BatchLogger): Promise<VisualVariationCard[]> {
+async function handleVisualVariations(req: GenerateRequest, log: BatchLogger): Promise<VisualCard[]> {
   if (!req.draftDataUrls.length) throw new Error("No draft image provided for visual variations.");
 
   const basePrompt = getPrompt("VISUAL_VARIATIONS").replace("[A CONCEPT]", req.brief || "this design");
@@ -248,7 +311,6 @@ async function handleVisualVariations(req: GenerateRequest, log: BatchLogger): P
   const targetDimensions = dimensionIds.map((id) => DIMENSION_MAP[id]).filter(Boolean);
   const extraContext = `${buildHighlightContext(req.highlightSummaries)}${buildUserInstructions(req.userInstructions)}`;
 
-  // Log overall batch metadata
   log.write("batch.json", {
     model: IMAGE_MODEL,
     dimensionIds,
@@ -258,7 +320,8 @@ async function handleVisualVariations(req: GenerateRequest, log: BatchLogger): P
 
   const batchStart = nowIso();
 
-  // Fire all dimension calls in parallel — each gets its own subdirectory
+  // Run all selected dimensions concurrently. Promise.allSettled ensures a
+  // single slow or failed dimension does not cancel the others.
   const results = await Promise.allSettled(
     targetDimensions.map(async (dim) => {
       const dimDir = log.subdir(dim.id);
@@ -272,7 +335,6 @@ Analyze the attached design image on this specific Arnheim dimension. Then gener
 
 Provide your analysis first (2–3 sentences), then the variation panel image.`;
 
-      // request.json (no base64 — keep it readable)
       writeJsonRelative(dimDir, "request.json", {
         dimensionId: dim.id,
         dimensionLabel: dim.label,
@@ -300,21 +362,17 @@ Provide your analysis first (2–3 sentences), then the variation panel image.`;
       }
 
       const endedAt = nowIso();
-
-      // response_raw.json — base64 scrubbed, image saved separately
       writeJsonRelative(dimDir, "response_raw.json", scrubBase64(rawResponse));
 
-      // Save generated image as actual file
       if (genResult.imageData) {
         const ext = genResult.imageMimeType.includes("png") ? ".png" : ".jpg";
         writeImageRelative(dimDir, `output${ext}`, genResult.imageData);
       }
 
-      const card: VisualVariationCard = {
+      const card: VisualCard = {
         id: crypto.randomUUID(),
-        type: "visual_variation",
+        type: "visual",
         title: `${dim.label} Variation`,
-        dimensionId: dim.id,
         dimensionLabel: dim.label,
         analysisText: genResult.text ?? "",
         imageDataUrl: genResult.imageData
@@ -325,7 +383,6 @@ Provide your analysis first (2–3 sentences), then the variation panel image.`;
       };
 
       writeJsonRelative(dimDir, "result.json", {
-        dimensionId: card.dimensionId,
         dimensionLabel: card.dimensionLabel,
         analysisText: card.analysisText,
         hasImage: !!genResult.imageData,
@@ -342,14 +399,13 @@ Provide your analysis first (2–3 sentences), then the variation panel image.`;
   );
 
   const batchEnd = nowIso();
-  const cards: VisualVariationCard[] = results.map((r, i) => {
+  const cards: VisualCard[] = results.map((r, i) => {
     if (r.status === "fulfilled") return r.value;
     const dim = targetDimensions[i];
     return {
       id: crypto.randomUUID(),
-      type: "visual_variation" as const,
+      type: "visual" as const,
       title: `${dim.label} Variation`,
-      dimensionId: dim.id,
       dimensionLabel: dim.label,
       analysisText: "",
       error: r.reason instanceof Error ? r.reason.message : String(r.reason),
@@ -368,30 +424,7 @@ Provide your analysis first (2–3 sentences), then the variation panel image.`;
   return cards;
 }
 
-const conceptualSchema = {
-  type: Type.OBJECT,
-  required: ["variations"],
-  properties: {
-    variations: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        required: ["title", "coreIdea", "howItDiffers", "whyItMayWork", "bestUseCase", "tradeoffs", "nextStep"],
-        properties: {
-          title: { type: Type.STRING },
-          coreIdea: { type: Type.STRING },
-          howItDiffers: { type: Type.STRING },
-          whyItMayWork: { type: Type.STRING },
-          bestUseCase: { type: Type.STRING },
-          tradeoffs: { type: Type.STRING },
-          nextStep: { type: Type.STRING },
-        },
-      },
-    },
-  },
-};
-
-async function handleConceptualVariations(req: GenerateRequest, log: BatchLogger): Promise<ConceptualVariationCard[]> {
+async function handleConceptualVariations(req: GenerateRequest, log: BatchLogger): Promise<ConceptCard[]> {
   const basePrompt = getPrompt("CONCEPTUAL_VARIATIONS");
   const images = [...req.draftDataUrls, ...req.referenceDataUrls].slice(0, 4);
 
@@ -399,54 +432,30 @@ async function handleConceptualVariations(req: GenerateRequest, log: BatchLogger
 
 Design context: ${req.brief || "(none provided)"}
 ${buildHighlightContext(req.highlightSummaries)}${buildUserInstructions(req.userInstructions)}
-Return a JSON object with a "variations" array. Each variation has: title (3–6 words), coreIdea (1 sentence), howItDiffers (how this differs from the starting point), whyItMayWork (why this direction is promising), bestUseCase (when/for whom this works best), tradeoffs (potential downsides), nextStep (one concrete next action).
+Return a JSON object with a "concepts" array. Each concept has:
+- title (3–6 words)
+- description (1–2 sentences: what this concept direction means, its core approach)
+- rationale (1–2 sentences: why this direction is worth pursuing, what makes it promising)
 
-Generate 4–6 genuinely distinct conceptual variations — not just surface rewrites of the same concept.`;
+Generate 4–6 genuinely distinct concept directions — not just surface rewrites of the same idea.`;
 
   log.write("request.json", { model: JSON_MODEL, imageCount: images.length, prompt });
-
   const startedAt = nowIso();
   const { result: data, rawText } = await generateJson<{
-    variations: Omit<ConceptualVariationCard, "id" | "type" | "createdAt">[];
-  }>(prompt, conceptualSchema, images);
+    concepts: Omit<ConceptCard, "id" | "type" | "createdAt">[];
+  }>(prompt, conceptSchema, images);
   const endedAt = nowIso();
-
   log.write("response.json", { rawText });
-
-  const cards = (data.variations ?? []).map((item) => ({
+  const cards = (data.concepts ?? []).map((item) => ({
     id: crypto.randomUUID(),
-    type: "conceptual_variation" as const,
+    type: "concept" as const,
     createdAt: new Date().toISOString(),
     ...item,
   }));
-
   log.write("result.json", cards);
   log.write("timing.json", { startedAt, endedAt, durationSeconds: msDiff(startedAt, endedAt) });
   return cards;
 }
-
-const conceptSchema = {
-  type: Type.OBJECT,
-  required: ["concepts"],
-  properties: {
-    concepts: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        required: ["title", "coreIdea", "interactionDirection", "visualDirection", "bestFor", "risks", "nextStep"],
-        properties: {
-          title: { type: Type.STRING },
-          coreIdea: { type: Type.STRING },
-          interactionDirection: { type: Type.STRING },
-          visualDirection: { type: Type.STRING },
-          bestFor: { type: Type.STRING },
-          risks: { type: Type.STRING },
-          nextStep: { type: Type.STRING },
-        },
-      },
-    },
-  },
-};
 
 async function handleSynthesize(req: GenerateRequest, log: BatchLogger): Promise<ConceptCard[]> {
   if (!req.highlightSummaries.length) throw new Error("No saved highlights to synthesize.");
@@ -459,27 +468,26 @@ ${req.brief || "(none provided)"}
 Saved Ideas:
 ${req.highlightSummaries.map((s, i) => `${i + 1}. ${s}`).join("\n\n")}
 ${buildUserInstructions(req.userInstructions)}
-Return a JSON object with a "concepts" array. Each concept has: title (3–6 words), coreIdea (1–2 sentences), interactionDirection (key behavioral principles), visualDirection (key visual and aesthetic principles), bestFor (ideal use case or audience), risks (main risks or open questions), nextStep (one concrete next action).
+Return a JSON object with a "concepts" array. Each concept has:
+- title (3–6 words)
+- description (1–2 sentences: what this synthesized concept direction means)
+- rationale (1–2 sentences: why this combination of ideas is compelling)
 
 Generate 3–5 distinct concept directions that synthesize and elevate the best threads from the saved ideas.`;
 
   log.write("request.json", { model: JSON_MODEL, imageCount: 0, prompt });
-
   const startedAt = nowIso();
   const { result: data, rawText } = await generateJson<{
     concepts: Omit<ConceptCard, "id" | "type" | "createdAt">[];
   }>(prompt, conceptSchema);
   const endedAt = nowIso();
-
   log.write("response.json", { rawText });
-
   const cards = (data.concepts ?? []).map((item) => ({
     id: crypto.randomUUID(),
     type: "concept" as const,
     createdAt: new Date().toISOString(),
     ...item,
   }));
-
   log.write("result.json", cards);
   log.write("timing.json", { startedAt, endedAt, durationSeconds: msDiff(startedAt, endedAt) });
   return cards;
@@ -502,11 +510,11 @@ function msDiff(a: string, b: string): number {
   return Math.round((new Date(b).getTime() - new Date(a).getTime()) / 10) / 100;
 }
 
-async function handleGenerateConceptVisuals(req: GenerateRequest, log: BatchLogger): Promise<VisualVariationCard[]> {
+async function handleGenerateConceptVisuals(req: GenerateRequest, log: BatchLogger): Promise<VisualCard[]> {
   const cards: ConceptCardRef[] = req.conceptCards ?? [];
-  if (!cards.length) throw new Error("No conceptual variations selected.");
+  if (!cards.length) throw new Error("No concept cards selected.");
 
-  const imageDataUrl = req.draftDataUrls[0]; // optional reference for style
+  const imageDataUrl = req.draftDataUrls[0];
   const extraContext = buildUserInstructions(req.userInstructions);
   const batchStart = nowIso();
 
@@ -524,13 +532,13 @@ async function handleGenerateConceptVisuals(req: GenerateRequest, log: BatchLogg
 
       const prompt = `${getPrompt("GENERATE_CONCEPT_VISUALS")}
 
-Conceptual variation: "${card.title}"
-Core idea: ${card.coreIdea}
-How it differs: ${card.howItDiffers}
+Concept: "${card.title}"
+Description: ${card.description}
+Rationale: ${card.rationale}
 
 Overall design context: ${req.brief || "(none provided)"}
 ${extraContext}
-Generate a 2×2 panel of 4 distinct visuals. Each visual should use clearly different visual elements, but all should strongly express the core idea above.`;
+Generate a 2×2 panel of 4 distinct visuals. Each visual should use clearly different visual elements, but all should strongly express the concept above.`;
 
       writeJsonRelative(cardDir, "request.json", {
         cardId: card.id,
@@ -577,29 +585,27 @@ Generate a 2×2 panel of 4 distinct visuals. Each visual should use clearly diff
 
       return {
         id: crypto.randomUUID(),
-        type: "visual_variation" as const,
+        type: "visual" as const,
         title: `${card.title} — Visuals`,
-        dimensionId: "concept_visual",
         dimensionLabel: card.title,
-        analysisText: genResult.text ?? card.coreIdea,
+        analysisText: genResult.text ?? card.description,
         imageDataUrl: genResult.imageData
           ? `data:${genResult.imageMimeType};base64,${genResult.imageData}`
           : undefined,
         imageMimeType: genResult.imageMimeType,
         createdAt: new Date().toISOString(),
-      } satisfies VisualVariationCard;
+      } satisfies VisualCard;
     })
   );
 
   const batchEnd = nowIso();
-  const output: VisualVariationCard[] = results.map((r, i) => {
+  const output: VisualCard[] = results.map((r, i) => {
     if (r.status === "fulfilled") return r.value;
     const card = cards[i];
     return {
       id: crypto.randomUUID(),
-      type: "visual_variation" as const,
+      type: "visual" as const,
       title: `${card.title} — Visuals`,
-      dimensionId: "concept_visual",
       dimensionLabel: card.title,
       analysisText: "",
       error: r.reason instanceof Error ? r.reason.message : String(r.reason),
@@ -626,7 +632,6 @@ const handlers: Record<ActionType, (req: GenerateRequest, log: BatchLogger) => P
   visual_variations: handleVisualVariations,
   conceptual_variations: handleConceptualVariations,
   generate_concept_visuals: handleGenerateConceptVisuals,
-  synthesize: handleSynthesize,
   user_added: async () => [],
 };
 

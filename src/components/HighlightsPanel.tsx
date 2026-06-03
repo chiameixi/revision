@@ -1,5 +1,26 @@
 "use client";
 
+/**
+ * src/components/HighlightsPanel.tsx
+ *
+ * Responsibility: Right panel — the curated collection of saved cards that
+ * feeds context back into subsequent API calls.
+ *
+ * Cards can reach this panel in two ways:
+ * 1. Clicking "Save" on a result card in the Feed / Tree / Cluster views.
+ * 2. Dragging a result card and dropping it onto this panel (HTML5 drag-and-
+ *    drop; the dragged data is serialised as `card-drag` on the DataTransfer).
+ *
+ * The "Include" checkbox on each `HighlightCard` sets `includeInNextCall`.
+ * `page.tsx` reads that flag when building a `GenerateRequest`, converting
+ * included highlights to plain-text summaries (`highlightSummaries`) rather
+ * than raw JSON — this keeps the token count manageable and avoids sending
+ * full image data back to the model unnecessarily.
+ *
+ * Pinned cards sort before unpinned ones; within each group, insertion order
+ * (`orderIndex`) is preserved.
+ */
+
 import { useState } from "react";
 import type { Highlight, ResultCard } from "@/types";
 import HighlightCard from "./HighlightCard";
@@ -14,6 +35,7 @@ interface Props {
   onDropCard: (card: ResultCard) => void;
   onAddNote: (title: string, body: string) => void;
   hoveredSourceIds?: Set<string>;
+  onCollapse?: () => void;
 }
 
 export default function HighlightsPanel({
@@ -26,6 +48,7 @@ export default function HighlightsPanel({
   onDropCard,
   onAddNote,
   hoveredSourceIds,
+  onCollapse,
 }: Props) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [addingNote, setAddingNote] = useState(false);
@@ -62,13 +85,14 @@ export default function HighlightsPanel({
 
   return (
     <aside
-      className="w-72 shrink-0 h-screen flex flex-col border-l overflow-hidden transition-all duration-150"
+      className="h-full flex flex-col border-l overflow-hidden"
       style={{
         background: isDragOver ? "#f5f5f4" : "#ffffff",
         borderColor: isDragOver ? "#111" : "#ccc9c0",
       }}
       onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
       onDragLeave={(e) => {
+        // Ignore leave events that are still inside the panel (child elements).
         if (e.relatedTarget && e.currentTarget.contains(e.relatedTarget as Node)) return;
         setIsDragOver(false);
       }}
@@ -88,6 +112,14 @@ export default function HighlightsPanel({
             >
               + Note
             </button>
+            {onCollapse && (
+              <button
+                onClick={onCollapse}
+                className="text-[#bbb] hover:text-[#555] transition-colors"
+                title="Hide panel"
+                style={{ fontSize: 14, lineHeight: 1 }}
+              >›</button>
+            )}
           </div>
         </div>
         <p className="text-[11px]" style={{ color: isDragOver ? "#111" : "#aaa" }}>

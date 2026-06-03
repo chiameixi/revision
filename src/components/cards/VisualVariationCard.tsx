@@ -1,23 +1,51 @@
 "use client";
 
+/**
+ * src/components/cards/VisualVariationCard.tsx  (exported as `VisualCard`)
+ *
+ * Responsibility: Renders a single visual card — a model-generated image
+ * paired with a textual analysis.  Used for both Visual Variations
+ * (per-Arnheim-dimension 5×3 panels) and Generate Concept Visuals
+ * (per-concept 2×2 panels).
+ *
+ * The card shows the full generated image inline (no fixed height), which
+ * makes these cards taller than concept or motif cards.  This size difference
+ * is reflected in `VISUAL_NODE_H`/`VISUAL_NODE_W` in `TreeView.tsx`.
+ *
+ * "Use as Reference Input": clicking this button calls `onAddAsReference`
+ * with the image's data URL and the dimension/concept label.  The parent
+ * (`page.tsx → handleAddAsReference`) creates a new reference `Asset` and
+ * adds it to the store, making the image immediately available in
+ * InputsSidebar for inclusion in future calls.  The `added` flag disables the
+ * button after one click to prevent duplicate assets.
+ */
+
 import { useState } from "react";
-import type { VisualVariationCard as VisualVariationCardType } from "@/types";
+import type { VisualCard as VisualCardType, ResultCard } from "@/types";
 
 interface Props {
-  card: VisualVariationCardType;
+  card: VisualCardType;
   isSaved: boolean;
   onSave: () => void;
   onDismiss: () => void;
-  onUpdate?: (card: VisualVariationCardType) => void;
+  onAddAsReference?: (dataUrl: string, label: string) => void;
+  onUpdate?: (card: ResultCard) => void;
 }
 
-export default function VisualVariationCard({ card, isSaved, onSave, onDismiss, onUpdate }: Props) {
+export default function VisualCard({ card, isSaved, onSave, onDismiss, onAddAsReference, onUpdate }: Props) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(card);
+  const [added, setAdded] = useState(false);
 
   function startEdit() { setDraft(card); setIsEditing(true); }
   function cancelEdit() { setDraft(card); setIsEditing(false); }
   function commitEdit() { onUpdate?.(draft); setIsEditing(false); }
+
+  function handleAddAsReference() {
+    if (!card.imageDataUrl || !onAddAsReference) return;
+    onAddAsReference(card.imageDataUrl, card.dimensionLabel);
+    setAdded(true);
+  }
 
   if (isEditing) {
     return (
@@ -99,6 +127,21 @@ export default function VisualVariationCard({ card, isSaved, onSave, onDismiss, 
             <div className="p-4 pt-3">
               <p className="text-[10px] uppercase tracking-widest text-[#888] mb-1">Analysis</p>
               <p className="text-sm text-[#444] leading-relaxed">{card.analysisText}</p>
+            </div>
+          )}
+          {card.imageDataUrl && onAddAsReference && (
+            <div className="px-4 pb-4">
+              <button
+                onClick={handleAddAsReference}
+                disabled={added}
+                className={`text-xs w-full px-3 py-1.5 rounded-sm border transition-colors ${
+                  added
+                    ? "text-[#aaa] border-[#ccc] cursor-default"
+                    : "text-[#555] border-[#ccc] hover:border-[#555] hover:text-[#111]"
+                }`}
+              >
+                {added ? "✓ Added to inputs" : "+ Use as Reference Input"}
+              </button>
             </div>
           )}
         </>

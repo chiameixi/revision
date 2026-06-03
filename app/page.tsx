@@ -1,6 +1,40 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+/**
+ * app/page.tsx
+ *
+ * Responsibility: Root page component and central state coordinator for the
+ * design workspace.
+ *
+ * All cross-panel state (hover highlights, composer modal, generation loading
+ * status, dismissed cards) lives here.  The page composes the three-panel
+ * layout and wires together the data flow between panels:
+ *
+ *   InputsSidebar  ←─ assets, brief, hoveredAssetIds
+ *        ↕
+ *   CenterPanel    ←─ generations (filtered), actions, hover callbacks
+ *        ↕
+ *   HighlightsPanel ←─ highlights, hover callbacks
+ *        ↕
+ *   CallComposerModal ─── triggers handleSend → POST /api/generate
+ *
+ * Key design decisions:
+ * - `dismissed` is local component state (not persisted) so refreshing the
+ *   page restores all cards.  It maps genId → Set<cardId>.
+ * - `hoveredSourceIds` / `hoveredAssetIds` are derived from mouse events on
+ *   generation blocks and passed down to HighlightsPanel / InputsSidebar to
+ *   draw attention to provenance.
+ * - `formatHighlightForContext` converts a saved highlight into a compact
+ *   plain-text summary rather than sending JSON, keeping the model prompt
+ *   readable and avoiding extra tokens for fields the model doesn't need.
+ * - `handleGenerateVisuals` is a shortcut that pre-populates the composer
+ *   with a single concept card and opens it directly from a ConceptCard's
+ *   "Generate Visuals →" button.
+ * - `handleBranchFrom` saves the card as a highlight first so it appears in
+ *   the composer's highlights checklist when the modal opens.
+ */
+
+import { useState, useMemo, useCallback, useRef } from "react";
 import { useProject } from "@/lib/store";
 import { DIMENSIONS } from "@/lib/dimensions";
 import InputsSidebar from "@/components/InputsSidebar";
@@ -9,8 +43,9 @@ import HighlightsPanel from "@/components/HighlightsPanel";
 import CallComposerModal from "@/components/CallComposerModal";
 import type {
   ActionType,
+  Asset,
   ComposerState,
-  ConceptualVariationCard,
+  ConceptCard,
   Generation,
   GenerateRequest,
   GenerateResponse,
@@ -30,19 +65,16 @@ const DEFAULT_COMPOSER: ComposerState = {
 
 function formatHighlightForContext(h: { card: ResultCard; note: string }): string {
   const card = h.card;
-  const lines: string[] = [`[${card.type.replace("_", " ")}] ${card.title}`];
-  if (card.type === "insight") {
-    lines.push(`Summary: ${card.summary}`);
-    lines.push(`Implication: ${card.implication}`);
-  } else if (card.type === "visual_variation") {
+  const lines: string[] = [`[${card.type}] ${card.title}`];
+  if (card.type === "concept") {
+    lines.push(`Description: ${card.description}`);
+    lines.push(`Rationale: ${card.rationale}`);
+  } else if (card.type === "motif") {
+    lines.push(`Visual quality: ${card.visualQuality}`);
+    lines.push(`How it conveys the idea: ${card.howItConveysIdea}`);
+  } else if (card.type === "visual") {
     lines.push(`Dimension: ${card.dimensionLabel}`);
     if (card.analysisText) lines.push(`Analysis: ${card.analysisText}`);
-  } else if (card.type === "conceptual_variation") {
-    lines.push(`Core idea: ${card.coreIdea}`);
-    lines.push(`How it differs: ${card.howItDiffers}`);
-  } else if (card.type === "concept") {
-    lines.push(`Core idea: ${card.coreIdea}`);
-    lines.push(`Best for: ${card.bestFor}`);
   } else if (card.type === "note") {
     if (card.body) lines.push(`Note: ${card.body}`);
   }
@@ -58,13 +90,47 @@ export default function WorkspacePage() {
   const [hoveredSourceIds, setHoveredSourceIds] = useState<Set<string>>(new Set());
   const [hoveredAssetIds, setHoveredAssetIds] = useState<Set<string>>(new Set());
 
+  // Panel resize + collapse state
+  const [leftWidth, setLeftWidth] = useState(288);
+  const [rightWidth, setRightWidth] = useState(288);
+  const [leftHidden, setLeftHidden] = useState(false);
+  const [rightHidden, setRightHidden] = useState(false);
+  const leftWidthRef = useRef(288);
+  const rightWidthRef = useRef(288);
+  leftWidthRef.current = leftWidth;
+  rightWidthRef.current = rightWidth;
+
+  function startResizeLeft(e: React.MouseEvent) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = leftWidthRef.current;
+    const move = (ev: MouseEvent) => setLeftWidth(Math.min(520, Math.max(160, startW + ev.clientX - startX)));
+    const up = () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); document.body.style.cursor = ""; };
+    document.body.style.cursor = "col-resize";
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  }
+
+  function startResizeRight(e: React.MouseEvent) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = rightWidthRef.current;
+    const move = (ev: MouseEvent) => setRightWidth(Math.min(520, Math.max(160, startW - (ev.clientX - startX))));
+    const up = () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); document.body.style.cursor = ""; };
+    document.body.style.cursor = "col-resize";
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  }
+
   const handleHoverSources = useCallback((cardIds: Set<string>, assetIds: Set<string>) => {
     setHoveredSourceIds(cardIds);
     setHoveredAssetIds(assetIds);
   }, []);
-  // Track dismissed cards per generation
+
   const [dismissed, setDismissed] = useState<Record<string, Set<string>>>({});
 
+  // Pre-compute the set of saved card IDs so each ResultCard can check
+  // `isSaved` in O(1) without scanning the highlights array.
   const savedCardIds = useMemo(
     () => new Set(state.highlights.map((h) => h.card.id)),
     [state.highlights]
@@ -78,10 +144,11 @@ export default function WorkspacePage() {
         .filter((h) => h.includeInNextCall)
         .map((h) => h.id);
 
-      // Default which assets to include based on action
       let includedDraftIds: string[] = [];
       let includedReferenceIds: string[] = [];
 
+      // Pre-select images relevant to the action. The composer lets the researcher
+      // deselect individual images before sending.
       if (["analyze", "visual_variations", "conceptual_variations"].includes(action)) {
         includedDraftIds = drafts.map((a) => a.id);
       }
@@ -120,6 +187,8 @@ export default function WorkspacePage() {
       const includedHighlights = state.highlights.filter((h) =>
         cfg.includedHighlightIds.includes(h.id)
       );
+      // Convert included highlights to plain-text summaries for the prompt.
+      // Track their card IDs separately so the generation can record provenance.
       const highlightSummaries = includedHighlights.map(formatHighlightForContext);
       const sourceCardIds = includedHighlights.map((h) => h.card.id);
 
@@ -172,7 +241,7 @@ export default function WorkspacePage() {
   );
 
   const handleGenerateVisuals = useCallback(
-    (card: ConceptualVariationCard) => {
+    (card: ConceptCard) => {
       const drafts = state.assets.filter((a) => a.type === "draft");
       setComposer({
         open: true,
@@ -182,10 +251,29 @@ export default function WorkspacePage() {
         includedHighlightIds: [],
         userInstructions: "",
         selectedDimensionIds: [],
-        conceptCards: [{ id: card.id, title: card.title, coreIdea: card.coreIdea, howItDiffers: card.howItDiffers }],
+        conceptCards: [{
+          id: card.id,
+          title: card.title,
+          description: card.description,
+          rationale: card.rationale,
+        }],
       });
     },
     [state.assets]
+  );
+
+  const handleAddAsReference = useCallback(
+    (dataUrl: string, label: string) => {
+      const asset: Asset = {
+        id: crypto.randomUUID(),
+        type: "reference",
+        fileName: `${label} (generated)`,
+        dataUrl,
+        note: "",
+      };
+      actions.addAsset(asset);
+    },
+    [actions]
   );
 
   const handleBranchFrom = useCallback(
@@ -220,7 +308,6 @@ export default function WorkspacePage() {
     });
   }, []);
 
-  // Filter dismissed cards from generations before rendering
   const visibleGenerations = useMemo(
     () =>
       state.generations.map((gen) => ({
@@ -240,17 +327,29 @@ export default function WorkspacePage() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#f0eeea]">
-      <InputsSidebar
-        title={state.title}
-        brief={state.brief}
-        assets={state.assets}
-        hoveredAssetIds={hoveredAssetIds}
-        onTitleChange={actions.setTitle}
-        onBriefChange={actions.setBrief}
-        onAddAsset={actions.addAsset}
-        onRemoveAsset={actions.removeAsset}
-      />
+      {/* ── Left panel ────────────────────────────────────────────────────── */}
+      {leftHidden ? (
+        <CollapsedStrip label="Inputs" side="left" onExpand={() => setLeftHidden(false)} />
+      ) : (
+        <>
+          <div className="shrink-0 h-screen overflow-hidden" style={{ width: leftWidth }}>
+            <InputsSidebar
+              title={state.title}
+              brief={state.brief}
+              assets={state.assets}
+              hoveredAssetIds={hoveredAssetIds}
+              onTitleChange={actions.setTitle}
+              onBriefChange={actions.setBrief}
+              onAddAsset={actions.addAsset}
+              onRemoveAsset={actions.removeAsset}
+              onCollapse={() => setLeftHidden(true)}
+            />
+          </div>
+          <ResizeHandle onMouseDown={startResizeLeft} />
+        </>
+      )}
 
+      {/* ── Center panel ──────────────────────────────────────────────────── */}
       <CenterPanel
         generations={visibleGenerations}
         isGenerating={isGenerating}
@@ -267,19 +366,31 @@ export default function WorkspacePage() {
         onGenerateVisuals={handleGenerateVisuals}
         onBranchFrom={handleBranchFrom}
         onAddUserCard={handleAddUserCard}
+        onAddAsReference={handleAddAsReference}
       />
 
-      <HighlightsPanel
-        highlights={state.highlights}
-        onRemove={actions.removeHighlight}
-        onToggleInclude={actions.toggleHighlightInclude}
-        onTogglePin={actions.toggleHighlightPin}
-        onUpdateNote={actions.updateHighlightNote}
-        onUpdateCard={actions.updateCard}
-        onDropCard={actions.saveHighlight}
-        onAddNote={handleAddNote}
-        hoveredSourceIds={hoveredSourceIds}
-      />
+      {/* ── Right panel ───────────────────────────────────────────────────── */}
+      {rightHidden ? (
+        <CollapsedStrip label="Highlights" side="right" onExpand={() => setRightHidden(false)} />
+      ) : (
+        <>
+          <ResizeHandle onMouseDown={startResizeRight} />
+          <div className="shrink-0 h-screen overflow-hidden" style={{ width: rightWidth }}>
+            <HighlightsPanel
+              highlights={state.highlights}
+              onRemove={actions.removeHighlight}
+              onToggleInclude={actions.toggleHighlightInclude}
+              onTogglePin={actions.toggleHighlightPin}
+              onUpdateNote={actions.updateHighlightNote}
+              onUpdateCard={actions.updateCard}
+              onDropCard={actions.saveHighlight}
+              onAddNote={handleAddNote}
+              hoveredSourceIds={hoveredSourceIds}
+              onCollapse={() => setRightHidden(true)}
+            />
+          </div>
+        </>
+      )}
 
       {composer.open && (
         <CallComposerModal
@@ -292,6 +403,52 @@ export default function WorkspacePage() {
           onSend={handleSend}
         />
       )}
+    </div>
+  );
+}
+
+// ── Resize handle between panels ──────────────────────────────────────────────
+function ResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
+  return (
+    <div
+      className="shrink-0 h-screen relative cursor-col-resize group select-none"
+      style={{ width: 5 }}
+      onMouseDown={onMouseDown}
+    >
+      <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-[#ccc9c0] group-hover:bg-[#999] transition-colors" />
+    </div>
+  );
+}
+
+// ── Collapsed panel strip ─────────────────────────────────────────────────────
+function CollapsedStrip({ label, side, onExpand }: {
+  label: string;
+  side: "left" | "right";
+  onExpand: () => void;
+}) {
+  return (
+    <div
+      className="shrink-0 h-screen flex flex-col items-center pt-5 pb-4 gap-3 bg-white select-none cursor-pointer group"
+      style={{
+        width: 36,
+        borderRight: side === "left" ? "1px solid #ccc9c0" : undefined,
+        borderLeft: side === "right" ? "1px solid #ccc9c0" : undefined,
+      }}
+      onClick={onExpand}
+      title={`Show ${label}`}
+    >
+      <span
+        className="text-[#bbb] group-hover:text-[#555] transition-colors"
+        style={{ fontSize: 13, lineHeight: 1 }}
+      >
+        {side === "left" ? "›" : "‹"}
+      </span>
+      <span
+        className="text-[9px] uppercase tracking-widest text-[#bbb] group-hover:text-[#555] transition-colors font-medium"
+        style={{ writingMode: "vertical-lr", transform: side === "left" ? "rotate(180deg)" : undefined }}
+      >
+        {label}
+      </span>
     </div>
   );
 }

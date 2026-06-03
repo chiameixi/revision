@@ -1,5 +1,22 @@
 "use client";
 
+/**
+ * src/components/InputsSidebar.tsx
+ *
+ * Responsibility: Left panel — project title, design brief textarea, and
+ * image upload areas for draft and reference images.
+ *
+ * This component is purely presentational: all state lives in the parent
+ * (`app/page.tsx`) and is mutated through callback props.  The sidebar
+ * receives `hoveredAssetIds` from the parent to highlight thumbnails when the
+ * user hovers a result card that was generated from those images.
+ *
+ * File upload: images are read as base64 data URLs via `FileReader` and
+ * immediately added to the asset list in the store.  The hidden file input
+ * approach (triggered by a visible button) avoids custom styling constraints
+ * on the native `<input type="file">` element.
+ */
+
 import { useRef } from "react";
 import type { Asset } from "@/types";
 
@@ -12,6 +29,7 @@ interface Props {
   onBriefChange: (v: string) => void;
   onAddAsset: (asset: Asset) => void;
   onRemoveAsset: (id: string) => void;
+  onCollapse?: () => void;
 }
 
 export default function InputsSidebar({
@@ -23,6 +41,7 @@ export default function InputsSidebar({
   onBriefChange,
   onAddAsset,
   onRemoveAsset,
+  onCollapse,
 }: Props) {
   const draftInput = useRef<HTMLInputElement>(null);
   const refInput = useRef<HTMLInputElement>(null);
@@ -46,20 +65,29 @@ export default function InputsSidebar({
         };
         reader.readAsDataURL(file);
       });
+      // Reset the input so the same file can be re-uploaded after removal.
       e.target.value = "";
     };
   }
 
   return (
-    <aside className="w-72 shrink-0 h-screen flex flex-col bg-white border-r overflow-y-auto" style={{ borderColor: "#ccc9c0" }}>
+    <aside className="h-full flex flex-col bg-white border-r overflow-y-auto" style={{ borderColor: "#ccc9c0" }}>
       {/* Header */}
-      <div className="px-4 pt-5 pb-3 border-b" style={{ borderColor: "#ccc9c0" }}>
+      <div className="px-4 pt-4 pb-3 border-b flex items-start gap-2" style={{ borderColor: "#ccc9c0" }}>
         <input
           value={title}
           onChange={(e) => onTitleChange(e.target.value)}
-          className="w-full text-sm text-[#111] bg-transparent outline-none placeholder-[#bbb]"
+          className="flex-1 min-w-0 text-sm text-[#111] bg-transparent outline-none placeholder-[#bbb]"
           placeholder="Project title"
         />
+        {onCollapse && (
+          <button
+            onClick={onCollapse}
+            className="shrink-0 text-[#bbb] hover:text-[#555] transition-colors mt-0.5"
+            title="Hide panel"
+            style={{ fontSize: 14, lineHeight: 1 }}
+          >‹</button>
+        )}
       </div>
 
       {/* Brief */}

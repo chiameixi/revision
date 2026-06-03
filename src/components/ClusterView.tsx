@@ -1,40 +1,65 @@
 "use client";
 
+/**
+ * src/components/ClusterView.tsx
+ *
+ * Responsibility: Alternative flat view of all cards, grouped into clusters.
+ *
+ * Default clusters are created automatically by card type (Concepts, Motifs,
+ * Visuals, Notes) and displayed as bordered panels with a 2-column tile grid.
+ * Visual cards get a portrait image gallery instead of a text tile grid.
+ *
+ * Custom clusters: the researcher can create named custom clusters and drag
+ * cards between them.  Assignments are stored in component state (not
+ * persisted to localStorage) so they reset on reload — this is intentional,
+ * treating the cluster view as a scratch space for temporary grouping.
+ *
+ * Drag and drop uses two separate DataTransfer keys:
+ * - `card-drag`: contains the full serialised card, used by HighlightsPanel
+ *   to accept drops from this view.
+ * - `cluster-card`: contains only the card ID, used internally to rearrange
+ *   between clusters without re-serialising the whole card.
+ *
+ * Dropping onto a type cluster (the default kind) removes the manual
+ * assignment, returning the card to its natural type group.
+ *
+ * The `ClusterDetailPanel` mirrors the detail panel in `TreeView` and is not
+ * extracted into a shared component because the two panels have slightly
+ * different data shapes (LayoutNode vs ClusterItem).
+ */
+
 import { useMemo, useState } from "react";
-import type { Asset, Generation, Highlight, ResultCard, ActionType, VisualVariationCard } from "@/types";
+import type { Asset, Generation, Highlight, ResultCard, ActionType, VisualCard } from "@/types";
 
 // ── Style maps ────────────────────────────────────────────────────────────────
 const TYPE_STYLE: Record<string, {
   bg: string; border: string; selectedBorder: string;
   badgeBg: string; badgeText: string; line: string; clusterBg: string;
 }> = {
-  insight:              { bg: "#ffffff", border: "#111111", selectedBorder: "#111111", badgeBg: "#111111", badgeText: "#ffffff", line: "#888888", clusterBg: "#ffffff" },
-  visual_variation:     { bg: "#f5f5f4", border: "#111111", selectedBorder: "#111111", badgeBg: "#333333", badgeText: "#ffffff", line: "#888888", clusterBg: "#f5f5f4" },
-  conceptual_variation: { bg: "#ffffff", border: "#444444", selectedBorder: "#111111", badgeBg: "#444444", badgeText: "#ffffff", line: "#888888", clusterBg: "#fafaf8" },
-  concept:              { bg: "#f5f5f4", border: "#333333", selectedBorder: "#111111", badgeBg: "#333333", badgeText: "#ffffff", line: "#888888", clusterBg: "#f5f5f4" },
-  note:                 { bg: "#fafaf8", border: "#888888", selectedBorder: "#111111", badgeBg: "#888888", badgeText: "#ffffff", line: "#bbbbbb", clusterBg: "#fafaf8" },
+  concept: { bg: "#fffbf5", border: "#b45309", selectedBorder: "#78350f", badgeBg: "#b45309", badgeText: "#ffffff", line: "#d97706", clusterBg: "#fffbf5" },
+  motif:   { bg: "#f0fdf4", border: "#16a34a", selectedBorder: "#166534", badgeBg: "#166534", badgeText: "#ffffff", line: "#4ade80", clusterBg: "#f0fdf4" },
+  visual:  { bg: "#fafafa", border: "#333333", selectedBorder: "#111111", badgeBg: "#111111", badgeText: "#ffffff", line: "#888888", clusterBg: "#fafafa" },
+  note:    { bg: "#fafaf8", border: "#888888", selectedBorder: "#111111", badgeBg: "#888888", badgeText: "#ffffff", line: "#bbbbbb", clusterBg: "#fafaf8" },
 };
 
 const TYPE_LABEL_PLURAL: Record<string, string> = {
-  insight: "Insights",
-  visual_variation: "Visual Variations",
-  conceptual_variation: "Conceptual Variations",
   concept: "Concepts",
+  motif: "Motifs",
+  visual: "Visuals",
   note: "Your Notes",
 };
 
 const TYPE_LABEL_SINGLE: Record<string, string> = {
-  insight: "Insight",
-  visual_variation: "Visual",
-  conceptual_variation: "Conceptual",
   concept: "Concept",
+  motif: "Motif",
+  visual: "Visual",
   note: "Note",
 };
 
 const ACTION_LABEL: Record<string, string> = {
   unpack_brief: "Unpack Brief",
   analyze: "Analyze",
-  visual_variations: "Visual Variations",
+  visuals: "Visual Variations",
   conceptual_variations: "Conceptual Vars",
   generate_concept_visuals: "Concept Visuals",
   synthesize: "Synthesize",
@@ -46,7 +71,6 @@ const BRANCH_ACTIONS: { id: ActionType; label: string }[] = [
   { id: "analyze",               label: "Analyze" },
   { id: "visual_variations",     label: "Visual Variations" },
   { id: "conceptual_variations", label: "Conceptual Variations" },
-  { id: "synthesize",            label: "Synthesize" },
 ];
 
 // ── Custom cluster palette ────────────────────────────────────────────────────
@@ -78,10 +102,11 @@ interface Props {
   onBranchFrom: (card: ResultCard, action: ActionType) => void;
   onDismissCard: (genId: string, cardId: string) => void;
   onAddUserCard: (title: string, body: string) => void;
+  onAddAsReference: (dataUrl: string, label: string) => void;
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function ClusterView({ generations, savedCardIds, highlights, assets, onHoverSources, onSaveCard, onBranchFrom, onDismissCard, onAddUserCard }: Props) {
+export default function ClusterView({ generations, savedCardIds, highlights, assets, onHoverSources, onSaveCard, onBranchFrom, onDismissCard, onAddUserCard, onAddAsReference }: Props) {
   const [selectedItem, setSelectedItem] = useState<ClusterItem | null>(null);
   const [addingToGroup, setAddingToGroup] = useState<string | null>(null);
   const [addTitle, setAddTitle] = useState("");
@@ -124,6 +149,8 @@ export default function ClusterView({ generations, savedCardIds, highlights, ass
       const raw = e.dataTransfer.getData("cluster-card");
       if (!raw) return;
       const { cardId } = JSON.parse(raw) as { cardId: string };
+      // null targetId means the card was dropped on a type cluster — remove the
+      // manual assignment so it reverts to its default type group.
       if (targetId === null) {
         setCardAssignments((prev) => { const next = { ...prev }; delete next[cardId]; return next; });
       } else {
@@ -153,7 +180,7 @@ export default function ClusterView({ generations, savedCardIds, highlights, ass
     setCardAssignments((prev) => { const next = { ...prev }; Object.keys(next).forEach((k) => { if (next[k] === id) delete next[k]; }); return next; });
   }
 
-  const TYPES: ResultCard["type"][] = ["insight", "visual_variation", "conceptual_variation", "concept", "note"];
+  const TYPES: ResultCard["type"][] = ["concept", "motif", "visual", "note"];
   // Exclude cards that have been manually assigned to a custom cluster
   const groups = TYPES.map((type) => ({
     type,
@@ -230,11 +257,11 @@ export default function ClusterView({ generations, savedCardIds, highlights, ass
                 ) : (
                   <div className="grid grid-cols-2 gap-1.5">
                     {ccItems.map((item) => {
-                      const ts = TYPE_STYLE[item.card.type] ?? TYPE_STYLE.insight;
+                      const ts = TYPE_STYLE[item.card.type] ?? TYPE_STYLE.concept;
                       const isSelected = selectedItem?.card.id === item.card.id;
                       const isSaved = savedCardIds.has(item.card.id);
-                      const isVis = item.card.type === "visual_variation";
-                      const imgSrc = isVis ? (item.card as VisualVariationCard).imageDataUrl : undefined;
+                      const isVis = item.card.type === "visual";
+                      const imgSrc = isVis ? (item.card as VisualCard).imageDataUrl : undefined;
                       return (
                         <div
                           key={item.card.id}
@@ -326,7 +353,7 @@ export default function ClusterView({ generations, savedCardIds, highlights, ass
           {/* ── Type clusters ────────────────────────────────────────────── */}
           {groups.map((group) => {
             const s = TYPE_STYLE[group.type];
-            const isVisualGroup = group.type === "visual_variation";
+            const isVisualGroup = group.type === "visual";
 
             return (
               <div
@@ -354,7 +381,7 @@ export default function ClusterView({ generations, savedCardIds, highlights, ass
                     {TYPE_LABEL_PLURAL[group.type]}
                   </span>
                   <span className="text-[10px] text-[#aaa] flex-1">{group.items.length}</span>
-                  {group.type !== "visual_variation" && (
+                  {group.type !== "visual" && (
                     <button
                       onClick={() => { setAddingToGroup(group.type); setAddTitle(""); setAddBody(""); }}
                       className="text-[10px] font-medium px-2 py-0.5 rounded-full transition-colors"
@@ -401,7 +428,7 @@ export default function ClusterView({ generations, savedCardIds, highlights, ass
                 {isVisualGroup ? (
                   <div className="grid grid-cols-3 gap-2">
                     {group.items.map((item) => {
-                      const visCard = item.card as VisualVariationCard;
+                      const visCard = item.card as VisualCard;
                       const isSelected = selectedItem?.card.id === item.card.id;
                       const isSaved = savedCardIds.has(item.card.id);
                       return (
@@ -525,6 +552,7 @@ export default function ClusterView({ generations, savedCardIds, highlights, ass
             if (found) setSelectedItem(found);
           }}
           onClose={() => setSelectedItem(null)}
+          onAddAsReference={onAddAsReference}
         />
       ) : (
         <div className="w-[200px] shrink-0 border-l border-[#e4e3e0] bg-white/60 flex items-center justify-center">
@@ -553,6 +581,7 @@ function ClusterDetailPanel({
   onRemove,
   onSelectSibling,
   onClose,
+  onAddAsReference,
 }: {
   item: ClusterItem;
   genSiblings: ClusterItem[];
@@ -568,12 +597,13 @@ function ClusterDetailPanel({
   onRemove: () => void;
   onSelectSibling: (id: string) => void;
   onClose: () => void;
+  onAddAsReference: (dataUrl: string, label: string) => void;
 }) {
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const { card } = item;
-  const s = TYPE_STYLE[card.type] ?? TYPE_STYLE.insight;
-  const isVisual = card.type === "visual_variation";
-  const mainImage = isVisual ? (card as VisualVariationCard).imageDataUrl : undefined;
+  const s = TYPE_STYLE[card.type] ?? TYPE_STYLE.concept;
+  const isVisual = card.type === "visual";
+  const mainImage = isVisual ? (card as VisualCard).imageDataUrl : undefined;
 
   const sourceHighlights = sourceCardIds
     .map((pid) => highlights.find((h) => h.card.id === pid))
@@ -588,8 +618,8 @@ function ClusterDetailPanel({
     .filter((a): a is Asset => a !== undefined);
 
   const imageSiblings = genSiblings.filter(
-    (sib): sib is ClusterItem & { card: VisualVariationCard } =>
-      sib.card.type === "visual_variation" && !!(sib.card as VisualVariationCard).imageDataUrl
+    (sib): sib is ClusterItem & { card: VisualCard } =>
+      sib.card.type === "visual" && !!(sib.card as VisualCard).imageDataUrl
   );
   const textSiblings = genSiblings.filter((sib) => !(imageSiblings as ClusterItem[]).includes(sib));
 
@@ -669,9 +699,17 @@ function ClusterDetailPanel({
                 className="w-full object-cover cursor-zoom-in"
                 onClick={() => setLightboxSrc(mainImage)}
               />
-              <p className="text-[9px] text-[#bbb] px-3 py-1.5">
-                Click to enlarge · {(card as VisualVariationCard).dimensionLabel}
-              </p>
+              <div className="px-3 py-2 flex items-center justify-between gap-2">
+                <p className="text-[9px] text-[#bbb]">
+                  Click to enlarge · {(card as VisualCard).dimensionLabel}
+                </p>
+                <button
+                  onClick={() => onAddAsReference(mainImage, (card as VisualCard).dimensionLabel)}
+                  className="text-[9px] text-[#555] hover:text-[#111] border border-[#ccc] hover:border-[#888] px-2 py-0.5 rounded transition-colors shrink-0"
+                >
+                  + Use as Input
+                </button>
+              </div>
             </div>
           )}
 
@@ -682,7 +720,7 @@ function ClusterDetailPanel({
               </p>
               <div className="grid grid-cols-3 gap-1.5">
                 {imageSiblings.map((sib) => {
-                  const sibCard = sib.card as VisualVariationCard;
+                  const sibCard = sib.card as VisualCard;
                   return (
                     <div
                       key={sib.card.id}
@@ -729,7 +767,7 @@ function ClusterDetailPanel({
               </p>
               <div className="flex flex-col gap-1.5">
                 {textSiblings.map((sib) => {
-                  const sibStyle = TYPE_STYLE[sib.card.type] ?? TYPE_STYLE.insight;
+                  const sibStyle = TYPE_STYLE[sib.card.type] ?? TYPE_STYLE.concept;
                   const sibSaved = savedCardIds.has(sib.card.id);
                   return (
                     <button
@@ -812,42 +850,27 @@ function ClusterDetailPanel({
 // ── Card detail fields ────────────────────────────────────────────────────────
 function CardDetails({ card }: { card: ResultCard }) {
   switch (card.type) {
-    case "insight":
+    case "concept":
       return (
         <>
-          <Field label="Summary" value={card.summary} />
-          <Field label="Evidence" value={card.evidence} />
-          <Field label="Implication" value={card.implication} />
+          <Field label="Description" value={card.description} />
+          <Field label="Rationale" value={card.rationale} />
         </>
       );
-    case "visual_variation":
+    case "motif":
+      return (
+        <>
+          <Field label="Visual Quality" value={card.visualQuality} />
+          <Field label="How It Conveys The Idea" value={card.howItConveysIdea} />
+          <Field label="Category" value={card.category} />
+        </>
+      );
+    case "visual":
       return (
         <>
           <Field label="Dimension" value={card.dimensionLabel} />
           <Field label="Analysis" value={card.analysisText} />
           {card.error && <Field label="Error" value={card.error} isError />}
-        </>
-      );
-    case "conceptual_variation":
-      return (
-        <>
-          <Field label="Core Idea" value={card.coreIdea} />
-          <Field label="How It Differs" value={card.howItDiffers} />
-          <Field label="Why It May Work" value={card.whyItMayWork} />
-          <Field label="Best Use Case" value={card.bestUseCase} />
-          <Field label="Tradeoffs" value={card.tradeoffs} />
-          <Field label="Next Step" value={card.nextStep} />
-        </>
-      );
-    case "concept":
-      return (
-        <>
-          <Field label="Core Idea" value={card.coreIdea} />
-          <Field label="Interaction" value={card.interactionDirection} />
-          <Field label="Visual Direction" value={card.visualDirection} />
-          <Field label="Best For" value={card.bestFor} />
-          <Field label="Risks" value={card.risks} />
-          <Field label="Next Step" value={card.nextStep} />
         </>
       );
     case "note":

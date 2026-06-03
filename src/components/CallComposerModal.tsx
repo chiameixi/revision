@@ -1,5 +1,28 @@
 "use client";
 
+/**
+ * src/components/CallComposerModal.tsx
+ *
+ * Responsibility: The confirmation dialog shown before every API call.
+ * Lets the researcher review and adjust what goes into the request:
+ * - Which draft/reference images are included
+ * - Which Arnheim dimensions to run (for visual_variations)
+ * - Which saved highlights are included (shown as a checklist)
+ * - A free-text "Additional Instructions" field
+ *
+ * The modal receives the current `ComposerState` and updates it in place via
+ * `onChange` (controlled component pattern) so the parent (`page.tsx`) always
+ * has the latest selections.  Clicking "Send →" calls `onSend(state)`, which
+ * triggers the actual fetch in the parent.
+ *
+ * Design decisions:
+ * - `generate_concept_visuals` hides the highlights checklist; the concept
+ *   cards being visualised are shown instead as a read-only preview.
+ * - Dimension selection is only shown for `visual_variations` because that is
+ *   the only action that dispatches one parallel call per dimension.
+ * - The textarea auto-focuses on open so the researcher can type quickly.
+ */
+
 import { useEffect, useRef } from "react";
 import type { Asset, ComposerState, Highlight } from "@/types";
 import { DIMENSIONS } from "@/lib/dimensions";
@@ -125,7 +148,7 @@ export default function CallComposerModal({
                 {(state.conceptCards ?? []).map((card) => (
                   <div key={card.id} className="bg-[#f5f5f4] border border-[#111] rounded px-3 py-2">
                     <p className="text-xs text-[#111]">{card.title}</p>
-                    <p className="text-[11px] text-[#555] mt-0.5 leading-snug">{card.coreIdea}</p>
+                    <p className="text-[11px] text-[#555] mt-0.5 leading-snug">{card.description}</p>
                   </div>
                 ))}
               </div>

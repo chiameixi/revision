@@ -1,5 +1,30 @@
 "use client";
 
+/**
+ * src/lib/store.ts
+ *
+ * Responsibility: The single global state hook for the workspace.
+ *
+ * `useProject()` exposes `{ state, actions, ready }`.  All project data —
+ * brief, uploaded assets, generation history, and saved highlights — lives in
+ * one `ProjectState` object that is hydrated from `localStorage` on first
+ * render and written back on every state change.
+ *
+ * Design decisions:
+ * - State is stored in a single localStorage key (`design_workspace_v0`) so
+ *   the whole project survives page reloads without a backend.
+ * - `ready` starts as `false` to prevent the server render from showing stale
+ *   default state before hydration completes (avoids a flash of empty content).
+ * - `update` is a thin wrapper around `setState` that accepts a pure function,
+ *   keeping every action immutable and easy to trace.
+ * - Newly saved highlights default `includeInNextCall: true` so they are
+ *   immediately offered to the next API call.
+ * - `saveHighlight` is a no-op when the card is already saved (deduplicates by
+ *   card ID, not highlight ID).
+ * - `updateCard` patches the card both inside `generations` and inside any
+ *   matching `highlights` so an in-place edit propagates everywhere.
+ */
+
 import { useState, useEffect, useCallback } from "react";
 import type {
   ProjectState,
@@ -42,6 +67,7 @@ export function useProject() {
   const [state, setState] = useState<ProjectState>(DEFAULT_STATE);
   const [ready, setReady] = useState(false);
 
+  // Hydrate once on mount; setting ready=true allows subsequent saves to fire.
   useEffect(() => {
     setState(loadFromStorage());
     setReady(true);

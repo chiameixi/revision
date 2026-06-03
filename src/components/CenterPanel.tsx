@@ -1,7 +1,29 @@
 "use client";
 
+/**
+ * src/components/CenterPanel.tsx
+ *
+ * Responsibility: The main content area — action toolbar, view-mode toggle
+ * (Feed / Tree / Clusters), and the active view itself.
+ *
+ * The toolbar dispatches action identifiers up to `page.tsx` via
+ * `onActionClick`, which then opens the `CallComposerModal`.  The panel
+ * receives already-filtered `generations` (dismissed cards removed) so it
+ * never needs to know about the dismiss set directly.
+ *
+ * View modes:
+ * - Feed: chronological stack of `GenerationBlock` components.
+ * - Tree: `TreeView` renders a BFS-depth-based node graph.
+ * - Clusters: `ClusterView` groups cards by type with drag-to-regroup.
+ *
+ * `GenerationBlock` resolves source references (highlight cards, draft/ref
+ * assets) from the IDs stored on the generation and shows them as provenance
+ * chips in the block header.  Hovering a block emits those IDs so
+ * `InputsSidebar` and `HighlightsPanel` can highlight the corresponding items.
+ */
+
 import { useState } from "react";
-import type { ActionType, Asset, ConceptualVariationCard, Generation, Highlight, ResultCard } from "@/types";
+import type { ActionType, Asset, ConceptCard, Generation, Highlight, ResultCard } from "@/types";
 import ResultCardComponent from "./cards/ResultCard";
 import TreeView from "./TreeView";
 import ClusterView from "./ClusterView";
@@ -19,27 +41,26 @@ interface Props {
   onSaveCard: (card: ResultCard) => void;
   onDismissCard: (genId: string, cardId: string) => void;
   onUpdateCard: (card: ResultCard) => void;
-  onGenerateVisuals: (card: ConceptualVariationCard) => void;
+  onGenerateVisuals: (card: ConceptCard) => void;
   onBranchFrom: (card: ResultCard, action: ActionType) => void;
   onAddUserCard: (title: string, body: string) => void;
+  onAddAsReference: (dataUrl: string, label: string) => void;
 }
 
 const TOOLBAR_ACTIONS: { id: ActionType; label: string; desc: string }[] = [
-  { id: "unpack_brief", label: "Unpack Brief", desc: "Turn brief into idea directions" },
-  { id: "analyze", label: "Analyze", desc: "Examine drafts and references" },
-  { id: "visual_variations", label: "Visual Variations", desc: "Arnheim dimension variations" },
-  { id: "conceptual_variations", label: "Conceptual Variations", desc: "Deeper concept alternatives" },
-  { id: "synthesize", label: "Synthesize", desc: "Combine highlights into concepts" },
+  { id: "unpack_brief",          label: "Unpack Brief",           desc: "Turn brief into idea directions" },
+  { id: "analyze",               label: "Analyze",                desc: "Extract visual motifs from images" },
+  { id: "visual_variations",     label: "Visual Variations",      desc: "Arnheim dimension variations" },
+  { id: "conceptual_variations", label: "Conceptual Variations",  desc: "Deeper concept alternatives" },
 ];
 
 const ACTION_LABELS: Record<ActionType, string> = {
-  unpack_brief: "Unpack Brief",
-  analyze: "Analyze",
-  visual_variations: "Visual Variations",
-  conceptual_variations: "Conceptual Variations",
+  unpack_brief:            "Unpack Brief",
+  analyze:                 "Analyze",
+  visual_variations:       "Visual Variations",
+  conceptual_variations:   "Conceptual Variations",
   generate_concept_visuals: "Generate Concept Visuals",
-  synthesize: "Synthesize",
-  user_added: "Your Idea",
+  user_added:              "Your Idea",
 };
 
 export default function CenterPanel({
@@ -58,6 +79,7 @@ export default function CenterPanel({
   onGenerateVisuals,
   onBranchFrom,
   onAddUserCard,
+  onAddAsReference,
 }: Props) {
   const [view, setView] = useState<"feed" | "tree" | "clusters">("feed");
 
@@ -108,6 +130,7 @@ export default function CenterPanel({
             onSaveCard={onSaveCard}
             onBranchFrom={onBranchFrom}
             onDismissCard={onDismissCard}
+            onAddAsReference={onAddAsReference}
           />
         </div>
       )}
@@ -125,42 +148,45 @@ export default function CenterPanel({
             onBranchFrom={onBranchFrom}
             onDismissCard={onDismissCard}
             onAddUserCard={onAddUserCard}
+            onAddAsReference={onAddAsReference}
           />
         </div>
       )}
 
-
       {/* Feed */}
-      {view === "feed" && <div className="flex-1 overflow-y-auto px-5 py-5 flex flex-col gap-6">
-        {isGenerating && (
-          <div className="flex items-center gap-3 text-sm text-[#555] bg-white border border-[#111] rounded-sm px-4 py-3">
-            <span className="inline-block w-4 h-4 border-2 border-[#111] border-t-transparent rounded-full animate-spin" />
-            Running {generatingAction ? ACTION_LABELS[generatingAction] : "generation"}…
-          </div>
-        )}
+      {view === "feed" && (
+        <div className="flex-1 overflow-y-auto px-5 py-5 flex flex-col gap-6">
+          {isGenerating && (
+            <div className="flex items-center gap-3 text-sm text-[#555] bg-white border border-[#111] rounded-sm px-4 py-3">
+              <span className="inline-block w-4 h-4 border-2 border-[#111] border-t-transparent rounded-full animate-spin" />
+              Running {generatingAction ? ACTION_LABELS[generatingAction] : "generation"}…
+            </div>
+          )}
 
-        {generations.length === 0 && !isGenerating && (
-          <div className="flex flex-col items-center justify-center h-full text-center py-24 text-[#aaa]">
-            <p className="text-sm mb-1">Add inputs on the left, then choose an action above.</p>
-            <p className="text-xs">Results will appear here as structured cards.</p>
-          </div>
-        )}
+          {generations.length === 0 && !isGenerating && (
+            <div className="flex flex-col items-center justify-center h-full text-center py-24 text-[#aaa]">
+              <p className="text-sm mb-1">Add inputs on the left, then choose an action above.</p>
+              <p className="text-xs">Results will appear here as structured cards.</p>
+            </div>
+          )}
 
-        {generations.map((gen) => (
-          <GenerationBlock
-            key={gen.id}
-            gen={gen}
-            savedCardIds={savedCardIds}
-            highlights={highlights}
-            assets={assets}
-            onHoverSources={onHoverSources}
-            onSaveCard={onSaveCard}
-            onDismissCard={(cardId) => onDismissCard(gen.id, cardId)}
-            onUpdateCard={onUpdateCard}
-            onGenerateVisuals={onGenerateVisuals}
-          />
-        ))}
-      </div>}
+          {generations.map((gen) => (
+            <GenerationBlock
+              key={gen.id}
+              gen={gen}
+              savedCardIds={savedCardIds}
+              highlights={highlights}
+              assets={assets}
+              onHoverSources={onHoverSources}
+              onSaveCard={onSaveCard}
+              onDismissCard={(cardId) => onDismissCard(gen.id, cardId)}
+              onUpdateCard={onUpdateCard}
+              onGenerateVisuals={onGenerateVisuals}
+              onAddAsReference={onAddAsReference}
+            />
+          ))}
+        </div>
+      )}
     </main>
   );
 }
@@ -175,6 +201,7 @@ function GenerationBlock({
   onDismissCard,
   onUpdateCard,
   onGenerateVisuals,
+  onAddAsReference,
 }: {
   gen: Generation;
   savedCardIds: Set<string>;
@@ -184,10 +211,12 @@ function GenerationBlock({
   onSaveCard: (card: ResultCard) => void;
   onDismissCard: (cardId: string) => void;
   onUpdateCard: (card: ResultCard) => void;
-  onGenerateVisuals: (card: ConceptualVariationCard) => void;
+  onGenerateVisuals: (card: ConceptCard) => void;
+  onAddAsReference: (dataUrl: string, label: string) => void;
 }) {
   const label = ACTION_LABELS[gen.actionType] ?? gen.actionType;
   const time = new Date(gen.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  // Visual/concept-visual actions return image cards; use a wider 3-col grid.
   const isImageGrid = gen.actionType === "visual_variations" || gen.actionType === "generate_concept_visuals";
 
   const sourceHighlights = (gen.sourceCardIds ?? [])
@@ -220,11 +249,7 @@ function GenerationBlock({
   function truncate(s: string, n = 24) { return s.length > n ? s.slice(0, n - 1) + "…" : s; }
 
   return (
-    <div
-      className="flex flex-col gap-3"
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
-    >
+    <div className="flex flex-col gap-3" onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}>
       <div className="flex items-center gap-2 text-[11px] text-[#aaa] flex-wrap">
         <span className="font-semibold text-[#888]">{label}</span>
         <span>·</span>
@@ -240,32 +265,17 @@ function GenerationBlock({
             <span>·</span>
             <span className="text-[10px] text-[#bbb]">from</span>
             {sourceHighlights.map((h) => (
-              <span
-                key={h.card.id}
-                className="text-[10px] px-1.5 py-0.5 rounded-sm border"
-                style={{ background: "#fffbeb", borderColor: "#f0d89a", color: "#92721a" }}
-                title={h.card.title}
-              >
+              <span key={h.card.id} className="text-[10px] px-1.5 py-0.5 rounded-sm border" style={{ background: "#fffbeb", borderColor: "#f0d89a", color: "#92721a" }} title={h.card.title}>
                 {truncate(h.card.title)}
               </span>
             ))}
             {sourceDrafts.map((a) => (
-              <span
-                key={a.id}
-                className="text-[10px] px-1.5 py-0.5 rounded-sm border"
-                style={{ background: "#f5f5f4", borderColor: "#ccc", color: "#555" }}
-                title={`Draft: ${a.fileName}`}
-              >
+              <span key={a.id} className="text-[10px] px-1.5 py-0.5 rounded-sm border" style={{ background: "#f5f5f4", borderColor: "#ccc", color: "#555" }} title={`Draft: ${a.fileName}`}>
                 ✎ {truncate(a.fileName)}
               </span>
             ))}
             {sourceRefs.map((a) => (
-              <span
-                key={a.id}
-                className="text-[10px] px-1.5 py-0.5 rounded-sm border"
-                style={{ background: "#f0f0ff", borderColor: "#c5c5e8", color: "#4444aa" }}
-                title={`Reference: ${a.fileName}`}
-              >
+              <span key={a.id} className="text-[10px] px-1.5 py-0.5 rounded-sm border" style={{ background: "#f0f0ff", borderColor: "#c5c5e8", color: "#4444aa" }} title={`Reference: ${a.fileName}`}>
                 ◈ {truncate(a.fileName)}
               </span>
             ))}
@@ -290,6 +300,7 @@ function GenerationBlock({
               onDismiss={() => onDismissCard(card.id)}
               onUpdate={onUpdateCard}
               onGenerateVisuals={onGenerateVisuals}
+              onAddAsReference={onAddAsReference}
             />
           ))}
         </div>

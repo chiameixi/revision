@@ -1,18 +1,33 @@
+/**
+ * src/types/index.ts
+ *
+ * Central type definitions for the design workspace.
+ *
+ * Responsibility: Single source of truth for every data shape that crosses
+ * the client/server boundary or is persisted to localStorage.  All action
+ * identifiers, card shapes, API request/response envelopes, and UI-state
+ * types live here so that route.ts and every component share the same
+ * contracts.
+ *
+ * Design decision: `ResultCard` is a discriminated union keyed on `type`.
+ * This lets TypeScript narrow exhaustively in switch statements throughout
+ * the UI without casting.
+ */
+
 export type ActionType =
   | "unpack_brief"
   | "analyze"
   | "visual_variations"
   | "conceptual_variations"
   | "generate_concept_visuals"
-  | "synthesize"
+  // | "synthesize"   // reserved – not yet wired up in the toolbar
   | "user_added";
 
 export type CardType =
-  | "insight"
-  | "visual_variation"
-  | "conceptual_variation"
-  | "concept"
-  | "note";
+  | "concept"  // abstract idea or principle, eg "empathy", "whimsical unburdening"
+  | "motif"    // reusable visual element, characteristic or theme that helps convey concepts
+  | "visual"   // generated visual that embodies concepts and motifs
+  | "note";    // user-created default category
 
 export interface BaseCard {
   id: string;
@@ -21,41 +36,26 @@ export interface BaseCard {
   createdAt: string;
 }
 
-export interface InsightCard extends BaseCard {
-  type: "insight";
-  summary: string;
-  evidence: string;
-  implication: string;
+export interface ConceptCard extends BaseCard {
+  type: "concept";
+  description: string;  // what this concept means for the design
+  rationale: string;    // why this direction is promising
 }
 
-export interface VisualVariationCard extends BaseCard {
-  type: "visual_variation";
-  dimensionId: string;
-  dimensionLabel: string;
-  analysisText: string;
+export interface MotifCard extends BaseCard {
+  type: "motif";
+  visualQuality: string;    // what it looks like / how it manifests visually
+  howItConveysIdea: string; // why this motif works for the concept
+  category: string;         // color | texture | form | composition | subject | style
+}
+
+export interface VisualCard extends BaseCard {
+  type: "visual";
+  dimensionLabel: string;  // dimension name or concept title it visualizes
+  analysisText: string;    // brief description / analysis
   imageDataUrl?: string;
   imageMimeType?: string;
   error?: string;
-}
-
-export interface ConceptualVariationCard extends BaseCard {
-  type: "conceptual_variation";
-  coreIdea: string;
-  howItDiffers: string;
-  whyItMayWork: string;
-  bestUseCase: string;
-  tradeoffs: string;
-  nextStep: string;
-}
-
-export interface ConceptCard extends BaseCard {
-  type: "concept";
-  coreIdea: string;
-  interactionDirection: string;
-  visualDirection: string;
-  bestFor: string;
-  risks: string;
-  nextStep: string;
 }
 
 export interface NoteCard extends BaseCard {
@@ -63,12 +63,7 @@ export interface NoteCard extends BaseCard {
   body: string;
 }
 
-export type ResultCard =
-  | InsightCard
-  | VisualVariationCard
-  | ConceptualVariationCard
-  | ConceptCard
-  | NoteCard;
+export type ResultCard = ConceptCard | MotifCard | VisualCard | NoteCard;
 
 export interface Asset {
   id: string;
@@ -93,9 +88,12 @@ export interface Generation {
   cards: ResultCard[];
   createdAt: string;
   error?: string;
-  sourceCardIds?: string[];       // highlight card IDs that seeded this generation
-  includedDraftIds?: string[];    // asset IDs of drafts sent
-  includedReferenceIds?: string[]; // asset IDs of references sent
+  /** IDs of highlight cards that were included in the call that produced this generation. */
+  sourceCardIds?: string[];
+  /** IDs of draft assets that were sent to the model for this generation. */
+  includedDraftIds?: string[];
+  /** IDs of reference assets that were sent to the model for this generation. */
+  includedReferenceIds?: string[];
 }
 
 export interface ProjectState {
@@ -106,12 +104,12 @@ export interface ProjectState {
   highlights: Highlight[];
 }
 
-// Conceptual variation data passed for visual generation
+// Concept card reference passed to generate_concept_visuals
 export interface ConceptCardRef {
   id: string;
   title: string;
-  coreIdea: string;
-  howItDiffers: string;
+  description: string;
+  rationale: string;
 }
 
 // API types
@@ -123,7 +121,7 @@ export interface GenerateRequest {
   referenceDataUrls: string[];
   highlightSummaries: string[];
   dimensionIds: string[];
-  conceptCards?: ConceptCardRef[]; // for generate_concept_visuals
+  conceptCards?: ConceptCardRef[];
 }
 
 export interface GenerateResponse {
@@ -140,5 +138,5 @@ export interface ComposerState {
   includedHighlightIds: string[];
   userInstructions: string;
   selectedDimensionIds: string[];
-  conceptCards?: ConceptCardRef[]; // for generate_concept_visuals
+  conceptCards?: ConceptCardRef[];
 }

@@ -1,3 +1,18 @@
+/**
+ * src/lib/dimensions.ts
+ *
+ * Responsibility: Definitions of Rudolf Arnheim's nine visual dimensions used
+ * to guide the Visual Variations action.
+ *
+ * Each dimension gets a short `summary` that is injected verbatim into the
+ * per-dimension prompt so the model understands what aspect of the design to
+ * vary.  `DIMENSION_MAP` provides O(1) lookup by id for the route handler.
+ *
+ * These definitions are a client-side replica of the canonical list in
+ * `dimension_dissection/backend/dimensions.py`; keep the two in sync if
+ * summaries are revised.
+ */
+
 export interface Dimension {
   id: string;
   label: string;
