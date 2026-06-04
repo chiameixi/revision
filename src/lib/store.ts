@@ -49,7 +49,7 @@ function loadFromStorage(): ProjectState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_STATE;
-    return JSON.parse(raw) as ProjectState;
+    return { ...DEFAULT_STATE, ...JSON.parse(raw) };
   } catch {
     return DEFAULT_STATE;
   }

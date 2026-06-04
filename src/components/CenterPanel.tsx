@@ -126,6 +126,7 @@ export default function CenterPanel({
             savedCardIds={savedCardIds}
             highlights={highlights}
             assets={assets}
+            hoveredSourceIds={hoveredSourceIds}
             onHoverSources={onHoverSources}
             onSaveCard={onSaveCard}
             onBranchFrom={onBranchFrom}
