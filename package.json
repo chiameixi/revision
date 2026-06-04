@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@google/genai": "^1.14.0",
+    "@xyflow/react": "^12.11.0",
+    "@xyflow/system": "^0.0.77",
     "next": "^15.2.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
