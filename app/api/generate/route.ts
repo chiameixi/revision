@@ -74,6 +74,17 @@ function buildUserInstructions(instructions: string): string {
   return `\nAdditional instructions: ${instructions.trim()}\n`;
 }
 
+// ─── Prompt logger ───────────────────────────────────────────────────────────
+
+function logPrompt(label: string, model: string, prompt: string, imageCount = 0) {
+  const border = "─".repeat(64);
+  console.log(`\n┌${border}`);
+  console.log(`│ GEMINI PROMPT  ${label}  model=${model}  images=${imageCount}`);
+  console.log(`├${border}`);
+  prompt.split("\n").forEach((line) => console.log(`│ ${line}`));
+  console.log(`└${border}\n`);
+}
+
 // ─── JSON mode generator ─────────────────────────────────────────────────────
 
 const JSON_MODEL = "gemini-2.5-flash";
@@ -233,6 +244,7 @@ Return a JSON object with a "concepts" array. Each concept has:
 Generate 5–8 distinct concept directions covering: core design goals, key tensions or ambiguities, distinct aesthetic or interaction directions, and promising areas to explore.`;
 
   log.write("request.json", { model: JSON_MODEL, imageCount: 0, prompt });
+  logPrompt("unpack_brief", JSON_MODEL, prompt, 0);
   const startedAt = nowIso();
   const { result: data, rawText } = await generateJson<{
     concepts: Omit<ConceptCard, "id" | "type" | "createdAt">[];
@@ -284,6 +296,7 @@ Return a JSON object with a "motifs" array. Each motif has:
 Generate 5–9 distinct motifs covering different visual dimensions of the images.`;
 
   log.write("request.json", { model: JSON_MODEL, imageCount: allImages.length, prompt });
+  logPrompt("analyze", JSON_MODEL, prompt, allImages.length);
   const startedAt = nowIso();
   const { result: data, rawText } = await generateJson<{
     motifs: Omit<MotifCard, "id" | "type" | "createdAt">[];
@@ -341,6 +354,7 @@ Provide your analysis first (2–3 sentences), then the variation panel image.`;
         model: IMAGE_MODEL,
         prompt,
       });
+      logPrompt(`visual_variations [${dim.label}]`, IMAGE_MODEL, prompt, 1);
 
       const startedAt = nowIso();
       let rawResponse: unknown = null;
@@ -442,6 +456,7 @@ Return a JSON object with a "concepts" array. Each concept has:
 Generate 4–6 genuinely distinct concept directions — not just surface rewrites of the same idea.`;
 
   log.write("concepts_request.json", { model: JSON_MODEL, imageCount: inputImages.length, prompt: conceptPrompt });
+  logPrompt("conceptual_variations [phase 1: concepts]", JSON_MODEL, conceptPrompt, inputImages.length);
   const conceptStart = nowIso();
   const { result: conceptData, rawText } = await generateJson<{
     concepts: Omit<ConceptCard, "id" | "type" | "createdAt">[];
@@ -477,6 +492,7 @@ Generate a 2×2 panel of 4 distinct visuals. Each visual should use clearly diff
         hasReferenceImage: !!referenceImage,
         prompt: visualPrompt,
       });
+      logPrompt(`conceptual_variations [phase 2: "${concept.title}"]`, IMAGE_MODEL, visualPrompt, referenceImage ? 1 : 0);
 
       const dimStart = nowIso();
       let genResult: ImageOutputResult;
@@ -558,6 +574,7 @@ Return a JSON object with a "concepts" array. Each concept has:
 Generate 3–5 distinct concept directions that synthesize and elevate the best threads from the saved ideas.`;
 
   log.write("request.json", { model: JSON_MODEL, imageCount: 0, prompt });
+  logPrompt("synthesize", JSON_MODEL, prompt, 0);
   const startedAt = nowIso();
   const { result: data, rawText } = await generateJson<{
     concepts: Omit<ConceptCard, "id" | "type" | "createdAt">[];
@@ -629,6 +646,7 @@ Generate a 2×2 panel of 4 distinct visuals. Each visual should use clearly diff
         hasReferenceImage: !!imageDataUrl,
         prompt,
       });
+      logPrompt(`generate_concept_visuals ["${card.title}"]`, IMAGE_MODEL, prompt, imageDataUrl ? 1 : 0);
 
       const startedAt = nowIso();
       let genResult: ImageOutputResult;

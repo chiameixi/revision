@@ -378,6 +378,8 @@ const nodeTypes: NodeTypes = {
 // ── Main component ────────────────────────────────────────────────────────────
 interface Props {
   generations: Generation[];
+  isGenerating: boolean;
+  generatingAction: ActionType | null;
   savedCardIds: Set<string>;
   highlights: Highlight[];
   assets: Asset[];
@@ -392,7 +394,7 @@ interface Props {
   onAddAsReference: (dataUrl: string, label: string) => void;
 }
 
-export default function TreeView({ generations, savedCardIds, highlights, assets, hoveredSourceIds, onHoverSources, onSaveCard, onBranchFrom, onMultiBranchFrom, onAddUserNode, onClearTree, onDismissCard, onAddAsReference }: Props) {
+export default function TreeView({ generations, isGenerating, generatingAction, savedCardIds, highlights, assets, hoveredSourceIds, onHoverSources, onSaveCard, onBranchFrom, onMultiBranchFrom, onAddUserNode, onClearTree, onDismissCard, onAddAsReference }: Props) {
   const { nodes, edges } = useMemo(() => computeLayout(generations), [generations]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [multiSelectedIds, setMultiSelectedIds] = useState<Set<string>>(new Set());
@@ -618,6 +620,16 @@ export default function TreeView({ generations, savedCardIds, highlights, assets
               )}
             </div>
           </Panel>
+
+          {/* Generating indicator */}
+          {isGenerating && (
+            <Panel position="top-center">
+              <div className="flex items-center gap-2 bg-white border border-[#111] rounded-lg shadow-sm px-3 py-2 mt-2 text-[11px] text-[#555]">
+                <span className="inline-block w-3 h-3 border-2 border-[#555] border-t-transparent rounded-full animate-spin shrink-0" />
+                Running {generatingAction ? (ACTION_LABEL[generatingAction] ?? generatingAction) : "generation"}…
+              </div>
+            </Panel>
+          )}
 
           {/* Multi-select action bar */}
           {multiSelectedIds.size > 0 && (

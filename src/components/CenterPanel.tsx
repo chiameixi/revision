@@ -129,6 +129,8 @@ export default function CenterPanel({
         <div className="flex-1 overflow-hidden flex">
           <TreeView
             generations={generations}
+            isGenerating={isGenerating}
+            generatingAction={generatingAction}
             savedCardIds={savedCardIds}
             highlights={highlights}
             assets={assets}
