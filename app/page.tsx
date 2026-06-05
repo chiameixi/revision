@@ -51,6 +51,7 @@ import type {
   GenerateResponse,
   NoteCard,
   ResultCard,
+  VisualCard,
 } from "@/types";
 
 const DEFAULT_COMPOSER: ComposerState = {
@@ -284,6 +285,72 @@ export default function WorkspacePage() {
     [actions, handleActionClick]
   );
 
+  const handleMultiBranchFrom = useCallback(
+    (cards: ResultCard[], action: ActionType) => {
+      // Save every selected card as a highlight so they appear in the modal's checklist.
+      cards.forEach((card) => actions.saveHighlight(card));
+
+      // For visual cards, register the generated image as a reference asset so the
+      // AI receives it as a visual input in the next prompt.
+      const newRefAssets: Asset[] = cards
+        .filter((c): c is VisualCard => c.type === "visual" && !!(c as VisualCard).imageDataUrl)
+        .map((c) => ({
+          id: crypto.randomUUID(),
+          type: "reference" as const,
+          fileName: (c as VisualCard).dimensionLabel || c.title,
+          dataUrl: (c as VisualCard).imageDataUrl!,
+          note: "",
+          createdAt: new Date().toISOString(),
+        }));
+      newRefAssets.forEach((a) => actions.addAsset(a));
+
+      const drafts = state.assets.filter((a) => a.type === "draft");
+      const refs = state.assets.filter((a) => a.type === "reference");
+      const includedDraftIds = ["analyze", "visual_variations", "conceptual_variations"].includes(action)
+        ? drafts.map((a) => a.id)
+        : [];
+      const includedReferenceIds = [
+        ...( ["analyze", "conceptual_variations"].includes(action) ? refs.map((a) => a.id) : [] ),
+        ...newRefAssets.map((a) => a.id),
+      ];
+
+      const alreadyIncluded = state.highlights.filter((h) => h.includeInNextCall).map((h) => h.id);
+      const selectedIds = cards.map((c) => c.id);
+      const allHighlightIds = [...new Set([...alreadyIncluded, ...selectedIds])];
+
+      setComposer({
+        open: true,
+        action,
+        includedDraftIds,
+        includedReferenceIds,
+        includedHighlightIds: allHighlightIds,
+        userInstructions: "",
+        selectedDimensionIds: DIMENSIONS.map((d) => d.id),
+      });
+    },
+    [actions, state.assets, state.highlights, setComposer]
+  );
+
+  const handleClearTree = useCallback(() => {
+    actions.clearGenerations();
+    setDismissed({});
+  }, [actions]);
+
+  const handleAddUserNode = useCallback(
+    (card: ResultCard, parentCardIds: string[]) => {
+      actions.addGeneration({
+        id: crypto.randomUUID(),
+        actionType: "user_added",
+        cards: [card],
+        sourceCardIds: parentCardIds,
+        includedDraftIds: [],
+        includedReferenceIds: [],
+        createdAt: new Date().toISOString(),
+      });
+    },
+    [actions]
+  );
+
   const handleAddNote = useCallback(
     (title: string, body: string) => {
       const card: NoteCard = { id: crypto.randomUUID(), type: "note", title, body, createdAt: new Date().toISOString() };
@@ -365,6 +432,9 @@ export default function WorkspacePage() {
         onUpdateCard={actions.updateCard}
         onGenerateVisuals={handleGenerateVisuals}
         onBranchFrom={handleBranchFrom}
+        onMultiBranchFrom={handleMultiBranchFrom}
+        onAddUserNode={handleAddUserNode}
+        onClearTree={handleClearTree}
         onAddUserCard={handleAddUserCard}
         onAddAsReference={handleAddAsReference}
       />

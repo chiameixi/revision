@@ -11,7 +11,7 @@
  *   unpack_brief          → `handleUnpackBrief`  → ConceptCard[]
  *   analyze               → `handleAnalyze`       → MotifCard[]
  *   visual_variations     → `handleVisualVariations` → VisualCard[]  (parallel)
- *   conceptual_variations → `handleConceptualVariations` → ConceptCard[]
+ *   conceptual_variations → `handleConceptualVariations` → VisualCard[]  (phase 1: JSON concepts; phase 2: parallel image)
  *   generate_concept_visuals → `handleGenerateConceptVisuals` → VisualCard[] (parallel)
  *   user_added            → no-op (returns [])
  *
@@ -424,11 +424,13 @@ Provide your analysis first (2–3 sentences), then the variation panel image.`;
   return cards;
 }
 
-async function handleConceptualVariations(req: GenerateRequest, log: BatchLogger): Promise<ConceptCard[]> {
+async function handleConceptualVariations(req: GenerateRequest, log: BatchLogger): Promise<VisualCard[]> {
   const basePrompt = getPrompt("CONCEPTUAL_VARIATIONS");
-  const images = [...req.draftDataUrls, ...req.referenceDataUrls].slice(0, 4);
+  const inputImages = [...req.draftDataUrls, ...req.referenceDataUrls].slice(0, 4);
+  const referenceImage = req.draftDataUrls[0] ?? req.referenceDataUrls[0];
 
-  const prompt = `${basePrompt}
+  // ── Phase 1: generate concept directions (fast JSON call) ─────────────────
+  const conceptPrompt = `${basePrompt}
 
 Design context: ${req.brief || "(none provided)"}
 ${buildHighlightContext(req.highlightSummaries)}${buildUserInstructions(req.userInstructions)}
@@ -439,21 +441,101 @@ Return a JSON object with a "concepts" array. Each concept has:
 
 Generate 4–6 genuinely distinct concept directions — not just surface rewrites of the same idea.`;
 
-  log.write("request.json", { model: JSON_MODEL, imageCount: images.length, prompt });
-  const startedAt = nowIso();
-  const { result: data, rawText } = await generateJson<{
+  log.write("concepts_request.json", { model: JSON_MODEL, imageCount: inputImages.length, prompt: conceptPrompt });
+  const conceptStart = nowIso();
+  const { result: conceptData, rawText } = await generateJson<{
     concepts: Omit<ConceptCard, "id" | "type" | "createdAt">[];
-  }>(prompt, conceptSchema, images);
-  const endedAt = nowIso();
-  log.write("response.json", { rawText });
-  const cards = (data.concepts ?? []).map((item) => ({
-    id: crypto.randomUUID(),
-    type: "concept" as const,
-    createdAt: new Date().toISOString(),
-    ...item,
-  }));
-  log.write("result.json", cards);
-  log.write("timing.json", { startedAt, endedAt, durationSeconds: msDiff(startedAt, endedAt) });
+  }>(conceptPrompt, conceptSchema, inputImages);
+  const conceptEnd = nowIso();
+  log.write("concepts_response.json", { rawText });
+  log.write("concepts_timing.json", { startedAt: conceptStart, endedAt: conceptEnd, durationSeconds: msDiff(conceptStart, conceptEnd) });
+
+  const concepts = conceptData.concepts ?? [];
+
+  // ── Phase 2: generate a visual panel for each concept in parallel ─────────
+  const batchStart = nowIso();
+  log.write("visuals_batch.json", { model: IMAGE_MODEL, conceptCount: concepts.length, startedAt: batchStart });
+
+  const results = await Promise.allSettled(
+    concepts.map(async (concept, i) => {
+      const safeLabel = concept.title.slice(0, 30).replace(/\W+/g, "_");
+      const cardDir = log.subdir(`concept_${i}_${safeLabel}`);
+
+      const visualPrompt = `${getPrompt("GENERATE_CONCEPT_VISUALS")}
+
+Concept: "${concept.title}"
+Description: ${concept.description}
+Rationale: ${concept.rationale}
+
+Overall design context: ${req.brief || "(none provided)"}
+${buildUserInstructions(req.userInstructions)}
+Generate a 2×2 panel of 4 distinct visuals. Each visual should use clearly different visual elements, but all should strongly express the concept above.`;
+
+      writeJsonRelative(cardDir, "request.json", {
+        conceptTitle: concept.title,
+        model: IMAGE_MODEL,
+        hasReferenceImage: !!referenceImage,
+        prompt: visualPrompt,
+      });
+
+      const dimStart = nowIso();
+      let genResult: ImageOutputResult;
+      try {
+        genResult = await generateImageOutput(visualPrompt, referenceImage);
+      } catch (err) {
+        const dimEnd = nowIso();
+        writeJsonRelative(cardDir, "error.json", { error: String(err) });
+        writeJsonRelative(cardDir, "timing.json", { startedAt: dimStart, endedAt: dimEnd, status: "error" });
+        throw err;
+      }
+
+      const dimEnd = nowIso();
+      writeJsonRelative(cardDir, "response_raw.json", scrubBase64(genResult.rawResponse));
+      if (genResult.imageData) {
+        const ext = genResult.imageMimeType.includes("png") ? ".png" : ".jpg";
+        writeImageRelative(cardDir, `output${ext}`, genResult.imageData);
+      }
+      writeJsonRelative(cardDir, "timing.json", { startedAt: dimStart, endedAt: dimEnd, durationSeconds: msDiff(dimStart, dimEnd), status: "ok" });
+
+      return {
+        id: crypto.randomUUID(),
+        type: "visual" as const,
+        title: concept.title,
+        dimensionLabel: concept.title,
+        analysisText: concept.description,
+        imageDataUrl: genResult.imageData
+          ? `data:${genResult.imageMimeType};base64,${genResult.imageData}`
+          : undefined,
+        imageMimeType: genResult.imageMimeType,
+        createdAt: new Date().toISOString(),
+      } satisfies VisualCard;
+    })
+  );
+
+  const batchEnd = nowIso();
+  const cards: VisualCard[] = results.map((r, i) => {
+    if (r.status === "fulfilled") return r.value;
+    const concept = concepts[i];
+    return {
+      id: crypto.randomUUID(),
+      type: "visual" as const,
+      title: concept.title,
+      dimensionLabel: concept.title,
+      analysisText: concept.description,
+      error: r.reason instanceof Error ? r.reason.message : String(r.reason),
+      createdAt: new Date().toISOString(),
+    };
+  });
+
+  log.write("visuals_batch_summary.json", {
+    startedAt: batchStart,
+    finishedAt: batchEnd,
+    totalDurationSeconds: msDiff(batchStart, batchEnd),
+    conceptCount: concepts.length,
+    succeeded: results.filter((r) => r.status === "fulfilled").length,
+    failed: results.filter((r) => r.status === "rejected").length,
+  });
+
   return cards;
 }
 

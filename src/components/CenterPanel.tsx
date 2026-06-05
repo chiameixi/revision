@@ -43,6 +43,9 @@ interface Props {
   onUpdateCard: (card: ResultCard) => void;
   onGenerateVisuals: (card: ConceptCard) => void;
   onBranchFrom: (card: ResultCard, action: ActionType) => void;
+  onMultiBranchFrom: (cards: ResultCard[], action: ActionType) => void;
+  onAddUserNode: (card: ResultCard, parentCardIds: string[]) => void;
+  onClearTree: () => void;
   onAddUserCard: (title: string, body: string) => void;
   onAddAsReference: (dataUrl: string, label: string) => void;
 }
@@ -51,7 +54,7 @@ const TOOLBAR_ACTIONS: { id: ActionType; label: string; desc: string }[] = [
   { id: "unpack_brief",          label: "Unpack Brief",           desc: "Turn brief into idea directions" },
   { id: "analyze",               label: "Analyze",                desc: "Extract visual motifs from images" },
   { id: "visual_variations",     label: "Visual Variations",      desc: "Arnheim dimension variations" },
-  { id: "conceptual_variations", label: "Conceptual Variations",  desc: "Deeper concept alternatives" },
+  { id: "conceptual_variations", label: "Conceptual Variations",  desc: "Concept directions as visuals" },
 ];
 
 const ACTION_LABELS: Record<ActionType, string> = {
@@ -78,6 +81,9 @@ export default function CenterPanel({
   onUpdateCard,
   onGenerateVisuals,
   onBranchFrom,
+  onMultiBranchFrom,
+  onAddUserNode,
+  onClearTree,
   onAddUserCard,
   onAddAsReference,
 }: Props) {
@@ -130,6 +136,9 @@ export default function CenterPanel({
             onHoverSources={onHoverSources}
             onSaveCard={onSaveCard}
             onBranchFrom={onBranchFrom}
+            onMultiBranchFrom={onMultiBranchFrom}
+            onAddUserNode={onAddUserNode}
+            onClearTree={onClearTree}
             onDismissCard={onDismissCard}
             onAddAsReference={onAddAsReference}
           />

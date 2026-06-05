@@ -7,6 +7,7 @@ import {
   Background,
   Controls,
   Handle,
+  Panel,
   Position,
   BackgroundVariant,
   MarkerType,
@@ -100,7 +101,9 @@ type CardNodeData = {
   isHovered: boolean;
   isAncestor: boolean;
   isSaved: boolean;
+  isMultiSelected: boolean;
   onRemove: (genId: string, cardId: string) => void;
+  onQuickBranch: (action: ActionType) => void;
 };
 
 // ── Layout algorithm ──────────────────────────────────────────────────────────
@@ -207,8 +210,18 @@ function computeLayout(generations: Generation[]): {
 // ── Custom node components ────────────────────────────────────────────────────
 function TextCardNode(props: NodeProps) {
   const data = props.data as unknown as CardNodeData;
-  const { card, isSelected, isHovered, isAncestor, isSaved, onRemove, genId, actionType } = data;
+  const { card, isSelected, isHovered, isAncestor, isMultiSelected, isSaved, onRemove, genId, actionType } = data;
   const s = TYPE_STYLE[card.type] ?? TYPE_STYLE.concept;
+
+  const borderColor = isMultiSelected ? "#2563eb"
+    : isAncestor ? "#f59e0b"
+    : isSelected ? s.selectedBorder
+    : s.border;
+  const shadow = isMultiSelected ? "0 0 0 3px rgba(37,99,235,0.25)"
+    : isAncestor ? "0 0 0 3px rgba(251,191,36,0.3)"
+    : isSelected ? "3px 3px 0px #111111"
+    : isHovered ? "2px 2px 0px #888"
+    : "1px 1px 0px #cccccc";
 
   return (
     <>
@@ -223,16 +236,10 @@ function TextCardNode(props: NodeProps) {
         style={{
           width: NODE_W,
           height: NODE_H,
-          background: isAncestor ? "#fffbeb" : isSelected ? s.bg : "#ffffff",
-          border: `1.5px solid ${isAncestor ? "#f59e0b" : isSelected ? s.selectedBorder : s.border}`,
+          background: isMultiSelected ? "#eff6ff" : isAncestor ? "#fffbeb" : isSelected ? s.bg : "#ffffff",
+          border: `1.5px solid ${borderColor}`,
           borderRadius: 10,
-          boxShadow: isAncestor
-            ? "0 0 0 3px rgba(251,191,36,0.3)"
-            : isSelected
-            ? "3px 3px 0px #111111"
-            : isHovered
-            ? "2px 2px 0px #888"
-            : "1px 1px 0px #cccccc",
+          boxShadow: shadow,
           transition: "all 0.15s ease",
           overflow: "hidden",
           cursor: "pointer",
@@ -252,6 +259,7 @@ function TextCardNode(props: NodeProps) {
             >
               {TYPE_LABEL[card.type]}
             </span>
+            {isMultiSelected && <span className="text-[9px] text-blue-600 shrink-0">✓</span>}
             {isSaved && <span className="text-[10px] text-amber-400 shrink-0" title="Saved">★</span>}
           </div>
           <p className="text-[11px] font-medium text-[#333] leading-tight line-clamp-2 flex-1">
@@ -267,11 +275,27 @@ function TextCardNode(props: NodeProps) {
   );
 }
 
+const VISUAL_QUICK_ACTIONS: { id: ActionType; label: string }[] = [
+  { id: "analyze",               label: "Analyze" },
+  { id: "visual_variations",     label: "Variations" },
+  { id: "conceptual_variations", label: "Concepts" },
+];
+
 function VisualCardNode(props: NodeProps) {
   const data = props.data as unknown as CardNodeData;
-  const { card, isSelected, isHovered, isAncestor, isSaved, onRemove, genId } = data;
+  const { card, isSelected, isHovered, isAncestor, isMultiSelected, isSaved, onRemove, onQuickBranch, genId } = data;
   const s = TYPE_STYLE.visual;
   const visualCard = card as VisualCard;
+
+  const borderColor = isMultiSelected ? "#2563eb"
+    : isAncestor ? "#f59e0b"
+    : isSelected ? s.selectedBorder
+    : s.border;
+  const shadow = isMultiSelected ? "0 0 0 3px rgba(37,99,235,0.25)"
+    : isAncestor ? "0 0 0 3px rgba(251,191,36,0.3)"
+    : isSelected ? "3px 3px 0px #111111"
+    : isHovered ? "2px 2px 0px #888"
+    : "1px 1px 0px #cccccc";
 
   return (
     <>
@@ -286,43 +310,59 @@ function VisualCardNode(props: NodeProps) {
         style={{
           width: VISUAL_NODE_W,
           height: VISUAL_NODE_H,
-          background: isAncestor ? "#fffbeb" : isSelected ? s.bg : "#ffffff",
-          border: `1.5px solid ${isAncestor ? "#f59e0b" : isSelected ? s.selectedBorder : s.border}`,
+          border: `1.5px solid ${borderColor}`,
           borderRadius: 10,
-          boxShadow: isAncestor
-            ? "0 0 0 3px rgba(251,191,36,0.3)"
-            : isSelected
-            ? "3px 3px 0px #111111"
-            : isHovered
-            ? "2px 2px 0px #888"
-            : "1px 1px 0px #cccccc",
+          boxShadow: shadow,
           transition: "all 0.15s ease",
           overflow: "hidden",
           cursor: "pointer",
           userSelect: "none",
         }}
       >
+        {/* Remove button */}
         <button
-          className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 text-[10px] leading-none z-10"
+          className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 text-[10px] leading-none z-20"
           onClick={(e) => { e.stopPropagation(); onRemove(genId, card.id); }}
           title="Remove from tree"
         >✕</button>
+
+        {/* Top badge */}
         <div className="absolute top-0 left-0 right-0 p-2 flex items-center gap-1.5 z-10 bg-gradient-to-b from-black/30 to-transparent">
           <span className="text-[8px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0 bg-black/50 text-white">
             {TYPE_LABEL[card.type]}
           </span>
+          {isMultiSelected && <span className="text-[9px] text-white bg-blue-500/80 px-1 py-0.5 rounded shrink-0 font-bold">✓</span>}
           {isSaved && <span className="text-[9px] text-amber-300 shrink-0 drop-shadow">★</span>}
         </div>
+
+        {/* Image */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={visualCard.imageDataUrl}
           alt={card.title}
           className="w-full h-full object-cover"
         />
-        <div className="absolute bottom-0 left-0 right-0 px-2 py-1.5 bg-gradient-to-t from-black/60 to-transparent">
-          <p className="text-[9px] text-white leading-tight truncate font-medium">
+
+        {/* Bottom overlay: title always visible, quick actions appear on hover */}
+        <div className="absolute bottom-0 left-0 right-0 px-2 py-1.5 bg-gradient-to-t from-black/80 via-black/50 to-transparent z-10 transition-all duration-150">
+          <p className="text-[9px] text-white leading-tight truncate font-medium mb-1">
             {card.title}
           </p>
+          {/* Quick branch buttons — visible on hover */}
+          <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+            <p className="text-[7px] text-white/60 uppercase tracking-wider font-semibold mb-1">Use for →</p>
+            <div className="flex gap-1 flex-wrap">
+              {VISUAL_QUICK_ACTIONS.map((a) => (
+                <button
+                  key={a.id}
+                  onClick={(e) => { e.stopPropagation(); onQuickBranch(a.id); }}
+                  className="text-[7px] bg-white/20 hover:bg-white/45 text-white px-1.5 py-0.5 rounded transition-colors whitespace-nowrap"
+                >
+                  {a.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
       <Handle type="source" position={Position.Right} style={{ opacity: 0, pointerEvents: "none" }} />
@@ -345,14 +385,20 @@ interface Props {
   onHoverSources: (cardIds: Set<string>, assetIds: Set<string>) => void;
   onSaveCard: (card: ResultCard) => void;
   onBranchFrom: (card: ResultCard, action: ActionType) => void;
+  onMultiBranchFrom: (cards: ResultCard[], action: ActionType) => void;
+  onAddUserNode: (card: ResultCard, parentCardIds: string[]) => void;
+  onClearTree: () => void;
   onDismissCard: (genId: string, cardId: string) => void;
   onAddAsReference: (dataUrl: string, label: string) => void;
 }
 
-export default function TreeView({ generations, savedCardIds, highlights, assets, hoveredSourceIds, onHoverSources, onSaveCard, onBranchFrom, onDismissCard, onAddAsReference }: Props) {
+export default function TreeView({ generations, savedCardIds, highlights, assets, hoveredSourceIds, onHoverSources, onSaveCard, onBranchFrom, onMultiBranchFrom, onAddUserNode, onClearTree, onDismissCard, onAddAsReference }: Props) {
   const { nodes, edges } = useMemo(() => computeLayout(generations), [generations]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [multiSelectedIds, setMultiSelectedIds] = useState<Set<string>>(new Set());
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [addNodeState, setAddNodeState] = useState<{ parentIds: string[] } | null>(null);
+  const [confirmingClear, setConfirmingClear] = useState(false);
 
   const cardIds = useMemo(() => new Set(nodes.map((n) => n.card.id)), [nodes]);
 
@@ -373,6 +419,28 @@ export default function TreeView({ generations, savedCardIds, highlights, assets
     onDismissCard(genId, cardId);
     setSelectedId(null);
   }, [onDismissCard]);
+
+  // Used by quick-branch buttons on visual nodes — includes the image as a reference
+  // so the next AI call can see it, then branches from the card.
+  const handleQuickBranch = useCallback((card: ResultCard, action: ActionType) => {
+    if (card.type === "visual" && (card as VisualCard).imageDataUrl) {
+      onAddAsReference(
+        (card as VisualCard).imageDataUrl!,
+        (card as VisualCard).dimensionLabel || card.title,
+      );
+    }
+    onBranchFrom(card, action);
+  }, [onAddAsReference, onBranchFrom]);
+
+  const handleMultiAction = useCallback((action: ActionType) => {
+    const cards = nodes
+      .filter((n) => multiSelectedIds.has(n.card.id))
+      .map((n) => n.card);
+    if (cards.length === 0) return;
+    onMultiBranchFrom(cards, action);
+    setMultiSelectedIds(new Set());
+    setSelectedId(null);
+  }, [nodes, multiSelectedIds, onMultiBranchFrom]);
 
   const rfNodes = useMemo((): Node[] =>
     nodes.map((node): Node => {
@@ -396,13 +464,15 @@ export default function TreeView({ generations, savedCardIds, highlights, assets
           isAncestor: hoveredAncestorIds.has(node.card.id)
             || node.parentCardIds.some((pid) => hoveredSourceIds.has(pid)),
           isSaved: savedCardIds.has(node.card.id),
+          isMultiSelected: multiSelectedIds.has(node.card.id),
           onRemove: handleRemove,
+          onQuickBranch: (action) => handleQuickBranch(node.card, action),
         } satisfies CardNodeData,
         width: w,
         height: h,
       };
     }),
-    [nodes, cardIds, selectedId, hoveredId, hoveredAncestorIds, hoveredSourceIds, savedCardIds, handleRemove]
+    [nodes, cardIds, selectedId, multiSelectedIds, hoveredId, hoveredAncestorIds, hoveredSourceIds, savedCardIds, handleRemove, handleQuickBranch]
   );
 
   const rfEdges = useMemo((): RFEdge[] =>
@@ -432,8 +502,21 @@ export default function TreeView({ generations, savedCardIds, highlights, assets
     [edges, hoveredId, hoveredSourceIds]
   );
 
-  const handleNodeClick = useCallback((_: React.MouseEvent, rfNode: Node) => {
-    setSelectedId((prev) => (prev === rfNode.id ? null : rfNode.id));
+  const handleNodeClick = useCallback((event: React.MouseEvent, rfNode: Node) => {
+    if (event.shiftKey) {
+      // Shift+click: toggle this node in/out of the multi-selection
+      setMultiSelectedIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(rfNode.id)) next.delete(rfNode.id);
+        else next.add(rfNode.id);
+        return next;
+      });
+      setSelectedId(null); // drop single-select while multi-selecting
+    } else {
+      // Normal click: single select, clear multi-selection
+      setSelectedId((prev) => (prev === rfNode.id ? null : rfNode.id));
+      setMultiSelectedIds(new Set());
+    }
   }, []);
 
   const handleNodeMouseEnter = useCallback((_: React.MouseEvent, rfNode: Node) => {
@@ -471,7 +554,7 @@ export default function TreeView({ generations, savedCardIds, highlights, assets
           onNodeClick={handleNodeClick}
           onNodeMouseEnter={handleNodeMouseEnter}
           onNodeMouseLeave={handleNodeMouseLeave}
-          onPaneClick={() => setSelectedId(null)}
+          onPaneClick={() => { setSelectedId(null); setMultiSelectedIds(new Set()); }}
           onInit={(instance) => {
             rfInstanceRef.current = instance;
             instance.fitView({ padding: 0.15 });
@@ -491,8 +574,94 @@ export default function TreeView({ generations, savedCardIds, highlights, assets
             color="#bbb"
           />
           <Controls showInteractive={false} />
+
+          {/* Top-right panel: Add node + Clear all */}
+          <Panel position="top-right">
+            <div className="flex items-center gap-1.5 mr-2 mt-2">
+              <button
+                onClick={() => {
+                  setAddNodeState({ parentIds: multiSelectedIds.size > 0 ? [...multiSelectedIds] : [] });
+                  setSelectedId(null);
+                  setConfirmingClear(false);
+                }}
+                className="bg-white border border-[#e4e3e0] rounded-lg px-2.5 py-1.5 text-[11px] text-[#555] hover:text-[#111] hover:border-[#888] shadow-sm transition-colors flex items-center gap-1"
+                title="Add a new node"
+              >
+                <span className="text-[14px] leading-none font-light">+</span>
+                Add node
+              </button>
+
+              {confirmingClear ? (
+                <div className="bg-white border border-red-200 rounded-lg px-2.5 py-1.5 shadow-sm flex items-center gap-2">
+                  <span className="text-[10px] text-red-500">Clear all?</span>
+                  <button
+                    onClick={() => { onClearTree(); setConfirmingClear(false); setSelectedId(null); setMultiSelectedIds(new Set()); }}
+                    className="text-[10px] font-semibold text-red-600 hover:text-red-800 transition-colors"
+                  >
+                    Yes
+                  </button>
+                  <button
+                    onClick={() => setConfirmingClear(false)}
+                    className="text-[10px] text-[#aaa] hover:text-[#555] transition-colors"
+                  >
+                    No
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmingClear(true)}
+                  className="bg-white border border-[#e4e3e0] rounded-lg px-2.5 py-1.5 text-[11px] text-[#aaa] hover:text-red-500 hover:border-red-200 shadow-sm transition-colors"
+                  title="Clear all nodes"
+                >
+                  Clear all
+                </button>
+              )}
+            </div>
+          </Panel>
+
+          {/* Multi-select action bar */}
+          {multiSelectedIds.size > 0 && (
+            <Panel position="bottom-center">
+              <div className="flex items-center gap-2 bg-white border border-[#222] rounded-lg shadow-lg px-3 py-2 mb-2 text-[11px]">
+                <span className="text-[#555] font-medium pr-1">
+                  {multiSelectedIds.size} selected
+                </span>
+                <span className="text-[#ddd]">·</span>
+                {BRANCH_ACTIONS.map((a) => (
+                  <button
+                    key={a.id}
+                    onClick={() => handleMultiAction(a.id)}
+                    className="px-2.5 py-1 rounded-md bg-[#111] text-white hover:bg-[#333] transition-colors whitespace-nowrap"
+                  >
+                    {a.label} →
+                  </button>
+                ))}
+                <span className="text-[#ddd]">·</span>
+                <button
+                  onClick={() => setMultiSelectedIds(new Set())}
+                  className="text-[#aaa] hover:text-[#555] transition-colors px-1"
+                  title="Clear selection"
+                >
+                  ✕ Clear
+                </button>
+              </div>
+            </Panel>
+          )}
         </ReactFlow>
       </div>
+
+      {/* ── Add-node modal ───────────────────────────────────────────────── */}
+      {addNodeState && (
+        <AddNodeModal
+          nodes={nodes}
+          initialParentIds={addNodeState.parentIds}
+          onAdd={(card: ResultCard, parentIds: string[]) => {
+            onAddUserNode(card, parentIds);
+            setAddNodeState(null);
+          }}
+          onClose={() => setAddNodeState(null)}
+        />
+      )}
 
       {/* ── Detail panel ─────────────────────────────────────────────────── */}
       {selectedNode ? (
@@ -503,12 +672,23 @@ export default function TreeView({ generations, savedCardIds, highlights, assets
           assets={assets}
           isSaved={savedCardIds.has(selectedNode.card.id)}
           onSave={() => onSaveCard(selectedNode.card)}
-          onBranch={(action) => { onBranchFrom(selectedNode.card, action); setSelectedId(null); }}
+          onBranch={(action) => {
+            const card = selectedNode.card;
+            if (card.type === "visual" && (card as VisualCard).imageDataUrl) {
+              onAddAsReference(
+                (card as VisualCard).imageDataUrl!,
+                (card as VisualCard).dimensionLabel || card.title,
+              );
+            }
+            onBranchFrom(card, action);
+            setSelectedId(null);
+          }}
           onRemove={() => handleRemove(selectedNode.genId, selectedNode.card.id)}
           onSelectSibling={(id) => setSelectedId(id)}
           onClose={() => setSelectedId(null)}
           savedCardIds={savedCardIds}
           onAddAsReference={onAddAsReference}
+          onAddChild={() => setAddNodeState({ parentIds: [selectedNode.card.id] })}
         />
       ) : (
         <div className="w-[200px] shrink-0 border-l border-[#e4e3e0] bg-white/60 flex items-center justify-center">
@@ -517,6 +697,161 @@ export default function TreeView({ generations, savedCardIds, highlights, assets
           </p>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Add node modal ────────────────────────────────────────────────────────────
+const NODE_TYPE_OPTIONS = ["concept", "motif", "visual", "note"] as const;
+type UserNodeType = (typeof NODE_TYPE_OPTIONS)[number];
+
+function AddNodeModal({
+  nodes,
+  initialParentIds,
+  onAdd,
+  onClose,
+}: {
+  nodes: LayoutNode[];
+  initialParentIds: string[];
+  onAdd: (card: ResultCard, parentIds: string[]) => void;
+  onClose: () => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [cardType, setCardType] = useState<UserNodeType>("concept");
+  const [parentIds, setParentIds] = useState<Set<string>>(new Set(initialParentIds));
+
+  const toggleParent = (id: string) =>
+    setParentIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  function buildCard(): ResultCard {
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const t = title.trim();
+    const b = body.trim();
+    switch (cardType) {
+      case "concept": return { id, type: "concept", title: t, description: b, rationale: "", createdAt: now };
+      case "motif":   return { id, type: "motif",   title: t, visualQuality: b, howItConveysIdea: "", category: "style", createdAt: now };
+      case "visual":  return { id, type: "visual",  title: t, dimensionLabel: t, analysisText: b, createdAt: now };
+      case "note": default: return { id, type: "note", title: t, body: b, createdAt: now };
+    }
+  }
+
+  function handleSubmit() {
+    if (!title.trim()) return;
+    onAdd(buildCard(), [...parentIds]);
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6"
+      onClick={onClose}
+      onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}
+    >
+      <div
+        className="bg-white rounded-xl shadow-xl w-full max-w-md p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-[13px] font-semibold text-[#111]">Add node</h2>
+          <button onClick={onClose} className="text-[#bbb] hover:text-[#555] text-base leading-none">✕</button>
+        </div>
+
+        {/* Type selector */}
+        <div className="flex gap-1.5 mb-4">
+          {NODE_TYPE_OPTIONS.map((t) => {
+            const s = TYPE_STYLE[t] ?? TYPE_STYLE.concept;
+            const active = cardType === t;
+            return (
+              <button
+                key={t}
+                onClick={() => setCardType(t)}
+                className="text-[9px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded transition-colors"
+                style={active ? { background: s.badgeBg, color: s.badgeText } : { background: "#f5f5f3", color: "#888" }}
+              >
+                {TYPE_LABEL[t]}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Title */}
+        <input
+          // eslint-disable-next-line jsx-a11y/no-autofocus
+          autoFocus
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(); } }}
+          placeholder="Title (required)"
+          className="w-full text-[13px] border border-[#e4e3e0] rounded-lg px-3 py-2 mb-3 focus:outline-none focus:border-[#aaa] placeholder:text-[#ccc]"
+        />
+
+        {/* Body */}
+        <textarea
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          placeholder="Description (optional)"
+          rows={2}
+          className="w-full text-[12px] border border-[#e4e3e0] rounded-lg px-3 py-2 mb-4 resize-none focus:outline-none focus:border-[#aaa] placeholder:text-[#ccc]"
+        />
+
+        {/* Parent selection */}
+        {nodes.length > 0 && (
+          <div className="mb-4">
+            <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold mb-1.5">
+              Connect to (optional)
+            </p>
+            <div className="flex flex-col gap-0.5 max-h-40 overflow-y-auto border border-[#f0efec] rounded-lg p-1">
+              {nodes.map((n) => {
+                const s = TYPE_STYLE[n.card.type] ?? TYPE_STYLE.concept;
+                const checked = parentIds.has(n.card.id);
+                return (
+                  <label
+                    key={n.card.id}
+                    className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors ${
+                      checked ? "bg-blue-50" : "hover:bg-[#f7f6f3]"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleParent(n.card.id)}
+                      className="shrink-0 accent-blue-600"
+                    />
+                    <span
+                      className="text-[7px] font-semibold uppercase px-1 py-0.5 rounded shrink-0"
+                      style={{ background: s.badgeBg, color: s.badgeText }}
+                    >
+                      {TYPE_LABEL[n.card.type]}
+                    </span>
+                    <span className="text-[11px] text-[#333] truncate flex-1">{n.card.title}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Footer */}
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="text-[11px] text-[#888] hover:text-[#333] px-3 py-1.5 transition-colors">
+            Cancel
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={!title.trim()}
+            className="text-[11px] bg-[#111] text-white px-4 py-1.5 rounded-lg hover:bg-[#333] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Add node
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -535,6 +870,7 @@ function DetailPanel({
   onClose,
   savedCardIds,
   onAddAsReference,
+  onAddChild,
 }: {
   node: LayoutNode;
   siblings: LayoutNode[];
@@ -548,6 +884,7 @@ function DetailPanel({
   onClose: () => void;
   savedCardIds: Set<string>;
   onAddAsReference: (dataUrl: string, label: string) => void;
+  onAddChild: () => void;
 }) {
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const s = TYPE_STYLE[node.card.type] ?? TYPE_STYLE.concept;
@@ -726,8 +1063,21 @@ function DetailPanel({
               </button>
             )}
             {isSaved && <p className="text-[10px] text-amber-500 px-1 mb-1">★ Saved to highlights</p>}
-            <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold px-1 pt-1 pb-0.5">Branch from here</p>
-            {BRANCH_ACTIONS.map((a) => (
+            <button
+              onClick={onAddChild}
+              className="w-full text-left text-[11px] px-3 py-1.5 rounded-lg hover:bg-[#f0f9f0] hover:text-green-700 text-[#555] transition-colors"
+            >
+              + Add child node
+            </button>
+            <div className="px-1 pt-1 pb-0.5 flex items-baseline gap-1.5">
+              <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold">
+                {isVisual ? "Generate from this image" : "Branch from here"}
+              </p>
+              {isVisual && (
+                <p className="text-[8px] text-[#c4a35a]">· image included in prompt</p>
+              )}
+            </div>
+            {(isVisual ? VISUAL_QUICK_ACTIONS : BRANCH_ACTIONS).map((a) => (
               <button key={a.id} onClick={() => onBranch(a.id)} className="w-full text-left text-[11px] px-3 py-1.5 rounded-lg hover:bg-blue-50 hover:text-[#2563eb] text-[#555] transition-colors">
                 {a.label} →
               </button>
