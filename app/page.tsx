@@ -37,7 +37,6 @@
 import { useState, useMemo, useCallback, useRef } from "react";
 import { useProject } from "@/lib/store";
 import { DIMENSIONS } from "@/lib/dimensions";
-import InputsSidebar from "@/components/InputsSidebar";
 import CenterPanel from "@/components/CenterPanel";
 import HighlightsPanel from "@/components/HighlightsPanel";
 import CallComposerModal from "@/components/CallComposerModal";
@@ -60,6 +59,7 @@ const DEFAULT_COMPOSER: ComposerState = {
   includedDraftIds: [],
   includedReferenceIds: [],
   includedHighlightIds: [],
+  branchFromCardIds: [],
   userInstructions: "",
   selectedDimensionIds: DIMENSIONS.map((d) => d.id),
 };
@@ -89,28 +89,12 @@ export default function WorkspacePage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingAction, setGeneratingAction] = useState<ActionType | null>(null);
   const [hoveredSourceIds, setHoveredSourceIds] = useState<Set<string>>(new Set());
-  const [hoveredAssetIds, setHoveredAssetIds] = useState<Set<string>>(new Set());
 
   // Panel resize + collapse state
-  const [leftWidth, setLeftWidth] = useState(288);
   const [rightWidth, setRightWidth] = useState(288);
-  const [leftHidden, setLeftHidden] = useState(false);
   const [rightHidden, setRightHidden] = useState(false);
-  const leftWidthRef = useRef(288);
   const rightWidthRef = useRef(288);
-  leftWidthRef.current = leftWidth;
   rightWidthRef.current = rightWidth;
-
-  function startResizeLeft(e: React.MouseEvent) {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startW = leftWidthRef.current;
-    const move = (ev: MouseEvent) => setLeftWidth(Math.min(520, Math.max(160, startW + ev.clientX - startX)));
-    const up = () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); document.body.style.cursor = ""; };
-    document.body.style.cursor = "col-resize";
-    document.addEventListener("mousemove", move);
-    document.addEventListener("mouseup", up);
-  }
 
   function startResizeRight(e: React.MouseEvent) {
     e.preventDefault();
@@ -123,9 +107,8 @@ export default function WorkspacePage() {
     document.addEventListener("mouseup", up);
   }
 
-  const handleHoverSources = useCallback((cardIds: Set<string>, assetIds: Set<string>) => {
+  const handleHoverSources = useCallback((cardIds: Set<string>, _assetIds: Set<string>) => {
     setHoveredSourceIds(cardIds);
-    setHoveredAssetIds(assetIds);
   }, []);
 
   const [dismissed, setDismissed] = useState<Record<string, Set<string>>>({});
@@ -148,8 +131,6 @@ export default function WorkspacePage() {
       let includedDraftIds: string[] = [];
       let includedReferenceIds: string[] = [];
 
-      // Pre-select images relevant to the action. The composer lets the researcher
-      // deselect individual images before sending.
       if (["analyze", "visual_variations", "conceptual_variations"].includes(action)) {
         includedDraftIds = drafts.map((a) => a.id);
       }
@@ -163,6 +144,7 @@ export default function WorkspacePage() {
         includedDraftIds,
         includedReferenceIds,
         includedHighlightIds: includedHighlights,
+        branchFromCardIds: [],
         userInstructions: "",
         selectedDimensionIds: DIMENSIONS.map((d) => d.id),
       });
@@ -191,7 +173,12 @@ export default function WorkspacePage() {
       // Convert included highlights to plain-text summaries for the prompt.
       // Track their card IDs separately so the generation can record provenance.
       const highlightSummaries = includedHighlights.map(formatHighlightForContext);
-      const sourceCardIds = includedHighlights.map((h) => h.card.id);
+      const sourceCardIds = [
+        ...new Set([
+          ...includedHighlights.map((h) => h.card.id),
+          ...(cfg.branchFromCardIds ?? []),
+        ]),
+      ];
 
       const body: GenerateRequest = {
         action: cfg.action,
@@ -250,6 +237,7 @@ export default function WorkspacePage() {
         includedDraftIds: drafts.map((a) => a.id),
         includedReferenceIds: [],
         includedHighlightIds: [],
+        branchFromCardIds: [card.id],
         userInstructions: "",
         selectedDimensionIds: [],
         conceptCards: [{
@@ -280,9 +268,31 @@ export default function WorkspacePage() {
   const handleBranchFrom = useCallback(
     (card: ResultCard, action: ActionType) => {
       actions.saveHighlight(card);
-      handleActionClick(action);
+      const drafts = state.assets.filter((a) => a.type === "draft");
+      const refs = state.assets.filter((a) => a.type === "reference");
+      const existingIncluded = state.highlights.filter((h) => h.includeInNextCall).map((h) => h.id);
+
+      let includedDraftIds: string[] = [];
+      let includedReferenceIds: string[] = [];
+      if (["analyze", "visual_variations", "conceptual_variations"].includes(action)) {
+        includedDraftIds = drafts.map((a) => a.id);
+      }
+      if (["analyze", "conceptual_variations"].includes(action)) {
+        includedReferenceIds = refs.map((a) => a.id);
+      }
+
+      setComposer({
+        open: true,
+        action,
+        includedDraftIds,
+        includedReferenceIds,
+        includedHighlightIds: existingIncluded,
+        branchFromCardIds: [card.id],
+        userInstructions: "",
+        selectedDimensionIds: DIMENSIONS.map((d) => d.id),
+      });
     },
-    [actions, handleActionClick]
+    [actions, state.assets, state.highlights]
   );
 
   const handleMultiBranchFrom = useCallback(
@@ -315,15 +325,14 @@ export default function WorkspacePage() {
       ];
 
       const alreadyIncluded = state.highlights.filter((h) => h.includeInNextCall).map((h) => h.id);
-      const selectedIds = cards.map((c) => c.id);
-      const allHighlightIds = [...new Set([...alreadyIncluded, ...selectedIds])];
 
       setComposer({
         open: true,
         action,
         includedDraftIds,
         includedReferenceIds,
-        includedHighlightIds: allHighlightIds,
+        includedHighlightIds: alreadyIncluded,
+        branchFromCardIds: cards.map((c) => c.id),
         userInstructions: "",
         selectedDimensionIds: DIMENSIONS.map((d) => d.id),
       });
@@ -394,36 +403,17 @@ export default function WorkspacePage() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#f0eeea]">
-      {/* ── Left panel ────────────────────────────────────────────────────── */}
-      {leftHidden ? (
-        <CollapsedStrip label="Inputs" side="left" onExpand={() => setLeftHidden(false)} />
-      ) : (
-        <>
-          <div className="shrink-0 h-screen overflow-hidden" style={{ width: leftWidth }}>
-            <InputsSidebar
-              title={state.title}
-              brief={state.brief}
-              assets={state.assets}
-              hoveredAssetIds={hoveredAssetIds}
-              onTitleChange={actions.setTitle}
-              onBriefChange={actions.setBrief}
-              onAddAsset={actions.addAsset}
-              onRemoveAsset={actions.removeAsset}
-              onCollapse={() => setLeftHidden(true)}
-            />
-          </div>
-          <ResizeHandle onMouseDown={startResizeLeft} />
-        </>
-      )}
-
       {/* ── Center panel ──────────────────────────────────────────────────── */}
       <CenterPanel
         generations={visibleGenerations}
+        allGenerations={state.generations}
         isGenerating={isGenerating}
         generatingAction={generatingAction}
         savedCardIds={savedCardIds}
         highlights={state.highlights}
         assets={state.assets}
+        brief={state.brief}
+        title={state.title}
         hoveredSourceIds={hoveredSourceIds}
         onHoverSources={handleHoverSources}
         onActionClick={handleActionClick}
@@ -437,6 +427,10 @@ export default function WorkspacePage() {
         onClearTree={handleClearTree}
         onAddUserCard={handleAddUserCard}
         onAddAsReference={handleAddAsReference}
+        onBriefChange={actions.setBrief}
+        onTitleChange={actions.setTitle}
+        onAddAsset={actions.addAsset}
+        onRemoveAsset={actions.removeAsset}
       />
 
       {/* ── Right panel ───────────────────────────────────────────────────── */}

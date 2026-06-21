@@ -30,11 +30,14 @@ import ClusterView from "./ClusterView";
 
 interface Props {
   generations: Generation[];
+  allGenerations: Generation[];
   isGenerating: boolean;
   generatingAction: ActionType | null;
   savedCardIds: Set<string>;
   highlights: Highlight[];
   assets: Asset[];
+  brief: string;
+  title: string;
   hoveredSourceIds: Set<string>;
   onHoverSources: (cardIds: Set<string>, assetIds: Set<string>) => void;
   onActionClick: (action: ActionType) => void;
@@ -48,6 +51,10 @@ interface Props {
   onClearTree: () => void;
   onAddUserCard: (title: string, body: string) => void;
   onAddAsReference: (dataUrl: string, label: string) => void;
+  onBriefChange: (v: string) => void;
+  onTitleChange: (v: string) => void;
+  onAddAsset: (asset: Asset) => void;
+  onRemoveAsset: (id: string) => void;
 }
 
 const TOOLBAR_ACTIONS: { id: ActionType; label: string; desc: string }[] = [
@@ -68,11 +75,14 @@ const ACTION_LABELS: Record<ActionType, string> = {
 
 export default function CenterPanel({
   generations,
+  allGenerations,
   isGenerating,
   generatingAction,
   savedCardIds,
   highlights,
   assets,
+  brief,
+  title,
   hoveredSourceIds,
   onHoverSources,
   onActionClick,
@@ -86,6 +96,10 @@ export default function CenterPanel({
   onClearTree,
   onAddUserCard,
   onAddAsReference,
+  onBriefChange,
+  onTitleChange,
+  onAddAsset,
+  onRemoveAsset,
 }: Props) {
   const [view, setView] = useState<"feed" | "tree" | "clusters">("feed");
 
@@ -129,11 +143,14 @@ export default function CenterPanel({
         <div className="flex-1 overflow-hidden flex">
           <TreeView
             generations={generations}
+            allGenerations={allGenerations}
             isGenerating={isGenerating}
             generatingAction={generatingAction}
             savedCardIds={savedCardIds}
             highlights={highlights}
             assets={assets}
+            brief={brief}
+            title={title}
             hoveredSourceIds={hoveredSourceIds}
             onHoverSources={onHoverSources}
             onSaveCard={onSaveCard}
@@ -143,6 +160,10 @@ export default function CenterPanel({
             onClearTree={onClearTree}
             onDismissCard={onDismissCard}
             onAddAsReference={onAddAsReference}
+            onBriefChange={onBriefChange}
+            onTitleChange={onTitleChange}
+            onAddAsset={onAddAsset}
+            onRemoveAsset={onRemoveAsset}
           />
         </div>
       )}

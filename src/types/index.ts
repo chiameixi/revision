@@ -136,6 +136,8 @@ export interface ComposerState {
   includedDraftIds: string[];
   includedReferenceIds: string[];
   includedHighlightIds: string[];
+  /** Card IDs being branched from — tracked separately from highlights to avoid async state issues. */
+  branchFromCardIds: string[];
   userInstructions: string;
   selectedDimensionIds: string[];
   conceptCards?: ConceptCardRef[];
