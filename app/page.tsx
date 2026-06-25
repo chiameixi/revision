@@ -431,6 +431,13 @@ export default function WorkspacePage() {
         onTitleChange={actions.setTitle}
         onAddAsset={actions.addAsset}
         onRemoveAsset={actions.removeAsset}
+        collections={state.collections}
+        onAddCollection={actions.addCollection}
+        onRemoveCollection={actions.removeCollection}
+        onUpdateCollection={actions.updateCollection}
+        onAddCardsToCollection={actions.addCardsToCollection}
+        onMoveCardToCollection={actions.moveCardToCollection}
+        onRemoveCardFromCollection={actions.removeCardFromCollection}
       />
 
       {/* ── Right panel ───────────────────────────────────────────────────── */}

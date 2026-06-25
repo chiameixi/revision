@@ -96,12 +96,22 @@ export interface Generation {
   includedReferenceIds?: string[];
 }
 
+export interface Collection {
+  id: string;
+  title: string;
+  description: string;
+  cardIds: string[];
+  color: string; // hex, e.g. "#f59e0b"
+  createdAt: string;
+}
+
 export interface ProjectState {
   title: string;
   brief: string;
   assets: Asset[];
   generations: Generation[];
   highlights: Highlight[];
+  collections: Collection[];
 }
 
 // Concept card reference passed to generate_concept_visuals

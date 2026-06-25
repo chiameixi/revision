@@ -17,7 +17,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import type { Asset, Generation, Highlight, ResultCard, ActionType, VisualCard } from "@/types";
+import type { Asset, Collection, Generation, Highlight, ResultCard, ActionType, VisualCard } from "@/types";
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 const NODE_W = 168;
@@ -79,6 +79,11 @@ const BRANCH_ACTIONS: { id: ActionType; label: string }[] = [
   { id: "conceptual_variations", label: "Conceptual Variations" },
 ];
 
+const PICKER_COLORS = [
+  "#f59e0b", "#10b981", "#3b82f6", "#ef4444",
+  "#8b5cf6", "#f97316", "#14b8a6", "#ec4899",
+];
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface LayoutNode {
   card: ResultCard;
@@ -110,6 +115,7 @@ type CardNodeData = {
   isAncestor: boolean;
   isSaved: boolean;
   isMultiSelected: boolean;
+  collectionColor?: string;
   onRemove: (genId: string, cardId: string) => void;
   onQuickBranch: (action: ActionType) => void;
 };
@@ -259,18 +265,24 @@ function computeLayout(generations: Generation[], allGenerations: Generation[]):
 // ── Custom node components ────────────────────────────────────────────────────
 function TextCardNode(props: NodeProps) {
   const data = props.data as unknown as CardNodeData;
-  const { card, isSelected, isHovered, isAncestor, isMultiSelected, isSaved, onRemove, genId, actionType } = data;
+  const { card, isSelected, isHovered, isAncestor, isMultiSelected, isSaved, collectionColor, onRemove, genId, actionType } = data;
   const s = TYPE_STYLE[card.type] ?? TYPE_STYLE.concept;
 
   const borderColor = isMultiSelected ? "#2563eb"
     : isAncestor ? "#f59e0b"
     : isSelected ? s.selectedBorder
-    : s.border;
+    : collectionColor ?? s.border;
   const shadow = isMultiSelected ? "0 0 0 3px rgba(37,99,235,0.25)"
     : isAncestor ? "0 0 0 3px rgba(251,191,36,0.3)"
     : isSelected ? "3px 3px 0px #111111"
     : isHovered ? "2px 2px 0px #888"
     : "1px 1px 0px #cccccc";
+
+  const bgColor = isMultiSelected ? "#eff6ff"
+    : isAncestor ? "#fffbeb"
+    : isSelected ? s.bg
+    : collectionColor ? `${collectionColor}15`
+    : "#ffffff";
 
   return (
     <>
@@ -280,7 +292,7 @@ function TextCardNode(props: NodeProps) {
         style={{
           width: NODE_W,
           height: NODE_H,
-          background: isMultiSelected ? "#eff6ff" : isAncestor ? "#fffbeb" : isSelected ? s.bg : "#ffffff",
+          background: bgColor,
           border: `1.5px solid ${borderColor}`,
           borderRadius: 10,
           boxShadow: shadow,
@@ -290,6 +302,9 @@ function TextCardNode(props: NodeProps) {
           userSelect: "none",
         }}
       >
+        {collectionColor && !isMultiSelected && !isSelected && (
+          <div className="absolute top-1.5 left-1.5 w-2 h-2 rounded-full" style={{ background: collectionColor }} />
+        )}
         <button
           className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 text-[10px] leading-none z-10"
           onClick={(e) => { e.stopPropagation(); onRemove(genId, card.id); }}
@@ -327,14 +342,14 @@ const VISUAL_QUICK_ACTIONS: { id: ActionType; label: string }[] = [
 
 function VisualCardNode(props: NodeProps) {
   const data = props.data as unknown as CardNodeData;
-  const { card, isSelected, isHovered, isAncestor, isMultiSelected, isSaved, onRemove, onQuickBranch, genId } = data;
+  const { card, isSelected, isHovered, isAncestor, isMultiSelected, isSaved, collectionColor, onRemove, onQuickBranch, genId } = data;
   const s = TYPE_STYLE.visual;
   const visualCard = card as VisualCard;
 
   const borderColor = isMultiSelected ? "#2563eb"
     : isAncestor ? "#f59e0b"
     : isSelected ? s.selectedBorder
-    : s.border;
+    : collectionColor ?? s.border;
   const shadow = isMultiSelected ? "0 0 0 3px rgba(37,99,235,0.25)"
     : isAncestor ? "0 0 0 3px rgba(251,191,36,0.3)"
     : isSelected ? "3px 3px 0px #111111"
@@ -370,6 +385,9 @@ function VisualCardNode(props: NodeProps) {
           </span>
           {isMultiSelected && <span className="text-[9px] text-white bg-blue-500/80 px-1 py-0.5 rounded shrink-0 font-bold">✓</span>}
           {isSaved && <span className="text-[9px] text-amber-300 shrink-0 drop-shadow">★</span>}
+          {collectionColor && !isMultiSelected && (
+            <div className="w-2 h-2 rounded-full ring-1 ring-white/50" style={{ background: collectionColor }} />
+          )}
         </div>
 
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -586,6 +604,9 @@ interface Props {
   onTitleChange: (v: string) => void;
   onAddAsset: (asset: Asset) => void;
   onRemoveAsset: (id: string) => void;
+  collections: Collection[];
+  onAddCollection: (col: Collection) => void;
+  onAddCardsToCollection: (collectionId: string, cardIds: string[]) => void;
 }
 
 export default function TreeView({
@@ -593,6 +614,7 @@ export default function TreeView({
   brief, title, hoveredSourceIds, onHoverSources, onSaveCard, onBranchFrom,
   onMultiBranchFrom, onAddUserNode, onClearTree, onDismissCard, onAddAsReference,
   onBriefChange, onTitleChange, onAddAsset, onRemoveAsset,
+  collections, onAddCollection, onAddCardsToCollection,
 }: Props) {
   const { nodes, edges } = useMemo(
     () => computeLayout(generations, allGenerations),
@@ -606,6 +628,10 @@ export default function TreeView({
   const [positionOverrides, setPositionOverrides] = useState<Record<string, { x: number; y: number }>>({});
   const [toasts, setToasts] = useState<{ id: string; message: string }[]>([]);
   const seenGenErrorIds = useRef<Set<string>>(new Set());
+  const [showCollectionColors, setShowCollectionColors] = useState(false);
+  const [collectionPickerOpen, setCollectionPickerOpen] = useState(false);
+  const [creatingInPicker, setCreatingInPicker] = useState(false);
+  const [newCollectionName, setNewCollectionName] = useState("");
 
   useEffect(() => {
     const newToasts: { id: string; message: string }[] = [];
@@ -641,6 +667,14 @@ export default function TreeView({
   }, []);
 
   const cardIds = useMemo(() => new Set(nodes.map((n) => n.card.id)), [nodes]);
+
+  const cardCollectionMap = useMemo(() => {
+    const map = new Map<string, string>(); // cardId → collection color
+    for (const col of collections) {
+      for (const cid of col.cardIds) map.set(cid, col.color);
+    }
+    return map;
+  }, [collections]);
 
   const selectedNode = nodes.find((n) => n.card.id === selectedId) ?? null;
   const siblings = selectedNode
@@ -766,6 +800,7 @@ export default function TreeView({
             || node.parentCardIds.some((pid) => hoveredSourceIds.has(pid)),
           isSaved: savedCardIds.has(node.card.id),
           isMultiSelected: multiSelectedIds.has(node.card.id),
+          collectionColor: showCollectionColors ? cardCollectionMap.get(node.card.id) : undefined,
           onRemove: handleRemove,
           onQuickBranch: (action) => handleQuickBranch(node.card, action),
         } satisfies CardNodeData,
@@ -773,7 +808,7 @@ export default function TreeView({
         height: h,
       };
     }),
-    [nodes, cardIds, positionOverrides, selectedId, multiSelectedIds, hoveredId, hoveredAncestorIds, hoveredSourceIds, savedCardIds, handleRemove, handleQuickBranch]
+    [nodes, cardIds, positionOverrides, selectedId, multiSelectedIds, hoveredId, hoveredAncestorIds, hoveredSourceIds, savedCardIds, handleRemove, handleQuickBranch, showCollectionColors, cardCollectionMap]
   );
 
   // ── Generation edges ──────────────────────────────────────────────────────
@@ -890,7 +925,7 @@ export default function TreeView({
           onNodeClick={handleNodeClick}
           onNodeMouseEnter={handleNodeMouseEnter}
           onNodeMouseLeave={handleNodeMouseLeave}
-          onPaneClick={() => { setSelectedId(null); setMultiSelectedIds(new Set()); }}
+          onPaneClick={() => { setSelectedId(null); setMultiSelectedIds(new Set()); setCollectionPickerOpen(false); }}
           onInit={(instance) => {
             rfInstanceRef.current = instance;
             instance.fitView({ padding: 0.15 });
@@ -921,9 +956,23 @@ export default function TreeView({
             </Panel>
           )}
 
-          {/* Top-right: Add node + Clear all */}
+          {/* Top-right: Color toggle + Add node + Clear all */}
           <Panel position="top-right">
             <div className="flex items-center gap-1.5 mr-2 mt-2">
+              {collections.length > 0 && (
+                <button
+                  onClick={() => setShowCollectionColors((p) => !p)}
+                  title={showCollectionColors ? "Hide collection colors" : "Show collection colors"}
+                  className={`bg-white border rounded-lg px-2.5 py-1.5 text-[11px] shadow-sm transition-colors flex items-center gap-1 ${
+                    showCollectionColors
+                      ? "border-[#555] text-[#111] bg-[#f5f5f4]"
+                      : "border-[#e4e3e0] text-[#aaa] hover:text-[#555] hover:border-[#aaa]"
+                  }`}
+                >
+                  <span className="text-[12px] leading-none">◉</span>
+                  Colors
+                </button>
+              )}
               <button
                 onClick={() => {
                   setAddNodeState({ parentIds: multiSelectedIds.size > 0 ? [...multiSelectedIds] : [] });
@@ -992,6 +1041,77 @@ export default function TreeView({
                     {a.label} →
                   </button>
                 ))}
+                <span className="text-[#ddd]">·</span>
+                {/* Collection picker */}
+                <div className="relative">
+                  <button
+                    onClick={() => { setCollectionPickerOpen((p) => !p); setCreatingInPicker(false); }}
+                    className={`px-2.5 py-1 rounded-md border transition-colors whitespace-nowrap ${
+                      collectionPickerOpen
+                        ? "bg-[#f0f0ff] border-[#6666cc] text-[#333]"
+                        : "border-[#e4e3e0] text-[#555] hover:border-[#888] hover:text-[#111]"
+                    }`}
+                  >
+                    Collection →
+                  </button>
+                  {collectionPickerOpen && (
+                    <div className="absolute bottom-full left-0 mb-1.5 bg-white rounded-xl border border-[#e4e3e0] shadow-xl p-1.5 min-w-[180px] z-50">
+                      {collections.length === 0 && !creatingInPicker && (
+                        <p className="text-[10px] text-[#aaa] px-2 py-1">No collections yet</p>
+                      )}
+                      {collections.map((col) => (
+                        <button
+                          key={col.id}
+                          onClick={() => {
+                            onAddCardsToCollection(col.id, [...multiSelectedIds]);
+                            setCollectionPickerOpen(false);
+                            setMultiSelectedIds(new Set());
+                          }}
+                          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[#f5f5f4] text-left"
+                        >
+                          <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: col.color }} />
+                          <span className="text-[11px] text-[#333] truncate">{col.title}</span>
+                        </button>
+                      ))}
+                      {creatingInPicker ? (
+                        <div className="px-2 py-1.5 flex items-center gap-1.5">
+                          <input
+                            autoFocus
+                            placeholder="Collection name…"
+                            value={newCollectionName}
+                            onChange={(e) => setNewCollectionName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && newCollectionName.trim()) {
+                                const newCol: Collection = {
+                                  id: crypto.randomUUID(),
+                                  title: newCollectionName.trim(),
+                                  description: "",
+                                  cardIds: [...multiSelectedIds],
+                                  color: PICKER_COLORS[collections.length % PICKER_COLORS.length],
+                                  createdAt: new Date().toISOString(),
+                                };
+                                onAddCollection(newCol);
+                                setNewCollectionName("");
+                                setCreatingInPicker(false);
+                                setCollectionPickerOpen(false);
+                                setMultiSelectedIds(new Set());
+                              }
+                              if (e.key === "Escape") { setCreatingInPicker(false); setNewCollectionName(""); }
+                            }}
+                            className="flex-1 text-[10px] border border-[#e4e3e0] rounded-md px-1.5 py-1 outline-none focus:border-blue-400 min-w-0"
+                          />
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setCreatingInPicker(true)}
+                          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[#f5f5f4] text-left border-t border-[#f0efec] mt-1 pt-2"
+                        >
+                          <span className="text-[11px] text-[#888]">+ New collection</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
                 <span className="text-[#ddd]">·</span>
                 <button
                   onClick={() => setMultiSelectedIds(new Set())}

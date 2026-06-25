@@ -29,6 +29,7 @@ import { useState, useEffect, useCallback } from "react";
 import type {
   ProjectState,
   Asset,
+  Collection,
   Generation,
   Highlight,
   ResultCard,
@@ -42,6 +43,7 @@ const DEFAULT_STATE: ProjectState = {
   assets: [],
   generations: [],
   highlights: [],
+  collections: [],
 };
 
 function loadFromStorage(): ProjectState {
@@ -156,6 +158,65 @@ export function useProject() {
       })),
 
     clearGenerations: () => update((s) => ({ ...s, generations: [] })),
+
+    addCollection: (col: Collection) =>
+      update((s) => ({ ...s, collections: [...s.collections, col] })),
+
+    removeCollection: (id: string) =>
+      update((s) => ({
+        ...s,
+        collections: s.collections.filter((c) => c.id !== id),
+      })),
+
+    updateCollection: (id: string, patch: Partial<Pick<Collection, "title" | "description" | "color">>) =>
+      update((s) => ({
+        ...s,
+        collections: s.collections.map((c) => c.id === id ? { ...c, ...patch } : c),
+      })),
+
+    addCardsToCollection: (collectionId: string, cardIds: string[]) =>
+      update((s) => ({
+        ...s,
+        collections: s.collections.map((c) => {
+          if (c.id === collectionId) {
+            const existing = new Set(c.cardIds);
+            const newIds = cardIds.filter((id) => !existing.has(id));
+            return { ...c, cardIds: [...c.cardIds, ...newIds] };
+          }
+          return c;
+        }),
+      })),
+
+    moveCardToCollection: (cardId: string, toCollectionId: string | null) =>
+      update((s) => ({
+        ...s,
+        collections: s.collections.map((c) => {
+          if (c.id === toCollectionId) {
+            if (c.cardIds.includes(cardId)) return c;
+            return { ...c, cardIds: [...c.cardIds, cardId] };
+          }
+          return c;
+        }),
+      })),
+
+    removeCardFromCollection: (collectionId: string, cardId: string) =>
+      update((s) => ({
+        ...s,
+        collections: s.collections.map((c) =>
+          c.id === collectionId
+            ? { ...c, cardIds: c.cardIds.filter((id) => id !== cardId) }
+            : c
+        ),
+      })),
+
+    removeCardFromCollections: (cardId: string) =>
+      update((s) => ({
+        ...s,
+        collections: s.collections.map((c) => ({
+          ...c,
+          cardIds: c.cardIds.filter((id) => id !== cardId),
+        })),
+      })),
   };
 
   return { state, actions, ready };

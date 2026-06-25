@@ -23,7 +23,7 @@
  */
 
 import { useState } from "react";
-import type { ActionType, Asset, ConceptCard, Generation, Highlight, ResultCard } from "@/types";
+import type { ActionType, Asset, Collection, ConceptCard, Generation, Highlight, ResultCard } from "@/types";
 import ResultCardComponent from "./cards/ResultCard";
 import TreeView from "./TreeView";
 import ClusterView from "./ClusterView";
@@ -55,6 +55,13 @@ interface Props {
   onTitleChange: (v: string) => void;
   onAddAsset: (asset: Asset) => void;
   onRemoveAsset: (id: string) => void;
+  collections: Collection[];
+  onAddCollection: (col: Collection) => void;
+  onRemoveCollection: (id: string) => void;
+  onUpdateCollection: (id: string, patch: Partial<Pick<Collection, "title" | "description" | "color">>) => void;
+  onAddCardsToCollection: (collectionId: string, cardIds: string[]) => void;
+  onMoveCardToCollection: (cardId: string, toCollectionId: string | null) => void;
+  onRemoveCardFromCollection: (collectionId: string, cardId: string) => void;
 }
 
 const TOOLBAR_ACTIONS: { id: ActionType; label: string; desc: string }[] = [
@@ -100,6 +107,13 @@ export default function CenterPanel({
   onTitleChange,
   onAddAsset,
   onRemoveAsset,
+  collections,
+  onAddCollection,
+  onRemoveCollection,
+  onUpdateCollection,
+  onAddCardsToCollection,
+  onMoveCardToCollection,
+  onRemoveCardFromCollection,
 }: Props) {
   const [view, setView] = useState<"feed" | "tree" | "clusters">("feed");
 
@@ -164,6 +178,9 @@ export default function CenterPanel({
             onTitleChange={onTitleChange}
             onAddAsset={onAddAsset}
             onRemoveAsset={onRemoveAsset}
+            collections={collections}
+            onAddCollection={onAddCollection}
+            onAddCardsToCollection={onAddCardsToCollection}
           />
         </div>
       )}
@@ -182,6 +199,13 @@ export default function CenterPanel({
             onDismissCard={onDismissCard}
             onAddUserCard={onAddUserCard}
             onAddAsReference={onAddAsReference}
+            collections={collections}
+            onAddCollection={onAddCollection}
+            onRemoveCollection={onRemoveCollection}
+            onUpdateCollection={onUpdateCollection}
+            onAddCardsToCollection={onAddCardsToCollection}
+            onMoveCardToCollection={onMoveCardToCollection}
+            onRemoveCardFromCollection={onRemoveCardFromCollection}
           />
         </div>
       )}
