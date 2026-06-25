@@ -156,6 +156,7 @@ export default function CenterPanel({
             onAddUserNode={onAddUserNode}
             onClearTree={onClearTree}
             onDismissCard={onDismissCard}
+            onUpdateCard={onUpdateCard}
             onAddAsReference={onAddAsReference}
             onBriefChange={onBriefChange}
             onTitleChange={onTitleChange}

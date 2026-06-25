@@ -605,6 +605,7 @@ interface Props {
   onAddUserNode: (card: ResultCard, parentCardIds: string[]) => void;
   onClearTree: () => void;
   onDismissCard: (genId: string, cardId: string) => void;
+  onUpdateCard: (card: ResultCard) => void;
   onAddAsReference: (dataUrl: string, label: string) => void;
   onBriefChange: (v: string) => void;
   onTitleChange: (v: string) => void;
@@ -619,7 +620,7 @@ interface Props {
 export default function TreeView({
   generations, allGenerations, isGenerating, generatingAction, assets,
   brief, title, hoveredSourceIds, onHoverSources, onBranchFrom,
-  onMultiBranchFrom, onAddUserNode, onClearTree, onDismissCard, onAddAsReference,
+  onMultiBranchFrom, onAddUserNode, onClearTree, onDismissCard, onUpdateCard, onAddAsReference,
   onBriefChange, onTitleChange, onAddAsset, onRemoveAsset, onSelectionChange,
   collections, onAddCollection, onAddCardsToCollection,
 }: Props) {
@@ -628,6 +629,7 @@ export default function TreeView({
     [generations, allGenerations]
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedInputId, setSelectedInputId] = useState<string | null>(null);
   const [multiSelectedIds, setMultiSelectedIds] = useState<Set<string>>(new Set());
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [addNodeState, setAddNodeState] = useState<{ parentIds: string[] } | null>(null);
@@ -695,6 +697,11 @@ export default function TreeView({
   const siblings = selectedNode
     ? nodes.filter((n) => n.genId === selectedNode.genId && n.card.id !== selectedNode.card.id)
     : [];
+
+  const selectedInputIsBrief = selectedInputId === "__brief__";
+  const selectedInputAsset = selectedInputId?.startsWith("__asset_")
+    ? assets.find((a) => a.id === selectedInputId.replace("__asset_", "")) ?? null
+    : null;
 
   const hoveredAncestorIds = useMemo(() => {
     if (!hoveredId) return new Set<string>();
@@ -898,7 +905,15 @@ export default function TreeView({
 
   // ── Event handlers ────────────────────────────────────────────────────────
   const handleNodeClick = useCallback((event: React.MouseEvent, rfNode: Node) => {
-    if (rfNode.id === "__brief__" || rfNode.id.startsWith("__asset_")) return;
+    if (rfNode.id === "__brief__" || rfNode.id.startsWith("__asset_")) {
+      if (!event.shiftKey) {
+        setSelectedInputId((prev) => (prev === rfNode.id ? null : rfNode.id));
+        setSelectedId(null);
+        setMultiSelectedIds(new Set());
+      }
+      return;
+    }
+    setSelectedInputId(null);
     if (event.shiftKey) {
       setMultiSelectedIds((prev) => {
         const next = new Set(prev);
@@ -940,7 +955,7 @@ export default function TreeView({
           onNodeClick={handleNodeClick}
           onNodeMouseEnter={handleNodeMouseEnter}
           onNodeMouseLeave={handleNodeMouseLeave}
-          onPaneClick={() => { setSelectedId(null); setMultiSelectedIds(new Set()); setCollectionPickerOpen(false); }}
+          onPaneClick={() => { setSelectedId(null); setSelectedInputId(null); setMultiSelectedIds(new Set()); setCollectionPickerOpen(false); }}
           onInit={(instance) => {
             rfInstanceRef.current = instance;
             instance.fitView({ padding: 0.15 });
@@ -1226,6 +1241,7 @@ export default function TreeView({
           node={selectedNode}
           siblings={siblings}
           assets={assets}
+          onUpdateCard={onUpdateCard}
           onBranch={(action) => {
             const card = selectedNode.card;
             if (card.type === "visual" && (card as VisualCard).imageDataUrl) {
@@ -1242,6 +1258,23 @@ export default function TreeView({
           onClose={() => setSelectedId(null)}
           onAddAsReference={onAddAsReference}
           onAddChild={() => setAddNodeState({ parentIds: [selectedNode.card.id] })}
+        />
+      ) : selectedInputIsBrief ? (
+        <InputDetailPanel
+          type="brief"
+          title={title}
+          brief={brief}
+          onTitleChange={onTitleChange}
+          onBriefChange={onBriefChange}
+          onClose={() => setSelectedInputId(null)}
+        />
+      ) : selectedInputAsset ? (
+        <InputDetailPanel
+          type="asset"
+          asset={selectedInputAsset}
+          onAddAsReference={onAddAsReference}
+          onRemove={() => { onRemoveAsset(selectedInputAsset.id); setSelectedInputId(null); }}
+          onClose={() => setSelectedInputId(null)}
         />
       ) : (
         <div className="w-[200px] shrink-0 border-l border-[#e4e3e0] bg-white/60 flex items-center justify-center">
@@ -1483,11 +1516,99 @@ function AddNodeModal({
   );
 }
 
+// ── Input detail panel (brief / asset nodes) ──────────────────────────────────
+type InputDetailPanelProps =
+  | { type: "brief"; title: string; brief: string; onTitleChange: (v: string) => void; onBriefChange: (v: string) => void; onClose: () => void; asset?: never; onAddAsReference?: never; onRemove?: never }
+  | { type: "asset"; asset: Asset; onAddAsReference: (dataUrl: string, label: string) => void; onRemove: () => void; onClose: () => void; title?: never; brief?: never; onTitleChange?: never; onBriefChange?: never };
+
+function InputDetailPanel(props: InputDetailPanelProps) {
+  if (props.type === "brief") {
+    const { title, brief, onTitleChange, onBriefChange, onClose } = props;
+    return (
+      <aside className="w-[272px] shrink-0 h-full border-l border-[#e4e3e0] bg-white flex flex-col overflow-hidden">
+        <div className="px-4 py-3 border-b border-[#f0efec] shrink-0">
+          <div className="flex items-start justify-between gap-2 mb-2">
+            <span className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">
+              Project Brief
+            </span>
+            <button onClick={onClose} className="text-[11px] text-[#bbb] hover:text-[#555] transition-colors shrink-0">Close</button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
+          <div>
+            <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold mb-1">Title</p>
+            <input
+              value={title}
+              onChange={(e) => onTitleChange(e.target.value)}
+              placeholder="Project title"
+              className="w-full text-[12px] font-semibold text-[#111] bg-[#fafaf8] border border-[#e4e3e0] rounded px-2.5 py-1.5 outline-none focus:border-[#888] placeholder-[#ccc]"
+            />
+          </div>
+          <div>
+            <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold mb-1">Brief</p>
+            <textarea
+              value={brief}
+              onChange={(e) => onBriefChange(e.target.value)}
+              placeholder="Describe your design challenge..."
+              rows={8}
+              className="w-full text-[11px] text-[#444] bg-[#fafaf8] border border-[#e4e3e0] rounded px-2.5 py-1.5 resize-none outline-none focus:border-[#888] placeholder-[#ccc] leading-relaxed"
+            />
+          </div>
+        </div>
+      </aside>
+    );
+  }
+
+  const { asset, onAddAsReference, onRemove, onClose } = props;
+  const isDraft = asset.type === "draft";
+
+  return (
+    <aside className="w-[272px] shrink-0 h-full border-l border-[#e4e3e0] bg-white flex flex-col overflow-hidden">
+      <div className="px-4 py-3 border-b border-[#f0efec] shrink-0">
+        <div className="flex items-start justify-between gap-2 mb-2">
+          <span
+            className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded"
+            style={isDraft ? { background: "#f5f5f4", color: "#555" } : { background: "#e8e8f8", color: "#4444aa" }}
+          >
+            {isDraft ? "✎ Draft" : "◈ Reference"}
+          </span>
+          <div className="flex items-center gap-1.5 shrink-0 -mt-0.5">
+            <button onClick={onRemove} className="text-[11px] text-[#ccc] hover:text-red-400 transition-colors">✕ Remove</button>
+            <span className="text-[#e4e3e0]">|</span>
+            <button onClick={onClose} className="text-[11px] text-[#bbb] hover:text-[#555] transition-colors">Close</button>
+          </div>
+        </div>
+        <p className="text-[12px] font-semibold text-[#222] leading-snug truncate">{asset.fileName}</p>
+      </div>
+      <div className="flex-1 overflow-y-auto flex flex-col">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={asset.dataUrl} alt={asset.fileName} className="w-full object-contain max-h-56 bg-[#f7f6f3]" />
+        <div className="p-4 flex flex-col gap-2">
+          {isDraft && (
+            <button
+              onClick={() => onAddAsReference(asset.dataUrl, asset.fileName)}
+              className="w-full text-left text-[11px] px-3 py-2 rounded-lg border border-[#ccc] hover:border-[#888] text-[#555] hover:text-[#111] transition-colors"
+            >
+              + Use as Reference input
+            </button>
+          )}
+          <p className="text-[10px] text-[#bbb] leading-relaxed">
+            {isDraft
+              ? "Drafts are sent to Analyze and Variation actions. Use as Reference to also include in contextual calls."
+              : "References are sent to Analyze and Conceptual Variations actions to ground the generation."}
+          </p>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
 // ── Detail panel ──────────────────────────────────────────────────────────────
 function DetailPanel({
   node,
   siblings,
   assets,
+  onUpdateCard,
   onBranch,
   onRemove,
   onSelectSibling,
@@ -1498,6 +1619,7 @@ function DetailPanel({
   node: LayoutNode;
   siblings: LayoutNode[];
   assets: Asset[];
+  onUpdateCard: (card: ResultCard) => void;
   onBranch: (action: ActionType) => void;
   onRemove: () => void;
   onSelectSibling: (id: string) => void;
@@ -1622,7 +1744,7 @@ function DetailPanel({
           )}
 
           <div className="p-4 border-b border-[#f0efec] flex flex-col gap-3">
-            <CardDetails card={card} />
+            <EditableCardDetails card={card} onUpdate={onUpdateCard} />
           </div>
 
           {siblings.filter((s) => !(imageSiblings as LayoutNode[]).includes(s)).length > 0 && (
@@ -1692,43 +1814,89 @@ function DetailPanel({
   );
 }
 
-// ── Card detail fields ────────────────────────────────────────────────────────
-function CardDetails({ card }: { card: ResultCard }) {
+// ── Editable card detail fields ───────────────────────────────────────────────
+function EditableCardDetails({ card, onUpdate }: { card: ResultCard; onUpdate: (c: ResultCard) => void }) {
+  function patch(fields: Partial<ResultCard>) {
+    onUpdate({ ...card, ...fields } as ResultCard);
+  }
+
+  const titleField = (
+    <EditField
+      label="Title"
+      value={card.title}
+      onChange={(v) => patch({ title: v })}
+      singleLine
+    />
+  );
+
   switch (card.type) {
     case "concept":
       return (
         <>
-          <Field label="Description" value={card.description} />
-          <Field label="Rationale" value={card.rationale} />
+          {titleField}
+          <EditField label="Description" value={card.description} onChange={(v) => patch({ description: v })} />
+          <EditField label="Rationale" value={card.rationale} onChange={(v) => patch({ rationale: v })} />
         </>
       );
     case "motif":
       return (
         <>
-          <Field label="Visual Quality" value={card.visualQuality} />
-          <Field label="How It Conveys The Idea" value={card.howItConveysIdea} />
-          <Field label="Category" value={card.category} />
+          {titleField}
+          <EditField label="Visual Quality" value={card.visualQuality} onChange={(v) => patch({ visualQuality: v })} />
+          <EditField label="How It Conveys The Idea" value={card.howItConveysIdea} onChange={(v) => patch({ howItConveysIdea: v })} />
+          <EditField label="Category" value={card.category} onChange={(v) => patch({ category: v })} singleLine />
         </>
       );
     case "visual":
       return (
         <>
-          <Field label="Dimension" value={card.dimensionLabel} />
-          <Field label="Analysis" value={card.analysisText} />
-          {card.error && <Field label="Error" value={card.error} isError />}
+          {titleField}
+          <EditField label="Dimension" value={card.dimensionLabel} onChange={(v) => patch({ dimensionLabel: v })} singleLine />
+          <EditField label="Analysis" value={card.analysisText} onChange={(v) => patch({ analysisText: v })} />
+          {card.error && (
+            <div>
+              <p className="text-[9px] font-semibold uppercase tracking-wide text-[#bbb] mb-0.5">Error</p>
+              <p className="text-[11px] text-red-500 leading-relaxed">{card.error}</p>
+            </div>
+          )}
         </>
       );
     case "note":
-      return <Field label="Note" value={card.body} />;
+      return (
+        <>
+          {titleField}
+          <EditField label="Note" value={card.body} onChange={(v) => patch({ body: v })} />
+        </>
+      );
   }
 }
 
-function Field({ label, value, isError }: { label: string; value: string; isError?: boolean }) {
-  if (!value) return null;
+function EditField({
+  label, value, onChange, singleLine,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  singleLine?: boolean;
+}) {
+  const cls = "w-full text-[11px] text-[#333] bg-[#fafaf8] border border-transparent hover:border-[#e4e3e0] focus:border-[#888] rounded px-2 py-1 outline-none leading-relaxed resize-none placeholder-[#ccc] transition-colors";
   return (
     <div>
-      <p className="text-[9px] font-semibold uppercase tracking-wide text-[#bbb] mb-0.5">{label}</p>
-      <p className={`text-[11px] leading-relaxed ${isError ? "text-red-500" : "text-[#444]"}`}>{value}</p>
+      <p className="text-[9px] font-semibold uppercase tracking-wide text-[#bbb] mb-0.5 px-2">{label}</p>
+      {singleLine ? (
+        <input
+          className={cls}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      ) : (
+        <textarea
+          className={cls}
+          value={value}
+          rows={3}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )}
     </div>
   );
 }
