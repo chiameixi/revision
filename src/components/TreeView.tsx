@@ -17,7 +17,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import type { Asset, Collection, Generation, Highlight, ResultCard, ActionType, VisualCard } from "@/types";
+import type { Asset, Collection, Generation, ResultCard, ActionType, VisualCard } from "@/types";
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 const NODE_W = 168;
@@ -595,14 +595,11 @@ interface Props {
   allGenerations: Generation[];
   isGenerating: boolean;
   generatingAction: ActionType | null;
-  savedCardIds: Set<string>;
-  highlights: Highlight[];
   assets: Asset[];
   brief: string;
   title: string;
   hoveredSourceIds: Set<string>;
   onHoverSources: (cardIds: Set<string>, assetIds: Set<string>) => void;
-  onSaveCard: (card: ResultCard) => void;
   onBranchFrom: (card: ResultCard, action: ActionType) => void;
   onMultiBranchFrom: (cards: ResultCard[], action: ActionType) => void;
   onAddUserNode: (card: ResultCard, parentCardIds: string[]) => void;
@@ -613,16 +610,17 @@ interface Props {
   onTitleChange: (v: string) => void;
   onAddAsset: (asset: Asset) => void;
   onRemoveAsset: (id: string) => void;
+  onSelectionChange?: (ids: string[]) => void;
   collections: Collection[];
   onAddCollection: (col: Collection) => void;
   onAddCardsToCollection: (collectionId: string, cardIds: string[]) => void;
 }
 
 export default function TreeView({
-  generations, allGenerations, isGenerating, generatingAction, savedCardIds, highlights, assets,
-  brief, title, hoveredSourceIds, onHoverSources, onSaveCard, onBranchFrom,
+  generations, allGenerations, isGenerating, generatingAction, assets,
+  brief, title, hoveredSourceIds, onHoverSources, onBranchFrom,
   onMultiBranchFrom, onAddUserNode, onClearTree, onDismissCard, onAddAsReference,
-  onBriefChange, onTitleChange, onAddAsset, onRemoveAsset,
+  onBriefChange, onTitleChange, onAddAsset, onRemoveAsset, onSelectionChange,
   collections, onAddCollection, onAddCardsToCollection,
 }: Props) {
   const { nodes, edges } = useMemo(
@@ -675,6 +673,10 @@ export default function TreeView({
   const dismissToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
+
+  useEffect(() => {
+    onSelectionChange?.([...multiSelectedIds]);
+  }, [multiSelectedIds, onSelectionChange]);
 
   const cardIds = useMemo(() => new Set(nodes.map((n) => n.card.id)), [nodes]);
 
@@ -811,7 +813,7 @@ export default function TreeView({
           isHovered: node.card.id === hoveredId,
           isAncestor: hoveredAncestorIds.has(node.card.id)
             || node.parentCardIds.some((pid) => hoveredSourceIds.has(pid)),
-          isSaved: savedCardIds.has(node.card.id),
+          isSaved: false,
           isMultiSelected: multiSelectedIds.has(node.card.id),
           collectionColors: showCollectionColors ? cardCollectionsMap.get(node.card.id) : undefined,
           onRemove: handleRemove,
@@ -821,7 +823,7 @@ export default function TreeView({
         height: h,
       };
     }),
-    [nodes, cardIds, positionOverrides, selectedId, multiSelectedIds, hoveredId, hoveredAncestorIds, hoveredSourceIds, savedCardIds, handleRemove, handleQuickBranch, showCollectionColors, cardCollectionsMap]
+    [nodes, cardIds, positionOverrides, selectedId, multiSelectedIds, hoveredId, hoveredAncestorIds, hoveredSourceIds, handleRemove, handleQuickBranch, showCollectionColors, cardCollectionsMap]
   );
 
   // ── Generation edges ──────────────────────────────────────────────────────
@@ -1223,10 +1225,7 @@ export default function TreeView({
         <DetailPanel
           node={selectedNode}
           siblings={siblings}
-          highlights={highlights}
           assets={assets}
-          isSaved={savedCardIds.has(selectedNode.card.id)}
-          onSave={() => onSaveCard(selectedNode.card)}
           onBranch={(action) => {
             const card = selectedNode.card;
             if (card.type === "visual" && (card as VisualCard).imageDataUrl) {
@@ -1241,7 +1240,6 @@ export default function TreeView({
           onRemove={() => handleRemove(selectedNode.genId, selectedNode.card.id)}
           onSelectSibling={(id) => setSelectedId(id)}
           onClose={() => setSelectedId(null)}
-          savedCardIds={savedCardIds}
           onAddAsReference={onAddAsReference}
           onAddChild={() => setAddNodeState({ parentIds: [selectedNode.card.id] })}
         />
@@ -1489,29 +1487,21 @@ function AddNodeModal({
 function DetailPanel({
   node,
   siblings,
-  highlights,
   assets,
-  isSaved,
-  onSave,
   onBranch,
   onRemove,
   onSelectSibling,
   onClose,
-  savedCardIds,
   onAddAsReference,
   onAddChild,
 }: {
   node: LayoutNode;
   siblings: LayoutNode[];
-  highlights: Highlight[];
   assets: Asset[];
-  isSaved: boolean;
-  onSave: () => void;
   onBranch: (action: ActionType) => void;
   onRemove: () => void;
   onSelectSibling: (id: string) => void;
   onClose: () => void;
-  savedCardIds: Set<string>;
   onAddAsReference: (dataUrl: string, label: string) => void;
   onAddChild: () => void;
 }) {
@@ -1521,10 +1511,6 @@ function DetailPanel({
   const card = node.card;
   const isVisual = card.type === "visual";
   const mainImage = isVisual ? (card as VisualCard).imageDataUrl : undefined;
-
-  const sourceHighlights = node.parentCardIds
-    .map((pid) => highlights.find((h) => h.card.id === pid))
-    .filter((h): h is Highlight => h !== undefined);
 
   const sourceDrafts = node.includedDraftIds
     .map((id) => assets.find((a) => a.id === id))
@@ -1558,16 +1544,10 @@ function DetailPanel({
         </div>
 
         <div className="flex-1 overflow-y-auto">
-          {(sourceHighlights.length > 0 || sourceDrafts.length > 0 || sourceRefs.length > 0) && (
+          {(sourceDrafts.length > 0 || sourceRefs.length > 0) && (
             <div className="px-4 py-3 border-b border-[#f0efec]">
               <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold mb-2">Sources</p>
               <div className="flex flex-col gap-1.5">
-                {sourceHighlights.map((h) => (
-                  <div key={h.card.id} className="px-2.5 py-2 rounded-lg" style={{ background: "#fffbeb", border: "1px solid #f0d89a" }}>
-                    <p className="text-[9px] text-[#b45309] uppercase tracking-wide font-semibold mb-0.5">★ highlight · {h.card.type}</p>
-                    <p className="text-[10px] font-medium text-[#333] leading-snug line-clamp-2">{h.card.title}</p>
-                  </div>
-                ))}
                 {sourceDrafts.map((a) => (
                   <div key={a.id} className="px-2.5 py-2 rounded-lg flex items-center gap-2" style={{ background: "#f5f5f4", border: "1px solid #ccc" }}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1655,7 +1635,6 @@ function DetailPanel({
                   .filter((sib) => !(imageSiblings as LayoutNode[]).includes(sib))
                   .map((sib) => {
                     const sibStyle = TYPE_STYLE[sib.card.type] ?? TYPE_STYLE.concept;
-                    const sibSaved = savedCardIds.has(sib.card.id);
                     return (
                       <button
                         key={sib.card.id}
@@ -1667,7 +1646,6 @@ function DetailPanel({
                           <span className="text-[8px] font-semibold uppercase tracking-wide px-1 py-0.5 rounded" style={{ background: sibStyle.badgeBg, color: sibStyle.badgeText }}>
                             {TYPE_LABEL[sib.card.type]}
                           </span>
-                          {sibSaved && <span className="text-[9px] text-amber-400">★</span>}
                         </div>
                         <p className="text-[10px] font-medium text-[#333] leading-snug line-clamp-2">{sib.card.title}</p>
                       </button>
@@ -1678,12 +1656,6 @@ function DetailPanel({
           )}
 
           <div className="p-3 flex flex-col gap-1">
-            {!isSaved && (
-              <button onClick={onSave} className="w-full text-left text-[11px] px-3 py-2 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 font-medium transition-colors mb-1">
-                ★ Save to Highlights
-              </button>
-            )}
-            {isSaved && <p className="text-[10px] text-amber-500 px-1 mb-1">★ Saved to highlights</p>}
             <button
               onClick={onAddChild}
               className="w-full text-left text-[11px] px-3 py-1.5 rounded-lg hover:bg-[#f0f9f0] hover:text-green-700 text-[#555] transition-colors"

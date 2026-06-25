@@ -1,29 +1,7 @@
 "use client";
 
-/**
- * src/components/CenterPanel.tsx
- *
- * Responsibility: The main content area — action toolbar, view-mode toggle
- * (Feed / Tree / Clusters), and the active view itself.
- *
- * The toolbar dispatches action identifiers up to `page.tsx` via
- * `onActionClick`, which then opens the `CallComposerModal`.  The panel
- * receives already-filtered `generations` (dismissed cards removed) so it
- * never needs to know about the dismiss set directly.
- *
- * View modes:
- * - Feed: chronological stack of `GenerationBlock` components.
- * - Tree: `TreeView` renders a BFS-depth-based node graph.
- * - Clusters: `ClusterView` groups cards by type with drag-to-regroup.
- *
- * `GenerationBlock` resolves source references (highlight cards, draft/ref
- * assets) from the IDs stored on the generation and shows them as provenance
- * chips in the block header.  Hovering a block emits those IDs so
- * `InputsSidebar` and `HighlightsPanel` can highlight the corresponding items.
- */
-
-import { useState } from "react";
-import type { ActionType, Asset, Collection, ConceptCard, Generation, Highlight, ResultCard } from "@/types";
+import { useState, useCallback } from "react";
+import type { ActionType, Asset, Collection, ConceptCard, Generation, ResultCard } from "@/types";
 import ResultCardComponent from "./cards/ResultCard";
 import TreeView from "./TreeView";
 import ClusterView from "./ClusterView";
@@ -33,15 +11,12 @@ interface Props {
   allGenerations: Generation[];
   isGenerating: boolean;
   generatingAction: ActionType | null;
-  savedCardIds: Set<string>;
-  highlights: Highlight[];
   assets: Asset[];
   brief: string;
   title: string;
   hoveredSourceIds: Set<string>;
   onHoverSources: (cardIds: Set<string>, assetIds: Set<string>) => void;
-  onActionClick: (action: ActionType) => void;
-  onSaveCard: (card: ResultCard) => void;
+  onActionClick: (action: ActionType, selectedCardIds: string[]) => void;
   onDismissCard: (genId: string, cardId: string) => void;
   onUpdateCard: (card: ResultCard) => void;
   onGenerateVisuals: (card: ConceptCard) => void;
@@ -72,12 +47,12 @@ const TOOLBAR_ACTIONS: { id: ActionType; label: string; desc: string }[] = [
 ];
 
 const ACTION_LABELS: Record<ActionType, string> = {
-  unpack_brief:            "Unpack Brief",
-  analyze:                 "Analyze",
-  visual_variations:       "Visual Variations",
-  conceptual_variations:   "Conceptual Variations",
+  unpack_brief:             "Unpack Brief",
+  analyze:                  "Analyze",
+  visual_variations:        "Visual Variations",
+  conceptual_variations:    "Conceptual Variations",
   generate_concept_visuals: "Generate Concept Visuals",
-  user_added:              "Your Idea",
+  user_added:               "Your Idea",
 };
 
 export default function CenterPanel({
@@ -85,15 +60,12 @@ export default function CenterPanel({
   allGenerations,
   isGenerating,
   generatingAction,
-  savedCardIds,
-  highlights,
   assets,
   brief,
   title,
   hoveredSourceIds,
   onHoverSources,
   onActionClick,
-  onSaveCard,
   onDismissCard,
   onUpdateCard,
   onGenerateVisuals,
@@ -116,16 +88,25 @@ export default function CenterPanel({
   onRemoveCardFromCollection,
 }: Props) {
   const [view, setView] = useState<"feed" | "tree" | "clusters">("feed");
+  const [selectedCardIds, setSelectedCardIds] = useState<string[]>([]);
+
+  const handleSelectionChange = useCallback((ids: string[]) => {
+    setSelectedCardIds(ids);
+  }, []);
+
+  const selectionHint = selectedCardIds.length > 0
+    ? `${selectedCardIds.length} node${selectedCardIds.length > 1 ? "s" : ""} selected`
+    : null;
 
   return (
     <main className="flex-1 min-w-0 h-screen flex flex-col overflow-hidden">
       {/* Action toolbar */}
       <div className="px-5 pt-5 pb-4 border-b bg-white" style={{ borderColor: "#ccc9c0" }}>
-        <div className="flex flex-wrap gap-2 mb-3">
+        <div className="flex flex-wrap items-center gap-2 mb-3">
           {TOOLBAR_ACTIONS.map((action) => (
             <button
               key={action.id}
-              onClick={() => onActionClick(action.id)}
+              onClick={() => onActionClick(action.id, selectedCardIds)}
               disabled={isGenerating}
               title={action.desc}
               className="text-[12px] px-3.5 py-1.5 rounded-sm border border-[#111] text-[#111] bg-white hover:bg-[#111] hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
@@ -133,6 +114,11 @@ export default function CenterPanel({
               {action.label}
             </button>
           ))}
+          {selectionHint && (
+            <span className="text-[11px] text-[#888] ml-1">
+              · {selectionHint} as context
+            </span>
+          )}
         </div>
         {/* View toggle */}
         <div className="flex items-center gap-1">
@@ -160,14 +146,11 @@ export default function CenterPanel({
             allGenerations={allGenerations}
             isGenerating={isGenerating}
             generatingAction={generatingAction}
-            savedCardIds={savedCardIds}
-            highlights={highlights}
             assets={assets}
             brief={brief}
             title={title}
             hoveredSourceIds={hoveredSourceIds}
             onHoverSources={onHoverSources}
-            onSaveCard={onSaveCard}
             onBranchFrom={onBranchFrom}
             onMultiBranchFrom={onMultiBranchFrom}
             onAddUserNode={onAddUserNode}
@@ -178,6 +161,7 @@ export default function CenterPanel({
             onTitleChange={onTitleChange}
             onAddAsset={onAddAsset}
             onRemoveAsset={onRemoveAsset}
+            onSelectionChange={handleSelectionChange}
             collections={collections}
             onAddCollection={onAddCollection}
             onAddCardsToCollection={onAddCardsToCollection}
@@ -190,11 +174,8 @@ export default function CenterPanel({
         <div className="flex-1 overflow-hidden flex">
           <ClusterView
             generations={generations}
-            savedCardIds={savedCardIds}
-            highlights={highlights}
             assets={assets}
             onHoverSources={onHoverSources}
-            onSaveCard={onSaveCard}
             onBranchFrom={onBranchFrom}
             onDismissCard={onDismissCard}
             onAddUserCard={onAddUserCard}
@@ -231,11 +212,8 @@ export default function CenterPanel({
             <GenerationBlock
               key={gen.id}
               gen={gen}
-              savedCardIds={savedCardIds}
-              highlights={highlights}
               assets={assets}
               onHoverSources={onHoverSources}
-              onSaveCard={onSaveCard}
               onDismissCard={(cardId) => onDismissCard(gen.id, cardId)}
               onUpdateCard={onUpdateCard}
               onGenerateVisuals={onGenerateVisuals}
@@ -250,22 +228,16 @@ export default function CenterPanel({
 
 function GenerationBlock({
   gen,
-  savedCardIds,
-  highlights,
   assets,
   onHoverSources,
-  onSaveCard,
   onDismissCard,
   onUpdateCard,
   onGenerateVisuals,
   onAddAsReference,
 }: {
   gen: Generation;
-  savedCardIds: Set<string>;
-  highlights: Highlight[];
   assets: Asset[];
   onHoverSources: (cardIds: Set<string>, assetIds: Set<string>) => void;
-  onSaveCard: (card: ResultCard) => void;
   onDismissCard: (cardId: string) => void;
   onUpdateCard: (card: ResultCard) => void;
   onGenerateVisuals: (card: ConceptCard) => void;
@@ -273,12 +245,7 @@ function GenerationBlock({
 }) {
   const label = ACTION_LABELS[gen.actionType] ?? gen.actionType;
   const time = new Date(gen.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  // Visual/concept-visual actions return image cards; use a wider 3-col grid.
   const isImageGrid = gen.actionType === "visual_variations" || gen.actionType === "generate_concept_visuals";
-
-  const sourceHighlights = (gen.sourceCardIds ?? [])
-    .map((id) => highlights.find((h) => h.card.id === id))
-    .filter((h): h is Highlight => h !== undefined);
 
   const sourceDrafts = (gen.includedDraftIds ?? [])
     .map((id) => assets.find((a) => a.id === id))
@@ -288,25 +255,18 @@ function GenerationBlock({
     .map((id) => assets.find((a) => a.id === id))
     .filter((a): a is Asset => a !== undefined);
 
-  const hasAnySources = sourceHighlights.length > 0 || sourceDrafts.length > 0 || sourceRefs.length > 0;
-
-  function handleMouseEnter() {
-    if (hasAnySources) {
-      onHoverSources(
-        new Set(sourceHighlights.map((h) => h.card.id)),
-        new Set([...sourceDrafts, ...sourceRefs].map((a) => a.id))
-      );
-    }
-  }
-
-  function handleMouseLeave() {
-    onHoverSources(new Set(), new Set());
-  }
+  const hasAnySources = sourceDrafts.length > 0 || sourceRefs.length > 0;
 
   function truncate(s: string, n = 24) { return s.length > n ? s.slice(0, n - 1) + "…" : s; }
 
+  function handleMouseEnter() {
+    if (hasAnySources) {
+      onHoverSources(new Set(), new Set([...sourceDrafts, ...sourceRefs].map((a) => a.id)));
+    }
+  }
+
   return (
-    <div className="flex flex-col gap-3" onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}>
+    <div className="flex flex-col gap-3" onMouseEnter={handleMouseEnter} onMouseLeave={() => onHoverSources(new Set(), new Set())}>
       <div className="flex items-center gap-2 text-[11px] text-[#aaa] flex-wrap">
         <span className="font-semibold text-[#888]">{label}</span>
         <span>·</span>
@@ -317,15 +277,15 @@ function GenerationBlock({
             <span>{gen.cards.length} card{gen.cards.length !== 1 ? "s" : ""}</span>
           </>
         )}
+        {(gen.sourceCardIds ?? []).length > 0 && (
+          <>
+            <span>·</span>
+            <span className="text-[10px] text-[#bbb]">{gen.sourceCardIds!.length} node{gen.sourceCardIds!.length > 1 ? "s" : ""} as context</span>
+          </>
+        )}
         {hasAnySources && (
           <>
             <span>·</span>
-            <span className="text-[10px] text-[#bbb]">from</span>
-            {sourceHighlights.map((h) => (
-              <span key={h.card.id} className="text-[10px] px-1.5 py-0.5 rounded-sm border" style={{ background: "#fffbeb", borderColor: "#f0d89a", color: "#92721a" }} title={h.card.title}>
-                {truncate(h.card.title)}
-              </span>
-            ))}
             {sourceDrafts.map((a) => (
               <span key={a.id} className="text-[10px] px-1.5 py-0.5 rounded-sm border" style={{ background: "#f5f5f4", borderColor: "#ccc", color: "#555" }} title={`Draft: ${a.fileName}`}>
                 ✎ {truncate(a.fileName)}
@@ -352,8 +312,8 @@ function GenerationBlock({
             <ResultCardComponent
               key={card.id}
               card={card}
-              isSaved={savedCardIds.has(card.id)}
-              onSave={() => onSaveCard(card)}
+              isSaved={false}
+              onSave={() => {}}
               onDismiss={() => onDismissCard(card.id)}
               onUpdate={onUpdateCard}
               onGenerateVisuals={onGenerateVisuals}

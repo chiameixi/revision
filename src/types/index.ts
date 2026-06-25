@@ -145,9 +145,8 @@ export interface ComposerState {
   action: ActionType | null;
   includedDraftIds: string[];
   includedReferenceIds: string[];
-  includedHighlightIds: string[];
-  /** Card IDs being branched from — tracked separately from highlights to avoid async state issues. */
-  branchFromCardIds: string[];
+  /** IDs of canvas nodes selected as context for this call. */
+  selectedCardIds: string[];
   userInstructions: string;
   selectedDimensionIds: string[];
   conceptCards?: ConceptCardRef[];

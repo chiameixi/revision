@@ -1,30 +1,7 @@
 "use client";
 
-/**
- * src/components/CallComposerModal.tsx
- *
- * Responsibility: The confirmation dialog shown before every API call.
- * Lets the researcher review and adjust what goes into the request:
- * - Which draft/reference images are included
- * - Which Arnheim dimensions to run (for visual_variations)
- * - Which saved highlights are included (shown as a checklist)
- * - A free-text "Additional Instructions" field
- *
- * The modal receives the current `ComposerState` and updates it in place via
- * `onChange` (controlled component pattern) so the parent (`page.tsx`) always
- * has the latest selections.  Clicking "Send →" calls `onSend(state)`, which
- * triggers the actual fetch in the parent.
- *
- * Design decisions:
- * - `generate_concept_visuals` hides the highlights checklist; the concept
- *   cards being visualised are shown instead as a read-only preview.
- * - Dimension selection is only shown for `visual_variations` because that is
- *   the only action that dispatches one parallel call per dimension.
- * - The textarea auto-focuses on open so the researcher can type quickly.
- */
-
 import { useEffect, useRef } from "react";
-import type { Asset, ComposerState, Highlight } from "@/types";
+import type { Asset, ComposerState, ResultCard } from "@/types";
 import { DIMENSIONS } from "@/lib/dimensions";
 
 const ACTION_LABELS: Record<string, string> = {
@@ -33,7 +10,6 @@ const ACTION_LABELS: Record<string, string> = {
   visual_variations: "Generate Visual Variations",
   conceptual_variations: "Generate Conceptual Variations",
   generate_concept_visuals: "Generate Concept Visuals",
-  synthesize: "Synthesize Selected Ideas",
 };
 
 const ACTION_DESCRIPTIONS: Record<string, string> = {
@@ -42,14 +18,17 @@ const ACTION_DESCRIPTIONS: Record<string, string> = {
   visual_variations: "Generate per-Arnheim-dimension visual variations with images (one call per selected dimension).",
   conceptual_variations: "Generate deeper conceptual alternatives grounded in your materials.",
   generate_concept_visuals: "Generate a 2×2 panel of 4 visuals for each selected conceptual variation.",
-  synthesize: "Combine your saved highlights into coherent concept directions.",
+};
+
+const CARD_TYPE_LABEL: Record<string, string> = {
+  concept: "Concept", motif: "Motif", visual: "Visual", note: "Note",
 };
 
 interface Props {
   state: ComposerState;
   brief: string;
   assets: Asset[];
-  highlights: Highlight[];
+  selectedCards: ResultCard[];
   onChange: (s: ComposerState) => void;
   onClose: () => void;
   onSend: (s: ComposerState) => void;
@@ -59,7 +38,7 @@ export default function CallComposerModal({
   state,
   brief,
   assets,
-  highlights,
+  selectedCards,
   onChange,
   onClose,
   onSend,
@@ -92,11 +71,11 @@ export default function CallComposerModal({
     onChange({ ...state, includedReferenceIds: next });
   }
 
-  function toggleHighlight(id: string) {
-    const next = state.includedHighlightIds.includes(id)
-      ? state.includedHighlightIds.filter((x) => x !== id)
-      : [...state.includedHighlightIds, id];
-    onChange({ ...state, includedHighlightIds: next });
+  function toggleCard(id: string) {
+    const next = state.selectedCardIds.includes(id)
+      ? state.selectedCardIds.filter((x) => x !== id)
+      : [...state.selectedCardIds, id];
+    onChange({ ...state, selectedCardIds: next });
   }
 
   function toggleDimension(id: string) {
@@ -111,7 +90,7 @@ export default function CallComposerModal({
   const showRefs = ["analyze", "conceptual_variations"].includes(action);
   const showDimensions = action === "visual_variations";
   const showConceptCards = action === "generate_concept_visuals" && (state.conceptCards ?? []).length > 0;
-  const showHighlights = highlights.length > 0 && action !== "generate_concept_visuals";
+  const showSelectedCards = selectedCards.length > 0 && action !== "generate_concept_visuals";
 
   return (
     <div
@@ -139,6 +118,46 @@ export default function CallComposerModal({
               {brief || <span className="text-[#bbb] italic">No brief provided</span>}
             </div>
           </div>
+
+          {/* Selected canvas nodes as context */}
+          {showSelectedCards && (
+            <div>
+              <p className="text-[10px] uppercase tracking-widest text-[#888] mb-1.5">
+                Context from canvas ({state.selectedCardIds.length} of {selectedCards.length} included)
+              </p>
+              <div className="flex flex-col gap-1.5">
+                {selectedCards.map((card) => {
+                  const included = state.selectedCardIds.includes(card.id);
+                  return (
+                    <label
+                      key={card.id}
+                      className={`flex items-start gap-2.5 px-3 py-2 rounded-sm border cursor-pointer transition-colors ${
+                        included ? "border-[#111] bg-[#f5f5f4]" : "border-[#ccc] hover:border-[#888] opacity-50"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={included}
+                        onChange={() => toggleCard(card.id)}
+                        className="mt-0.5 w-3.5 h-3.5 accent-black shrink-0"
+                      />
+                      <div className="min-w-0">
+                        <p className="text-xs text-[#111] truncate">{card.title}</p>
+                        <p className="text-[11px] text-[#999]">{CARD_TYPE_LABEL[card.type] ?? card.type}</p>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* No canvas selection hint */}
+          {!showSelectedCards && action !== "generate_concept_visuals" && (
+            <div className="text-[11px] text-[#bbb] bg-[#fafafa] border border-[#eee] rounded px-3 py-2.5">
+              No canvas nodes selected — select nodes on the canvas before running an action to include them as context.
+            </div>
+          )}
 
           {/* Selected conceptual variation cards */}
           {showConceptCards && (
@@ -182,9 +201,6 @@ export default function CallComposerModal({
                   );
                 })}
               </div>
-              {drafts.length > 0 && !state.includedDraftIds.length && action !== "unpack_brief" && (
-                <p className="text-xs text-[#888] mt-1">Select at least one draft image.</p>
-              )}
             </div>
           )}
 
@@ -250,39 +266,6 @@ export default function CallComposerModal({
                   {selectedDimCount} parallel API call{selectedDimCount > 1 ? "s" : ""} will be made.
                 </p>
               )}
-            </div>
-          )}
-
-          {/* Highlights */}
-          {showHighlights && (
-            <div>
-              <p className="text-[10px] uppercase tracking-widest text-[#888] mb-1.5">
-                Include Highlights ({state.includedHighlightIds.length} selected)
-              </p>
-              <div className="flex flex-col gap-1.5">
-                {highlights.map((h) => {
-                  const included = state.includedHighlightIds.includes(h.id);
-                  return (
-                    <label
-                      key={h.id}
-                      className={`flex items-start gap-2.5 px-3 py-2 rounded-sm border cursor-pointer transition-colors ${
-                        included ? "border-[#111] bg-[#f5f5f4]" : "border-[#ccc] hover:border-[#888]"
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={included}
-                        onChange={() => toggleHighlight(h.id)}
-                        className="mt-0.5 w-3.5 h-3.5 accent-black shrink-0"
-                      />
-                      <div className="min-w-0">
-                        <p className="text-xs text-[#111] truncate">{h.card.title}</p>
-                        <p className="text-[11px] text-[#999]">{h.card.type.replace("_", " ")}</p>
-                      </div>
-                    </label>
-                  );
-                })}
-              </div>
             </div>
           )}
 

@@ -1,44 +1,9 @@
 "use client";
 
-/**
- * app/page.tsx
- *
- * Responsibility: Root page component and central state coordinator for the
- * design workspace.
- *
- * All cross-panel state (hover highlights, composer modal, generation loading
- * status, dismissed cards) lives here.  The page composes the three-panel
- * layout and wires together the data flow between panels:
- *
- *   InputsSidebar  ←─ assets, brief, hoveredAssetIds
- *        ↕
- *   CenterPanel    ←─ generations (filtered), actions, hover callbacks
- *        ↕
- *   HighlightsPanel ←─ highlights, hover callbacks
- *        ↕
- *   CallComposerModal ─── triggers handleSend → POST /api/generate
- *
- * Key design decisions:
- * - `dismissed` is local component state (not persisted) so refreshing the
- *   page restores all cards.  It maps genId → Set<cardId>.
- * - `hoveredSourceIds` / `hoveredAssetIds` are derived from mouse events on
- *   generation blocks and passed down to HighlightsPanel / InputsSidebar to
- *   draw attention to provenance.
- * - `formatHighlightForContext` converts a saved highlight into a compact
- *   plain-text summary rather than sending JSON, keeping the model prompt
- *   readable and avoiding extra tokens for fields the model doesn't need.
- * - `handleGenerateVisuals` is a shortcut that pre-populates the composer
- *   with a single concept card and opens it directly from a ConceptCard's
- *   "Generate Visuals →" button.
- * - `handleBranchFrom` saves the card as a highlight first so it appears in
- *   the composer's highlights checklist when the modal opens.
- */
-
-import { useState, useMemo, useCallback, useRef } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useProject } from "@/lib/store";
 import { DIMENSIONS } from "@/lib/dimensions";
 import CenterPanel from "@/components/CenterPanel";
-import HighlightsPanel from "@/components/HighlightsPanel";
 import CallComposerModal from "@/components/CallComposerModal";
 import type {
   ActionType,
@@ -48,7 +13,6 @@ import type {
   Generation,
   GenerateRequest,
   GenerateResponse,
-  NoteCard,
   ResultCard,
   VisualCard,
 } from "@/types";
@@ -58,18 +22,16 @@ const DEFAULT_COMPOSER: ComposerState = {
   action: null,
   includedDraftIds: [],
   includedReferenceIds: [],
-  includedHighlightIds: [],
-  branchFromCardIds: [],
+  selectedCardIds: [],
   userInstructions: "",
   selectedDimensionIds: DIMENSIONS.map((d) => d.id),
 };
 
-function formatHighlightForContext(h: { card: ResultCard; note: string }): string {
-  const card = h.card;
+function formatCardForContext(card: ResultCard): string {
   const lines: string[] = [`[${card.type}] ${card.title}`];
   if (card.type === "concept") {
     lines.push(`Description: ${card.description}`);
-    lines.push(`Rationale: ${card.rationale}`);
+    if (card.rationale) lines.push(`Rationale: ${card.rationale}`);
   } else if (card.type === "motif") {
     lines.push(`Visual quality: ${card.visualQuality}`);
     lines.push(`How it conveys the idea: ${card.howItConveysIdea}`);
@@ -79,58 +41,37 @@ function formatHighlightForContext(h: { card: ResultCard; note: string }): strin
   } else if (card.type === "note") {
     if (card.body) lines.push(`Note: ${card.body}`);
   }
-  if (h.note) lines.push(`Note: ${h.note}`);
   return lines.join("\n");
 }
 
 export default function WorkspacePage() {
   const { state, actions, ready } = useProject();
   const [composer, setComposer] = useState<ComposerState>(DEFAULT_COMPOSER);
+  const [composerCards, setComposerCards] = useState<ResultCard[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingAction, setGeneratingAction] = useState<ActionType | null>(null);
   const [hoveredSourceIds, setHoveredSourceIds] = useState<Set<string>>(new Set());
-
-  // Panel resize + collapse state
-  const [rightWidth, setRightWidth] = useState(288);
-  const [rightHidden, setRightHidden] = useState(false);
-  const rightWidthRef = useRef(288);
-  rightWidthRef.current = rightWidth;
-
-  function startResizeRight(e: React.MouseEvent) {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startW = rightWidthRef.current;
-    const move = (ev: MouseEvent) => setRightWidth(Math.min(520, Math.max(160, startW - (ev.clientX - startX))));
-    const up = () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); document.body.style.cursor = ""; };
-    document.body.style.cursor = "col-resize";
-    document.addEventListener("mousemove", move);
-    document.addEventListener("mouseup", up);
-  }
+  const [dismissed, setDismissed] = useState<Record<string, Set<string>>>({});
 
   const handleHoverSources = useCallback((cardIds: Set<string>, _assetIds: Set<string>) => {
     setHoveredSourceIds(cardIds);
   }, []);
 
-  const [dismissed, setDismissed] = useState<Record<string, Set<string>>>({});
-
-  // Pre-compute the set of saved card IDs so each ResultCard can check
-  // `isSaved` in O(1) without scanning the highlights array.
-  const savedCardIds = useMemo(
-    () => new Set(state.highlights.map((h) => h.card.id)),
-    [state.highlights]
-  );
+  function resolveCards(cardIds: string[]): ResultCard[] {
+    const all = state.generations.flatMap((g) => g.cards);
+    return cardIds.flatMap((id) => {
+      const found = all.find((c) => c.id === id);
+      return found ? [found] : [];
+    });
+  }
 
   const handleActionClick = useCallback(
-    (action: ActionType) => {
+    (action: ActionType, selectedCardIds: string[]) => {
       const drafts = state.assets.filter((a) => a.type === "draft");
       const refs = state.assets.filter((a) => a.type === "reference");
-      const includedHighlights = state.highlights
-        .filter((h) => h.includeInNextCall)
-        .map((h) => h.id);
 
       let includedDraftIds: string[] = [];
       let includedReferenceIds: string[] = [];
-
       if (["analyze", "visual_variations", "conceptual_variations"].includes(action)) {
         includedDraftIds = drafts.map((a) => a.id);
       }
@@ -138,18 +79,19 @@ export default function WorkspacePage() {
         includedReferenceIds = refs.map((a) => a.id);
       }
 
+      setComposerCards(resolveCards(selectedCardIds));
       setComposer({
         open: true,
         action,
         includedDraftIds,
         includedReferenceIds,
-        includedHighlightIds: includedHighlights,
-        branchFromCardIds: [],
+        selectedCardIds,
         userInstructions: "",
         selectedDimensionIds: DIMENSIONS.map((d) => d.id),
       });
     },
-    [state.assets, state.highlights]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [state.assets, state.generations]
   );
 
   const handleSend = useCallback(
@@ -167,18 +109,9 @@ export default function WorkspacePage() {
         .filter((a) => a.type === "reference" && cfg.includedReferenceIds.includes(a.id))
         .map((a) => a.dataUrl);
 
-      const includedHighlights = state.highlights.filter((h) =>
-        cfg.includedHighlightIds.includes(h.id)
-      );
-      // Convert included highlights to plain-text summaries for the prompt.
-      // Track their card IDs separately so the generation can record provenance.
-      const highlightSummaries = includedHighlights.map(formatHighlightForContext);
-      const sourceCardIds = [
-        ...new Set([
-          ...includedHighlights.map((h) => h.card.id),
-          ...(cfg.branchFromCardIds ?? []),
-        ]),
-      ];
+      const allCards = state.generations.flatMap((g) => g.cards);
+      const selectedCards = allCards.filter((c) => cfg.selectedCardIds.includes(c.id));
+      const cardSummaries = selectedCards.map(formatCardForContext);
 
       const body: GenerateRequest = {
         action: cfg.action,
@@ -186,7 +119,7 @@ export default function WorkspacePage() {
         userInstructions: cfg.userInstructions,
         draftDataUrls,
         referenceDataUrls,
-        highlightSummaries,
+        highlightSummaries: cardSummaries,
         dimensionIds: cfg.selectedDimensionIds,
         conceptCards: cfg.conceptCards,
       };
@@ -206,7 +139,7 @@ export default function WorkspacePage() {
           cards: data.cards ?? [],
           createdAt: new Date().toISOString(),
           error: data.error,
-          sourceCardIds,
+          sourceCardIds: [...new Set(cfg.selectedCardIds)],
           includedDraftIds: cfg.includedDraftIds,
           includedReferenceIds: cfg.includedReferenceIds,
         };
@@ -231,13 +164,13 @@ export default function WorkspacePage() {
   const handleGenerateVisuals = useCallback(
     (card: ConceptCard) => {
       const drafts = state.assets.filter((a) => a.type === "draft");
+      setComposerCards([card]);
       setComposer({
         open: true,
         action: "generate_concept_visuals",
         includedDraftIds: drafts.map((a) => a.id),
         includedReferenceIds: [],
-        includedHighlightIds: [],
-        branchFromCardIds: [card.id],
+        selectedCardIds: [card.id],
         userInstructions: "",
         selectedDimensionIds: [],
         conceptCards: [{
@@ -267,10 +200,8 @@ export default function WorkspacePage() {
 
   const handleBranchFrom = useCallback(
     (card: ResultCard, action: ActionType) => {
-      actions.saveHighlight(card);
       const drafts = state.assets.filter((a) => a.type === "draft");
       const refs = state.assets.filter((a) => a.type === "reference");
-      const existingIncluded = state.highlights.filter((h) => h.includeInNextCall).map((h) => h.id);
 
       let includedDraftIds: string[] = [];
       let includedReferenceIds: string[] = [];
@@ -281,27 +212,22 @@ export default function WorkspacePage() {
         includedReferenceIds = refs.map((a) => a.id);
       }
 
+      setComposerCards([card]);
       setComposer({
         open: true,
         action,
         includedDraftIds,
         includedReferenceIds,
-        includedHighlightIds: existingIncluded,
-        branchFromCardIds: [card.id],
+        selectedCardIds: [card.id],
         userInstructions: "",
         selectedDimensionIds: DIMENSIONS.map((d) => d.id),
       });
     },
-    [actions, state.assets, state.highlights]
+    [state.assets]
   );
 
   const handleMultiBranchFrom = useCallback(
     (cards: ResultCard[], action: ActionType) => {
-      // Save every selected card as a highlight so they appear in the modal's checklist.
-      cards.forEach((card) => actions.saveHighlight(card));
-
-      // For visual cards, register the generated image as a reference asset so the
-      // AI receives it as a visual input in the next prompt.
       const newRefAssets: Asset[] = cards
         .filter((c): c is VisualCard => c.type === "visual" && !!(c as VisualCard).imageDataUrl)
         .map((c) => ({
@@ -317,27 +243,24 @@ export default function WorkspacePage() {
       const drafts = state.assets.filter((a) => a.type === "draft");
       const refs = state.assets.filter((a) => a.type === "reference");
       const includedDraftIds = ["analyze", "visual_variations", "conceptual_variations"].includes(action)
-        ? drafts.map((a) => a.id)
-        : [];
+        ? drafts.map((a) => a.id) : [];
       const includedReferenceIds = [
         ...( ["analyze", "conceptual_variations"].includes(action) ? refs.map((a) => a.id) : [] ),
         ...newRefAssets.map((a) => a.id),
       ];
 
-      const alreadyIncluded = state.highlights.filter((h) => h.includeInNextCall).map((h) => h.id);
-
+      setComposerCards(cards);
       setComposer({
         open: true,
         action,
         includedDraftIds,
         includedReferenceIds,
-        includedHighlightIds: alreadyIncluded,
-        branchFromCardIds: cards.map((c) => c.id),
+        selectedCardIds: cards.map((c) => c.id),
         userInstructions: "",
         selectedDimensionIds: DIMENSIONS.map((d) => d.id),
       });
     },
-    [actions, state.assets, state.highlights, setComposer]
+    [actions, state.assets]
   );
 
   const handleClearTree = useCallback(() => {
@@ -360,17 +283,9 @@ export default function WorkspacePage() {
     [actions]
   );
 
-  const handleAddNote = useCallback(
-    (title: string, body: string) => {
-      const card: NoteCard = { id: crypto.randomUUID(), type: "note", title, body, createdAt: new Date().toISOString() };
-      actions.saveHighlight(card);
-    },
-    [actions]
-  );
-
   const handleAddUserCard = useCallback(
     (title: string, body: string) => {
-      const card: NoteCard = { id: crypto.randomUUID(), type: "note", title, body, createdAt: new Date().toISOString() };
+      const card = { id: crypto.randomUUID(), type: "note" as const, title, body, createdAt: new Date().toISOString() };
       actions.addGeneration({ id: crypto.randomUUID(), actionType: "user_added", cards: [card], createdAt: new Date().toISOString() });
     },
     [actions]
@@ -403,21 +318,17 @@ export default function WorkspacePage() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#f0eeea]">
-      {/* ── Center panel ──────────────────────────────────────────────────── */}
       <CenterPanel
         generations={visibleGenerations}
         allGenerations={state.generations}
         isGenerating={isGenerating}
         generatingAction={generatingAction}
-        savedCardIds={savedCardIds}
-        highlights={state.highlights}
         assets={state.assets}
         brief={state.brief}
         title={state.title}
         hoveredSourceIds={hoveredSourceIds}
         onHoverSources={handleHoverSources}
         onActionClick={handleActionClick}
-        onSaveCard={actions.saveHighlight}
         onDismissCard={handleDismissCard}
         onUpdateCard={actions.updateCard}
         onGenerateVisuals={handleGenerateVisuals}
@@ -440,86 +351,17 @@ export default function WorkspacePage() {
         onRemoveCardFromCollection={actions.removeCardFromCollection}
       />
 
-      {/* ── Right panel ───────────────────────────────────────────────────── */}
-      {rightHidden ? (
-        <CollapsedStrip label="Highlights" side="right" onExpand={() => setRightHidden(false)} />
-      ) : (
-        <>
-          <ResizeHandle onMouseDown={startResizeRight} />
-          <div className="shrink-0 h-screen overflow-hidden" style={{ width: rightWidth }}>
-            <HighlightsPanel
-              highlights={state.highlights}
-              onRemove={actions.removeHighlight}
-              onToggleInclude={actions.toggleHighlightInclude}
-              onTogglePin={actions.toggleHighlightPin}
-              onUpdateNote={actions.updateHighlightNote}
-              onUpdateCard={actions.updateCard}
-              onDropCard={actions.saveHighlight}
-              onAddNote={handleAddNote}
-              hoveredSourceIds={hoveredSourceIds}
-              onCollapse={() => setRightHidden(true)}
-            />
-          </div>
-        </>
-      )}
-
       {composer.open && (
         <CallComposerModal
           state={composer}
           brief={state.brief}
           assets={state.assets}
-          highlights={state.highlights}
+          selectedCards={composerCards}
           onChange={setComposer}
           onClose={() => setComposer((c) => ({ ...c, open: false }))}
           onSend={handleSend}
         />
       )}
-    </div>
-  );
-}
-
-// ── Resize handle between panels ──────────────────────────────────────────────
-function ResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
-  return (
-    <div
-      className="shrink-0 h-screen relative cursor-col-resize group select-none"
-      style={{ width: 5 }}
-      onMouseDown={onMouseDown}
-    >
-      <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-[#ccc9c0] group-hover:bg-[#999] transition-colors" />
-    </div>
-  );
-}
-
-// ── Collapsed panel strip ─────────────────────────────────────────────────────
-function CollapsedStrip({ label, side, onExpand }: {
-  label: string;
-  side: "left" | "right";
-  onExpand: () => void;
-}) {
-  return (
-    <div
-      className="shrink-0 h-screen flex flex-col items-center pt-5 pb-4 gap-3 bg-white select-none cursor-pointer group"
-      style={{
-        width: 36,
-        borderRight: side === "left" ? "1px solid #ccc9c0" : undefined,
-        borderLeft: side === "right" ? "1px solid #ccc9c0" : undefined,
-      }}
-      onClick={onExpand}
-      title={`Show ${label}`}
-    >
-      <span
-        className="text-[#bbb] group-hover:text-[#555] transition-colors"
-        style={{ fontSize: 13, lineHeight: 1 }}
-      >
-        {side === "left" ? "›" : "‹"}
-      </span>
-      <span
-        className="text-[9px] uppercase tracking-widest text-[#bbb] group-hover:text-[#555] transition-colors font-medium"
-        style={{ writingMode: "vertical-lr", transform: side === "left" ? "rotate(180deg)" : undefined }}
-      >
-        {label}
-      </span>
     </div>
   );
 }
