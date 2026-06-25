@@ -115,7 +115,7 @@ type CardNodeData = {
   isAncestor: boolean;
   isSaved: boolean;
   isMultiSelected: boolean;
-  collectionColor?: string;
+  collectionColors?: string[];
   onRemove: (genId: string, cardId: string) => void;
   onQuickBranch: (action: ActionType) => void;
 };
@@ -265,13 +265,14 @@ function computeLayout(generations: Generation[], allGenerations: Generation[]):
 // ── Custom node components ────────────────────────────────────────────────────
 function TextCardNode(props: NodeProps) {
   const data = props.data as unknown as CardNodeData;
-  const { card, isSelected, isHovered, isAncestor, isMultiSelected, isSaved, collectionColor, onRemove, genId, actionType } = data;
+  const { card, isSelected, isHovered, isAncestor, isMultiSelected, isSaved, collectionColors, onRemove, genId, actionType } = data;
   const s = TYPE_STYLE[card.type] ?? TYPE_STYLE.concept;
+  const primaryColor = collectionColors?.[0];
 
   const borderColor = isMultiSelected ? "#2563eb"
     : isAncestor ? "#f59e0b"
     : isSelected ? s.selectedBorder
-    : collectionColor ?? s.border;
+    : primaryColor ?? s.border;
   const shadow = isMultiSelected ? "0 0 0 3px rgba(37,99,235,0.25)"
     : isAncestor ? "0 0 0 3px rgba(251,191,36,0.3)"
     : isSelected ? "3px 3px 0px #111111"
@@ -281,7 +282,6 @@ function TextCardNode(props: NodeProps) {
   const bgColor = isMultiSelected ? "#eff6ff"
     : isAncestor ? "#fffbeb"
     : isSelected ? s.bg
-    : collectionColor ? `${collectionColor}15`
     : "#ffffff";
 
   return (
@@ -302,8 +302,12 @@ function TextCardNode(props: NodeProps) {
           userSelect: "none",
         }}
       >
-        {collectionColor && !isMultiSelected && !isSelected && (
-          <div className="absolute top-1.5 left-1.5 w-2 h-2 rounded-full" style={{ background: collectionColor }} />
+        {collectionColors && collectionColors.length > 0 && !isMultiSelected && !isSelected && (
+          <div className="absolute top-1.5 left-1.5 flex gap-0.5">
+            {collectionColors.map((c) => (
+              <div key={c} className="w-2 h-2 rounded-full shrink-0" style={{ background: c }} />
+            ))}
+          </div>
         )}
         <button
           className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 text-[10px] leading-none z-10"
@@ -342,14 +346,15 @@ const VISUAL_QUICK_ACTIONS: { id: ActionType; label: string }[] = [
 
 function VisualCardNode(props: NodeProps) {
   const data = props.data as unknown as CardNodeData;
-  const { card, isSelected, isHovered, isAncestor, isMultiSelected, isSaved, collectionColor, onRemove, onQuickBranch, genId } = data;
+  const { card, isSelected, isHovered, isAncestor, isMultiSelected, isSaved, collectionColors, onRemove, onQuickBranch, genId } = data;
   const s = TYPE_STYLE.visual;
   const visualCard = card as VisualCard;
+  const primaryColor = collectionColors?.[0];
 
   const borderColor = isMultiSelected ? "#2563eb"
     : isAncestor ? "#f59e0b"
     : isSelected ? s.selectedBorder
-    : collectionColor ?? s.border;
+    : primaryColor ?? s.border;
   const shadow = isMultiSelected ? "0 0 0 3px rgba(37,99,235,0.25)"
     : isAncestor ? "0 0 0 3px rgba(251,191,36,0.3)"
     : isSelected ? "3px 3px 0px #111111"
@@ -385,8 +390,12 @@ function VisualCardNode(props: NodeProps) {
           </span>
           {isMultiSelected && <span className="text-[9px] text-white bg-blue-500/80 px-1 py-0.5 rounded shrink-0 font-bold">✓</span>}
           {isSaved && <span className="text-[9px] text-amber-300 shrink-0 drop-shadow">★</span>}
-          {collectionColor && !isMultiSelected && (
-            <div className="w-2 h-2 rounded-full ring-1 ring-white/50" style={{ background: collectionColor }} />
+          {collectionColors && collectionColors.length > 0 && !isMultiSelected && (
+            <div className="flex gap-0.5">
+              {collectionColors.map((c) => (
+                <div key={c} className="w-2 h-2 rounded-full ring-1 ring-white/50 shrink-0" style={{ background: c }} />
+              ))}
+            </div>
           )}
         </div>
 
@@ -669,10 +678,13 @@ export default function TreeView({
 
   const cardIds = useMemo(() => new Set(nodes.map((n) => n.card.id)), [nodes]);
 
-  const cardCollectionMap = useMemo(() => {
-    const map = new Map<string, string>(); // cardId → collection color
+  const cardCollectionsMap = useMemo(() => {
+    const map = new Map<string, string[]>(); // cardId → [colors]
     for (const col of collections) {
-      for (const cid of col.cardIds) map.set(cid, col.color);
+      for (const cid of col.cardIds) {
+        const prev = map.get(cid) ?? [];
+        map.set(cid, [...prev, col.color]);
+      }
     }
     return map;
   }, [collections]);
@@ -801,7 +813,7 @@ export default function TreeView({
             || node.parentCardIds.some((pid) => hoveredSourceIds.has(pid)),
           isSaved: savedCardIds.has(node.card.id),
           isMultiSelected: multiSelectedIds.has(node.card.id),
-          collectionColor: showCollectionColors ? cardCollectionMap.get(node.card.id) : undefined,
+          collectionColors: showCollectionColors ? cardCollectionsMap.get(node.card.id) : undefined,
           onRemove: handleRemove,
           onQuickBranch: (action) => handleQuickBranch(node.card, action),
         } satisfies CardNodeData,
@@ -809,7 +821,7 @@ export default function TreeView({
         height: h,
       };
     }),
-    [nodes, cardIds, positionOverrides, selectedId, multiSelectedIds, hoveredId, hoveredAncestorIds, hoveredSourceIds, savedCardIds, handleRemove, handleQuickBranch, showCollectionColors, cardCollectionMap]
+    [nodes, cardIds, positionOverrides, selectedId, multiSelectedIds, hoveredId, hoveredAncestorIds, hoveredSourceIds, savedCardIds, handleRemove, handleQuickBranch, showCollectionColors, cardCollectionsMap]
   );
 
   // ── Generation edges ──────────────────────────────────────────────────────
@@ -942,37 +954,39 @@ export default function TreeView({
           connectOnClick={false}
           nodesConnectable={false}
         >
-          {/* Gradient halo overlay — blurred circles pool together for nearby nodes */}
+          {/* Gradient halo overlay — one layer per collection so colors stay distinct */}
           {showCollectionColors && (
             <svg
               className="absolute inset-0 pointer-events-none"
-              style={{ width: "100%", height: "100%", zIndex: -1, overflow: "visible" }}
+              style={{ width: "100%", height: "100%", zIndex: -1, overflow: "visible", mixBlendMode: "multiply" }}
             >
               <defs>
                 <filter id="halo-blur" x="-200%" y="-200%" width="500%" height="500%">
-                  <feGaussianBlur stdDeviation="28" />
+                  <feGaussianBlur stdDeviation="34" />
                 </filter>
               </defs>
               <g transform={`translate(${viewport.x},${viewport.y}) scale(${viewport.zoom})`}>
-                {collections.flatMap((col) =>
-                  col.cardIds.flatMap((cid) => {
-                    const rn = allRfNodes.find((n) => n.id === cid);
-                    if (!rn) return [];
-                    const cx = rn.position.x + ((rn.width ?? NODE_W) / 2);
-                    const cy = rn.position.y + ((rn.height ?? NODE_H) / 2);
-                    return [
-                      <circle
-                        key={`halo-${col.id}-${cid}`}
-                        cx={cx}
-                        cy={cy}
-                        r={68}
-                        fill={col.color}
-                        opacity={0.28}
-                        filter="url(#halo-blur)"
-                      />,
-                    ];
-                  })
-                )}
+                {collections.map((col) => (
+                  <g key={col.id}>
+                    {col.cardIds.flatMap((cid) => {
+                      const rn = allRfNodes.find((n) => n.id === cid);
+                      if (!rn) return [];
+                      const cx = rn.position.x + ((rn.width ?? NODE_W) / 2);
+                      const cy = rn.position.y + ((rn.height ?? NODE_H) / 2);
+                      return [
+                        <circle
+                          key={cid}
+                          cx={cx}
+                          cy={cy}
+                          r={95}
+                          fill={col.color}
+                          opacity={0.38}
+                          filter="url(#halo-blur)"
+                        />,
+                      ];
+                    })}
+                  </g>
+                ))}
               </g>
             </svg>
           )}
