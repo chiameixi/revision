@@ -630,6 +630,7 @@ export default function TreeView({
   const seenGenErrorIds = useRef<Set<string>>(new Set());
   const [showCollectionColors, setShowCollectionColors] = useState(false);
   const [collectionPickerOpen, setCollectionPickerOpen] = useState(false);
+  const [viewport, setViewport] = useState({ x: 0, y: 0, zoom: 1 });
   const [creatingInPicker, setCreatingInPicker] = useState(false);
   const [newCollectionName, setNewCollectionName] = useState("");
 
@@ -929,7 +930,9 @@ export default function TreeView({
           onInit={(instance) => {
             rfInstanceRef.current = instance;
             instance.fitView({ padding: 0.15 });
+            setViewport(instance.getViewport());
           }}
+          onViewportChange={setViewport}
           fitView
           fitViewOptions={{ padding: 0.15 }}
           minZoom={0.2}
@@ -939,6 +942,41 @@ export default function TreeView({
           connectOnClick={false}
           nodesConnectable={false}
         >
+          {/* Gradient halo overlay — blurred circles pool together for nearby nodes */}
+          {showCollectionColors && (
+            <svg
+              className="absolute inset-0 pointer-events-none"
+              style={{ width: "100%", height: "100%", zIndex: -1, overflow: "visible" }}
+            >
+              <defs>
+                <filter id="halo-blur" x="-200%" y="-200%" width="500%" height="500%">
+                  <feGaussianBlur stdDeviation="28" />
+                </filter>
+              </defs>
+              <g transform={`translate(${viewport.x},${viewport.y}) scale(${viewport.zoom})`}>
+                {collections.flatMap((col) =>
+                  col.cardIds.flatMap((cid) => {
+                    const rn = allRfNodes.find((n) => n.id === cid);
+                    if (!rn) return [];
+                    const cx = rn.position.x + ((rn.width ?? NODE_W) / 2);
+                    const cy = rn.position.y + ((rn.height ?? NODE_H) / 2);
+                    return [
+                      <circle
+                        key={`halo-${col.id}-${cid}`}
+                        cx={cx}
+                        cy={cy}
+                        r={68}
+                        fill={col.color}
+                        opacity={0.28}
+                        filter="url(#halo-blur)"
+                      />,
+                    ];
+                  })
+                )}
+              </g>
+            </svg>
+          )}
+
           <Background
             variant={BackgroundVariant.Dots}
             gap={24}
