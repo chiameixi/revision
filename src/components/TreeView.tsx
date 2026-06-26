@@ -32,8 +32,8 @@ import type { Asset, Collection, Generation, ManualEdge, ResultCard, ActionType,
 // ── Layout constants ──────────────────────────────────────────────────────────
 const NODE_W = 168;
 const NODE_H = 76;
-const VISUAL_NODE_W = 224;
-const VISUAL_NODE_H = 132;
+const VISUAL_NODE_W = 320;
+const VISUAL_NODE_H = 200;
 const COL_GAP = 96;
 const ROW_GAP = 20;
 const PAD = 48;
@@ -570,6 +570,51 @@ function AssetNode(props: NodeProps) {
   const data = props.data as unknown as AssetNodeData;
   const { asset, onRemove, isSelected } = data;
   const isDraft = asset.type === "draft";
+  const handleStyle: React.CSSProperties = {
+    opacity: data.connectMode ? 1 : 0,
+    pointerEvents: data.connectMode ? "auto" : "none",
+    width: 10, height: 10, background: "#64748b", border: "2px solid white", borderRadius: "50%",
+  };
+
+  if (isDraft) {
+    return (
+      <>
+        <div
+          className="group"
+          style={{
+            width: VISUAL_NODE_W,
+            height: VISUAL_NODE_H,
+            border: `1.5px solid ${isSelected ? "#2563eb" : "#aaa"}`,
+            borderRadius: 10,
+            boxShadow: isSelected ? "0 0 0 3px rgba(37,99,235,0.2)" : "1px 1px 0px #cccccc",
+            overflow: "hidden",
+            position: "relative",
+            cursor: "pointer",
+          }}
+        >
+          <button
+            className="nodrag nopan absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 text-[10px] leading-none z-20"
+            onClick={(e) => { e.stopPropagation(); onRemove(asset.id); }}
+            title="Remove"
+          >✕</button>
+          <div className="absolute top-0 left-0 right-0 p-2 flex items-center gap-1.5 z-10 bg-gradient-to-b from-black/30 to-transparent">
+            <span style={{ fontSize: 8, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, padding: "2px 6px", borderRadius: 4, background: "rgba(0,0,0,0.45)", color: "white" }}>
+              ✎ Draft
+            </span>
+            {isSelected && <span style={{ fontSize: 9, color: "white", background: "rgba(37,99,235,0.8)", padding: "1px 5px", borderRadius: 4, fontWeight: 700 }}>✓</span>}
+          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={asset.dataUrl} alt={asset.fileName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          <div className="absolute bottom-0 left-0 right-0 px-2 py-1.5 bg-gradient-to-t from-black/70 via-black/40 to-transparent z-10">
+            <p style={{ fontSize: 9, color: "white", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", margin: 0 }}>
+              {asset.fileName}
+            </p>
+          </div>
+        </div>
+        <Handle type="source" position={Position.Right} style={handleStyle} />
+      </>
+    );
+  }
 
   return (
     <>
@@ -578,8 +623,8 @@ function AssetNode(props: NodeProps) {
         style={{
           width: INPUT_NODE_W,
           height: ASSET_NODE_H,
-          background: isDraft ? "#f9f9f7" : "#f0f0ff",
-          border: `1.5px solid ${isSelected ? "#2563eb" : isDraft ? "#aaa" : "#c5c5e8"}`,
+          background: "#f0f0ff",
+          border: `1.5px solid ${isSelected ? "#2563eb" : "#c5c5e8"}`,
           borderRadius: 10,
           boxShadow: isSelected ? "0 0 0 3px rgba(37,99,235,0.2)" : "1px 1px 0px #cccccc",
           overflow: "hidden",
@@ -596,34 +641,20 @@ function AssetNode(props: NodeProps) {
           title="Remove"
         >✕</button>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={asset.dataUrl}
-          alt={asset.fileName}
-          style={{ width: 68, height: 68, objectFit: "cover", borderRadius: 6, flexShrink: 0 }}
-        />
+        <img src={asset.dataUrl} alt={asset.fileName} style={{ width: 68, height: 68, objectFit: "cover", borderRadius: 6, flexShrink: 0 }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 4 }}>
-            <p style={{
-              fontSize: 8, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5,
-              color: isSelected ? "#2563eb" : isDraft ? "#666" : "#4444aa", margin: 0,
-            }}>
-              {isDraft ? "✎ Draft" : "◈ Reference"}
+            <p style={{ fontSize: 8, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: isSelected ? "#2563eb" : "#4444aa", margin: 0 }}>
+              ◈ Reference
             </p>
             {isSelected && <span style={{ fontSize: 9, color: "#2563eb", fontWeight: 700 }}>✓</span>}
           </div>
-          <p style={{
-            fontSize: 10, color: "#444",
-            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-          }}>
+          <p style={{ fontSize: 10, color: "#444", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {asset.fileName}
           </p>
         </div>
       </div>
-      <Handle type="source" position={Position.Right} style={{
-        opacity: data.connectMode ? 1 : 0,
-        pointerEvents: data.connectMode ? "auto" : "none",
-        width: 10, height: 10, background: "#64748b", border: "2px solid white", borderRadius: "50%",
-      }} />
+      <Handle type="source" position={Position.Right} style={handleStyle} />
     </>
   );
 }
@@ -839,6 +870,23 @@ export default function TreeView({
 
   const rfInstanceRef = useRef<ReactFlowInstance | null>(null);
 
+  const [panelWidth, setPanelWidth] = useState(272);
+  const handlePanelResizeStart = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = panelWidth;
+    const onMove = (ev: PointerEvent) => {
+      const delta = startX - ev.clientX;
+      setPanelWidth(Math.max(200, Math.min(560, startWidth + delta)));
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }, [panelWidth]);
+
   const handleRemove = useCallback((genId: string, cardId: string) => {
     onDismissCard(genId, cardId);
     setSelectedId(null);
@@ -916,15 +964,16 @@ export default function TreeView({
     y += BRIEF_NODE_H + ROW_GAP;
 
     for (const asset of assets) {
+      const assetH = asset.type === "draft" ? VISUAL_NODE_H : ASSET_NODE_H;
       result.push({
         id: `__asset_${asset.id}`,
         type: "assetNode",
         position: positionOverrides[`__asset_${asset.id}`] ?? { x: PAD, y },
         data: { asset, onRemove: onRemoveAsset, connectMode, isSelected: selectedInputId === `__asset_${asset.id}` } satisfies AssetNodeData,
         width: INPUT_NODE_W,
-        height: ASSET_NODE_H,
+        height: assetH,
       });
-      y += ASSET_NODE_H + ROW_GAP;
+      y += assetH + ROW_GAP;
     }
 
     return result;
@@ -1478,48 +1527,58 @@ export default function TreeView({
       )}
 
       {/* ── Detail panel ─────────────────────────────────────────────────── */}
-      {selectedNode ? (
-        <DetailPanel
-          node={selectedNode}
-          siblings={siblings}
-          assets={assets}
-          onUpdateCard={onUpdateCard}
-          onBranch={(action) => {
-            const card = selectedNode.card;
-            if (card.type === "visual" && (card as VisualCard).imageDataUrl) {
-              onAddAsReference(
-                (card as VisualCard).imageDataUrl!,
-                (card as VisualCard).dimensionLabel || card.title,
-              );
-            }
-            onBranchFrom(card, action);
-            setSelectedId(null);
-          }}
-          onDuplicate={() => onDuplicateCard(selectedNode.card, selectedNode.parentCardIds)}
-          onRemove={() => handleRemove(selectedNode.genId, selectedNode.card.id)}
-          onSelectSibling={(id) => setSelectedId(id)}
-          onClose={() => setSelectedId(null)}
-          onAddAsReference={onAddAsReference}
-          onAddChild={() => setAddNodeState({ parentIds: [selectedNode.card.id] })}
-        />
-      ) : selectedInputIsBrief ? (
-        <InputDetailPanel
-          type="brief"
-          title={title}
-          brief={brief}
-          onTitleChange={onTitleChange}
-          onBriefChange={onBriefChange}
-          onClose={() => setSelectedInputId(null)}
-        />
-      ) : selectedInputAsset ? (
-        <InputDetailPanel
-          type="asset"
-          asset={selectedInputAsset}
-          onAddAsReference={onAddAsReference}
-          onRemove={() => { onRemoveAsset(selectedInputAsset.id); setSelectedInputId(null); }}
-          onClose={() => setSelectedInputId(null)}
-        />
-      ) : null}
+      {(selectedNode || selectedInputIsBrief || selectedInputAsset) && (
+        <div style={{ width: panelWidth, flexShrink: 0, position: "relative", display: "flex" }}>
+          {/* Drag handle */}
+          <div
+            onPointerDown={handlePanelResizeStart}
+            style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4, cursor: "col-resize", zIndex: 10 }}
+            className="hover:bg-blue-300/40 transition-colors"
+          />
+          {selectedNode ? (
+            <DetailPanel
+              node={selectedNode}
+              siblings={siblings}
+              assets={assets}
+              onUpdateCard={onUpdateCard}
+              onBranch={(action) => {
+                const card = selectedNode.card;
+                if (card.type === "visual" && (card as VisualCard).imageDataUrl) {
+                  onAddAsReference(
+                    (card as VisualCard).imageDataUrl!,
+                    (card as VisualCard).dimensionLabel || card.title,
+                  );
+                }
+                onBranchFrom(card, action);
+                setSelectedId(null);
+              }}
+              onDuplicate={() => onDuplicateCard(selectedNode.card, selectedNode.parentCardIds)}
+              onRemove={() => handleRemove(selectedNode.genId, selectedNode.card.id)}
+              onSelectSibling={(id) => setSelectedId(id)}
+              onClose={() => setSelectedId(null)}
+              onAddAsReference={onAddAsReference}
+              onAddChild={() => setAddNodeState({ parentIds: [selectedNode.card.id] })}
+            />
+          ) : selectedInputIsBrief ? (
+            <InputDetailPanel
+              type="brief"
+              title={title}
+              brief={brief}
+              onTitleChange={onTitleChange}
+              onBriefChange={onBriefChange}
+              onClose={() => setSelectedInputId(null)}
+            />
+          ) : selectedInputAsset ? (
+            <InputDetailPanel
+              type="asset"
+              asset={selectedInputAsset}
+              onAddAsReference={onAddAsReference}
+              onRemove={() => { onRemoveAsset(selectedInputAsset.id); setSelectedInputId(null); }}
+              onClose={() => setSelectedInputId(null)}
+            />
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }
@@ -1762,7 +1821,7 @@ function InputDetailPanel(props: InputDetailPanelProps) {
   if (props.type === "brief") {
     const { title, brief, onTitleChange, onBriefChange, onClose } = props;
     return (
-      <aside className="w-[272px] shrink-0 h-full border-l border-[#e4e3e0] bg-white flex flex-col overflow-hidden">
+      <aside className="w-full h-full border-l border-[#e4e3e0] bg-white flex flex-col overflow-hidden">
         <div className="px-4 py-3 border-b border-[#f0efec] shrink-0">
           <div className="flex items-start justify-between gap-2 mb-2">
             <span className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">
@@ -1800,7 +1859,7 @@ function InputDetailPanel(props: InputDetailPanelProps) {
   const isDraft = asset.type === "draft";
 
   return (
-    <aside className="w-[272px] shrink-0 h-full border-l border-[#e4e3e0] bg-white flex flex-col overflow-hidden">
+    <aside className="w-full h-full border-l border-[#e4e3e0] bg-white flex flex-col overflow-hidden">
       <div className="px-4 py-3 border-b border-[#f0efec] shrink-0">
         <div className="flex items-start justify-between gap-2 mb-2">
           <span
@@ -1889,7 +1948,7 @@ function DetailPanel({
 
   return (
     <>
-      <aside className="w-[272px] shrink-0 h-full border-l border-[#e4e3e0] bg-white flex flex-col overflow-hidden">
+      <aside className="w-full h-full border-l border-[#e4e3e0] bg-white flex flex-col overflow-hidden">
         <div className="px-4 py-3 border-b border-[#f0efec] shrink-0">
           <div className="flex items-start justify-between gap-2 mb-2">
             <span className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded" style={{ background: s.badgeBg, color: s.badgeText }}>

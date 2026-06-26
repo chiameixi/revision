@@ -99,41 +99,84 @@ function MiniCard({ item, onRemove }: { item: ClusterItem; onRemove?: () => void
   const isVisual = item.card.type === "visual";
   const imgSrc = isVisual ? (item.card as VisualCard).imageDataUrl : undefined;
 
+  const borderColor = isSelected ? "#2563eb" : ts.border;
+  const shadow = isSelected ? "3px 3px 0px #111111" : "1px 1px 0px #cccccc";
+  const bgColor = isSelected ? ts.bg : "#ffffff";
+
+  if (isVisual && imgSrc) {
+    return (
+      <div
+        className="relative group/minicard overflow-hidden cursor-pointer nodrag nowheel"
+        draggable
+        onDragStart={(e) => { e.stopPropagation(); onCardDragStart(e, item.card.id); }}
+        onClick={(e) => { e.stopPropagation(); onCardClick(item); }}
+        style={{
+          height: 140,
+          border: `1.5px solid ${borderColor}`,
+          borderRadius: 10,
+          boxShadow: shadow,
+          transition: "all 0.15s ease",
+          userSelect: "none",
+        }}
+      >
+        {onRemove && (
+          <button
+            className="nodrag absolute top-1.5 right-1.5 opacity-0 group-hover/minicard:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 text-[10px] leading-none z-20"
+            title="Remove from collection"
+            onClick={(e) => { e.stopPropagation(); onRemove(); }}
+          >✕</button>
+        )}
+        <div className="absolute top-0 left-0 right-0 p-2 flex items-center gap-1.5 z-10 bg-gradient-to-b from-black/30 to-transparent">
+          <span className="text-[8px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0 bg-black/50 text-white">
+            {TYPE_LABEL_SINGLE[item.card.type]}
+          </span>
+          {isSelected && <span className="text-[9px] text-white bg-blue-500/80 px-1 py-0.5 rounded shrink-0 font-bold">✓</span>}
+        </div>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={imgSrc} alt={item.card.title} className="w-full h-full object-cover" />
+        <div className="absolute bottom-0 left-0 right-0 px-2 py-1.5 bg-gradient-to-t from-black/80 via-black/50 to-transparent z-10">
+          <p className="text-[9px] text-white leading-tight truncate font-medium">{item.card.title}</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
-      className="relative group/minicard rounded-lg overflow-hidden cursor-pointer transition-all nodrag nowheel"
+      className="relative group/minicard overflow-hidden cursor-pointer nodrag nowheel"
       draggable
       onDragStart={(e) => { e.stopPropagation(); onCardDragStart(e, item.card.id); }}
       onClick={(e) => { e.stopPropagation(); onCardClick(item); }}
       style={{
-        background: isSelected ? ts.bg : "#ffffff",
-        border: `1.5px solid ${isSelected ? ts.selectedBorder : ts.border}`,
-        boxShadow: isSelected ? "3px 3px 0px #111" : "1px 1px 0px #ccc",
+        height: 76,
+        background: bgColor,
+        border: `1.5px solid ${borderColor}`,
+        borderRadius: 10,
+        boxShadow: shadow,
+        transition: "all 0.15s ease",
+        userSelect: "none",
       }}
     >
-      {imgSrc && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={imgSrc} alt={item.card.title} className="w-full h-12 object-cover" />
-      )}
-      <div className="p-1.5">
-        <div className="flex items-center gap-1 mb-0.5">
-          <span
-            className="text-[8px] font-bold uppercase tracking-wide px-1 py-0.5 rounded shrink-0"
-            style={{ background: ts.badgeBg, color: ts.badgeText }}
-          >
-            {TYPE_LABEL_SINGLE[item.card.type]}
-          </span>
-
-        </div>
-        <p className="text-[10px] font-medium text-[#333] leading-tight line-clamp-2">{item.card.title}</p>
-      </div>
       {onRemove && (
         <button
-          className="nodrag absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center rounded-full bg-white/80 text-[8px] text-[#bbb] hover:text-red-400 hover:bg-white opacity-0 group-hover/minicard:opacity-100 transition-opacity"
+          className="nodrag absolute top-1.5 right-1.5 opacity-0 group-hover/minicard:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 text-[10px] leading-none z-10"
           title="Remove from collection"
           onClick={(e) => { e.stopPropagation(); onRemove(); }}
         >✕</button>
       )}
+      <div className="p-2.5 flex flex-col gap-1 h-full">
+        <div className="flex items-center gap-1.5 pr-4">
+          <span
+            className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0"
+            style={{ background: ts.badgeBg, color: ts.badgeText }}
+          >
+            {TYPE_LABEL_SINGLE[item.card.type]}
+          </span>
+          {isSelected && <span className="text-[9px] text-blue-600 shrink-0">✓</span>}
+        </div>
+        <p className="text-[11px] font-medium text-[#333] leading-tight line-clamp-2 flex-1">{item.card.title}</p>
+        <p className="text-[9px] text-[#bbb] truncate">{ACTION_LABEL[item.actionType] ?? item.actionType}</p>
+      </div>
     </div>
   );
 }
@@ -159,7 +202,7 @@ function CollectionNodeComponent({ data }: NodeProps) {
     <div
       className="rounded-2xl overflow-hidden transition-shadow"
       style={{
-        width: 296,
+        width: 320,
         background: isDragOver ? `${color}18` : "#fff",
         border: `2px solid ${isDragOver ? color : "#e4e3e0"}`,
         boxShadow: isDragOver ? `0 0 0 3px ${color}33` : "0 2px 8px rgba(0,0,0,0.08)",
@@ -237,7 +280,7 @@ function CollectionNodeComponent({ data }: NodeProps) {
             <p className="text-[10px] text-[#bbb]">{isDragOver ? "Drop here ↓" : "Drag cards here"}</p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-1.5">
+          <div className="grid grid-cols-2 gap-2">
             {items.map((item) => (
               <MiniCard
                 key={item.card.id}
@@ -269,7 +312,7 @@ function TypeGroupNodeComponent({ data }: NodeProps) {
     return (
       <div
         className="rounded-2xl overflow-hidden opacity-40"
-        style={{ width: 296, background: s.clusterBg, border: `1.5px dashed ${s.border}` }}
+        style={{ width: 320, background: s.clusterBg, border: `1.5px dashed ${s.border}` }}
         onDragOver={onContainerDragOver}
         onDragEnter={(e) => onContainerDragEnter(e, `type::${typeName}`)}
         onDragLeave={onContainerDragLeave}
@@ -289,7 +332,7 @@ function TypeGroupNodeComponent({ data }: NodeProps) {
     <div
       className="rounded-2xl overflow-hidden transition-shadow"
       style={{
-        width: 296,
+        width: 320,
         background: isDragOver ? "#eff6ff" : s.clusterBg,
         border: `1.5px solid ${isDragOver ? "#2563eb" : s.border}`,
         boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
@@ -309,7 +352,7 @@ function TypeGroupNodeComponent({ data }: NodeProps) {
         <span className="text-[9px] text-[#aaa] flex-1">{items.length}</span>
       </div>
       <div className="nodrag nowheel p-2.5">
-        <div className="grid grid-cols-2 gap-1.5">
+        <div className="grid grid-cols-2 gap-2">
           {items.map((item) => <MiniCard key={item.card.id} item={item} />)}
         </div>
       </div>
@@ -324,7 +367,7 @@ function buildRfNodes(
   collections: Collection[],
   prevPositions: Map<string, { x: number; y: number }>,
 ): Node[] {
-  const COL_W = 340;
+  const COL_W = 360;
   const nodes: Node[] = [];
 
   collections.forEach((col, i) => {
@@ -332,7 +375,7 @@ function buildRfNodes(
       id: col.id,
       type: "collection",
       position: prevPositions.get(col.id) ?? { x: (i % 2) * COL_W + 20, y: Math.floor(i / 2) * 420 + 20 },
-      style: { width: 296 },
+      style: { width: 320 },
       data: { collectionId: col.id },
     });
   });
@@ -345,7 +388,7 @@ function buildRfNodes(
       id,
       type: "typeGroup",
       position: prevPositions.get(id) ?? { x: (i % 2) * COL_W + 20, y: typeBaseY + Math.floor(i / 2) * 360 },
-      style: { width: 296 },
+      style: { width: 320 },
       data: { typeName: t },
     });
   });
@@ -380,6 +423,22 @@ export default function ClusterView({
   onAddCardsToCollection: _onAddCardsToCollection, onMoveCardToCollection, onRemoveCardFromCollection,
 }: Props) {
   const [selectedItem, setSelectedItem] = useState<ClusterItem | null>(null);
+  const [panelWidth, setPanelWidth] = useState(272);
+  const handlePanelResizeStart = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = panelWidth;
+    const onMove = (ev: PointerEvent) => {
+      const delta = startX - ev.clientX;
+      setPanelWidth(Math.max(200, Math.min(560, startWidth + delta)));
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }, [panelWidth]);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({ title: "", description: "" });
@@ -584,28 +643,29 @@ export default function ClusterView({
         </div>
 
         {/* ── Detail panel ─────────────────────────────────────────────────── */}
-        {selectedItem ? (
-          <ClusterDetailPanel
-            item={selectedItem}
-            genSiblings={genSiblings}
-            assets={assets}
-            sourceCardIds={generations.find((g) => g.id === selectedItem.genId)?.sourceCardIds ?? []}
-            sourceDraftIds={generations.find((g) => g.id === selectedItem.genId)?.includedDraftIds ?? []}
-            sourceRefIds={generations.find((g) => g.id === selectedItem.genId)?.includedReferenceIds ?? []}
-            onBranch={(action) => { onBranchFrom(selectedItem.card, action); setSelectedItem(null); }}
-            onRemove={() => { onDismissCard(selectedItem.genId, selectedItem.card.id); setSelectedItem(null); }}
-            onSelectSibling={(id) => {
-              const found = allItems.find((c) => c.card.id === id);
-              if (found) setSelectedItem(found);
-            }}
-            onClose={() => setSelectedItem(null)}
-            onAddAsReference={onAddAsReference}
-          />
-        ) : (
-          <div className="w-[200px] shrink-0 border-l border-[#e4e3e0] bg-white/60 flex items-center justify-center">
-            <p className="text-[10px] text-[#ccc] text-center px-4 leading-relaxed">
-              Click a card to see details and actions
-            </p>
+        {selectedItem && (
+          <div style={{ width: panelWidth, flexShrink: 0, position: "relative", display: "flex" }}>
+            <div
+              onPointerDown={handlePanelResizeStart}
+              style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4, cursor: "col-resize", zIndex: 10 }}
+              className="hover:bg-blue-300/40 transition-colors"
+            />
+            <ClusterDetailPanel
+              item={selectedItem}
+              genSiblings={genSiblings}
+              assets={assets}
+              sourceCardIds={generations.find((g) => g.id === selectedItem.genId)?.sourceCardIds ?? []}
+              sourceDraftIds={generations.find((g) => g.id === selectedItem.genId)?.includedDraftIds ?? []}
+              sourceRefIds={generations.find((g) => g.id === selectedItem.genId)?.includedReferenceIds ?? []}
+              onBranch={(action) => { onBranchFrom(selectedItem.card, action); setSelectedItem(null); }}
+              onRemove={() => { onDismissCard(selectedItem.genId, selectedItem.card.id); setSelectedItem(null); }}
+              onSelectSibling={(id) => {
+                const found = allItems.find((c) => c.card.id === id);
+                if (found) setSelectedItem(found);
+              }}
+              onClose={() => setSelectedItem(null)}
+              onAddAsReference={onAddAsReference}
+            />
           </div>
         )}
       </div>
@@ -653,7 +713,7 @@ function ClusterDetailPanel({
 
   return (
     <>
-      <aside className="w-[272px] shrink-0 h-full border-l border-[#e4e3e0] bg-white flex flex-col overflow-hidden">
+      <aside className="w-full h-full border-l border-[#e4e3e0] bg-white flex flex-col overflow-hidden">
         <div className="px-4 py-3 border-b border-[#f0efec] shrink-0">
           <div className="flex items-start justify-between gap-2 mb-2">
             <span className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded" style={{ background: s.badgeBg, color: s.badgeText }}>
