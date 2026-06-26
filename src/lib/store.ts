@@ -32,6 +32,7 @@ import type {
   Collection,
   Generation,
   Highlight,
+  ManualEdge,
   ResultCard,
 } from "@/types";
 
@@ -44,6 +45,7 @@ const DEFAULT_STATE: ProjectState = {
   generations: [],
   highlights: [],
   collections: [],
+  manualEdges: [],
 };
 
 function loadFromStorage(): ProjectState {
@@ -154,6 +156,47 @@ export function useProject() {
         })),
         highlights: s.highlights.map((h) =>
           h.card.id === card.id ? { ...h, card } : h
+        ),
+      })),
+
+    removeProvenanceEdge: (fromId: string, toCardId: string) =>
+      update((s) => ({
+        ...s,
+        generations: s.generations.map((gen) => {
+          if (!gen.cards.some((c) => c.id === toCardId)) return gen;
+          if (fromId.startsWith("__asset_")) {
+            const assetId = fromId.replace("__asset_", "");
+            return {
+              ...gen,
+              includedDraftIds: (gen.includedDraftIds ?? []).filter((id) => id !== assetId),
+              includedReferenceIds: (gen.includedReferenceIds ?? []).filter((id) => id !== assetId),
+            };
+          }
+          return { ...gen, sourceCardIds: (gen.sourceCardIds ?? []).filter((id) => id !== fromId) };
+        }),
+      })),
+
+    addManualEdge: (edge: ManualEdge) =>
+      update((s) => ({
+        ...s,
+        manualEdges: s.manualEdges.some(
+          (e) => e.fromCardId === edge.fromCardId && e.toCardId === edge.toCardId
+        ) ? s.manualEdges : [...s.manualEdges, edge],
+      })),
+
+    removeManualEdge: (id: string) =>
+      update((s) => ({
+        ...s,
+        manualEdges: s.manualEdges.filter((e) => e.id !== id),
+      })),
+
+    adoptChildGenerations: (originalCardId: string, newCardId: string) =>
+      update((s) => ({
+        ...s,
+        generations: s.generations.map((gen) =>
+          gen.sourceCardIds?.includes(originalCardId)
+            ? { ...gen, sourceCardIds: [...gen.sourceCardIds, newCardId] }
+            : gen
         ),
       })),
 

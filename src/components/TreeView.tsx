@@ -11,13 +11,23 @@ import {
   Position,
   BackgroundVariant,
   MarkerType,
+  BaseEdge,
+  EdgeLabelRenderer,
+  getBezierPath,
+  applyNodeChanges,
+  applyEdgeChanges,
   type Node,
   type Edge as RFEdge,
+  type EdgeTypes,
   type NodeTypes,
   type NodeProps,
+  type EdgeProps,
+  type Connection,
+  type NodeChange,
+  type EdgeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import type { Asset, Collection, Generation, ResultCard, ActionType, VisualCard } from "@/types";
+import type { Asset, Collection, Generation, ManualEdge, ResultCard, ActionType, VisualCard } from "@/types";
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 const NODE_W = 168;
@@ -116,6 +126,7 @@ type CardNodeData = {
   isSaved: boolean;
   isMultiSelected: boolean;
   collectionColors?: string[];
+  connectMode: boolean;
   onRemove: (genId: string, cardId: string) => void;
   onQuickBranch: (action: ActionType) => void;
 };
@@ -127,11 +138,15 @@ type BriefNodeData = {
   onBriefChange: (v: string) => void;
   onAddDraftFile: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onAddReferenceFile: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  connectMode: boolean;
+  isSelected: boolean;
 };
 
 type AssetNodeData = {
   asset: Asset;
   onRemove: (id: string) => void;
+  connectMode: boolean;
+  isSelected: boolean;
 };
 
 // ── Layout algorithm ──────────────────────────────────────────────────────────
@@ -265,7 +280,15 @@ function computeLayout(generations: Generation[], allGenerations: Generation[]):
 // ── Custom node components ────────────────────────────────────────────────────
 function TextCardNode(props: NodeProps) {
   const data = props.data as unknown as CardNodeData;
-  const { card, isSelected, isHovered, isAncestor, isMultiSelected, isSaved, collectionColors, onRemove, genId, actionType } = data;
+  const { card, isSelected, isHovered, isAncestor, isMultiSelected, isSaved, collectionColors, connectMode, onRemove, genId, actionType } = data;
+  const handleStyle = (pos: "left" | "right"): React.CSSProperties => ({
+    opacity: connectMode ? 1 : 0,
+    pointerEvents: connectMode ? "auto" : "none",
+    width: 10, height: 10,
+    background: pos === "right" ? "#64748b" : "#94a3b8",
+    border: "2px solid white",
+    borderRadius: "50%",
+  });
   const s = TYPE_STYLE[card.type] ?? TYPE_STYLE.concept;
   const primaryColor = collectionColors?.[0];
 
@@ -286,7 +309,7 @@ function TextCardNode(props: NodeProps) {
 
   return (
     <>
-      <Handle type="target" position={Position.Left} style={{ opacity: 0, pointerEvents: "none" }} />
+      <Handle type="target" position={Position.Left} style={handleStyle("left")} />
       <div
         className="relative group"
         style={{
@@ -322,7 +345,7 @@ function TextCardNode(props: NodeProps) {
             >
               {TYPE_LABEL[card.type]}
             </span>
-            {isMultiSelected && <span className="text-[9px] text-blue-600 shrink-0">✓</span>}
+            {(isMultiSelected || isSelected) && <span className="text-[9px] text-blue-600 shrink-0">✓</span>}
             {isSaved && <span className="text-[10px] text-amber-400 shrink-0" title="Saved">★</span>}
           </div>
           <p className="text-[11px] font-medium text-[#333] leading-tight line-clamp-2 flex-1">
@@ -333,7 +356,7 @@ function TextCardNode(props: NodeProps) {
           </p>
         </div>
       </div>
-      <Handle type="source" position={Position.Right} style={{ opacity: 0, pointerEvents: "none" }} />
+      <Handle type="source" position={Position.Right} style={handleStyle("right")} />
     </>
   );
 }
@@ -346,7 +369,15 @@ const VISUAL_QUICK_ACTIONS: { id: ActionType; label: string }[] = [
 
 function VisualCardNode(props: NodeProps) {
   const data = props.data as unknown as CardNodeData;
-  const { card, isSelected, isHovered, isAncestor, isMultiSelected, isSaved, collectionColors, onRemove, onQuickBranch, genId } = data;
+  const { card, isSelected, isHovered, isAncestor, isMultiSelected, isSaved, collectionColors, connectMode, onRemove, onQuickBranch, genId } = data;
+  const handleStyle = (pos: "left" | "right"): React.CSSProperties => ({
+    opacity: connectMode ? 1 : 0,
+    pointerEvents: connectMode ? "auto" : "none",
+    width: 10, height: 10,
+    background: pos === "right" ? "#64748b" : "#94a3b8",
+    border: "2px solid white",
+    borderRadius: "50%",
+  });
   const s = TYPE_STYLE.visual;
   const visualCard = card as VisualCard;
   const primaryColor = collectionColors?.[0];
@@ -363,7 +394,7 @@ function VisualCardNode(props: NodeProps) {
 
   return (
     <>
-      <Handle type="target" position={Position.Left} style={{ opacity: 0, pointerEvents: "none" }} />
+      <Handle type="target" position={Position.Left} style={handleStyle("left")} />
       <div
         className="relative group"
         style={{
@@ -388,9 +419,9 @@ function VisualCardNode(props: NodeProps) {
           <span className="text-[8px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0 bg-black/50 text-white">
             {TYPE_LABEL[card.type]}
           </span>
-          {isMultiSelected && <span className="text-[9px] text-white bg-blue-500/80 px-1 py-0.5 rounded shrink-0 font-bold">✓</span>}
+          {(isMultiSelected || isSelected) && <span className="text-[9px] text-white bg-blue-500/80 px-1 py-0.5 rounded shrink-0 font-bold">✓</span>}
           {isSaved && <span className="text-[9px] text-amber-300 shrink-0 drop-shadow">★</span>}
-          {collectionColors && collectionColors.length > 0 && !isMultiSelected && (
+          {collectionColors && collectionColors.length > 0 && !isMultiSelected && !isSelected && (
             <div className="flex gap-0.5">
               {collectionColors.map((c) => (
                 <div key={c} className="w-2 h-2 rounded-full ring-1 ring-white/50 shrink-0" style={{ background: c }} />
@@ -426,7 +457,7 @@ function VisualCardNode(props: NodeProps) {
           </div>
         </div>
       </div>
-      <Handle type="source" position={Position.Right} style={{ opacity: 0, pointerEvents: "none" }} />
+      <Handle type="source" position={Position.Right} style={handleStyle("right")} />
     </>
   );
 }
@@ -436,6 +467,7 @@ function BriefNode(props: NodeProps) {
   const data = props.data as unknown as BriefNodeData;
   const draftInputRef = useRef<HTMLInputElement>(null);
   const refInputRef = useRef<HTMLInputElement>(null);
+  const { isSelected } = data;
 
   return (
     <>
@@ -444,18 +476,21 @@ function BriefNode(props: NodeProps) {
           width: INPUT_NODE_W,
           minHeight: BRIEF_NODE_H,
           background: "#fffef8",
-          border: "1.5px solid #d97706",
+          border: `1.5px solid ${isSelected ? "#2563eb" : "#d97706"}`,
           borderRadius: 10,
-          boxShadow: "1px 1px 0px #e0d0b0",
+          boxShadow: isSelected ? "0 0 0 3px rgba(37,99,235,0.2)" : "1px 1px 0px #e0d0b0",
           padding: "12px",
           display: "flex",
           flexDirection: "column",
           gap: 8,
         }}
       >
-        <p style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#d97706", margin: 0 }}>
-          Project Brief
-        </p>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <p style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: isSelected ? "#2563eb" : "#d97706", margin: 0 }}>
+            Project Brief
+          </p>
+          {isSelected && <span style={{ fontSize: 9, color: "#2563eb", fontWeight: 700 }}>✓</span>}
+        </div>
         <input
           className="nodrag nopan"
           value={data.title}
@@ -521,7 +556,11 @@ function BriefNode(props: NodeProps) {
           </button>
         </div>
       </div>
-      <Handle type="source" position={Position.Right} style={{ opacity: 0, pointerEvents: "none" }} />
+      <Handle type="source" position={Position.Right} style={{
+        opacity: data.connectMode ? 1 : 0,
+        pointerEvents: data.connectMode ? "auto" : "none",
+        width: 10, height: 10, background: "#64748b", border: "2px solid white", borderRadius: "50%",
+      }} />
     </>
   );
 }
@@ -529,7 +568,7 @@ function BriefNode(props: NodeProps) {
 // ── Asset node ────────────────────────────────────────────────────────────────
 function AssetNode(props: NodeProps) {
   const data = props.data as unknown as AssetNodeData;
-  const { asset, onRemove } = data;
+  const { asset, onRemove, isSelected } = data;
   const isDraft = asset.type === "draft";
 
   return (
@@ -540,9 +579,9 @@ function AssetNode(props: NodeProps) {
           width: INPUT_NODE_W,
           height: ASSET_NODE_H,
           background: isDraft ? "#f9f9f7" : "#f0f0ff",
-          border: `1.5px solid ${isDraft ? "#aaa" : "#c5c5e8"}`,
+          border: `1.5px solid ${isSelected ? "#2563eb" : isDraft ? "#aaa" : "#c5c5e8"}`,
           borderRadius: 10,
-          boxShadow: "1px 1px 0px #cccccc",
+          boxShadow: isSelected ? "0 0 0 3px rgba(37,99,235,0.2)" : "1px 1px 0px #cccccc",
           overflow: "hidden",
           display: "flex",
           alignItems: "center",
@@ -563,12 +602,15 @@ function AssetNode(props: NodeProps) {
           style={{ width: 68, height: 68, objectFit: "cover", borderRadius: 6, flexShrink: 0 }}
         />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <p style={{
-            fontSize: 8, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5,
-            color: isDraft ? "#666" : "#4444aa", marginBottom: 4,
-          }}>
-            {isDraft ? "✎ Draft" : "◈ Reference"}
-          </p>
+          <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 4 }}>
+            <p style={{
+              fontSize: 8, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5,
+              color: isSelected ? "#2563eb" : isDraft ? "#666" : "#4444aa", margin: 0,
+            }}>
+              {isDraft ? "✎ Draft" : "◈ Reference"}
+            </p>
+            {isSelected && <span style={{ fontSize: 9, color: "#2563eb", fontWeight: 700 }}>✓</span>}
+          </div>
           <p style={{
             fontSize: 10, color: "#444",
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
@@ -577,7 +619,11 @@ function AssetNode(props: NodeProps) {
           </p>
         </div>
       </div>
-      <Handle type="source" position={Position.Right} style={{ opacity: 0, pointerEvents: "none" }} />
+      <Handle type="source" position={Position.Right} style={{
+        opacity: data.connectMode ? 1 : 0,
+        pointerEvents: data.connectMode ? "auto" : "none",
+        width: 10, height: 10, background: "#64748b", border: "2px solid white", borderRadius: "50%",
+      }} />
     </>
   );
 }
@@ -588,6 +634,74 @@ const nodeTypes: NodeTypes = {
   briefNode: BriefNode,
   assetNode: AssetNode,
 };
+
+function ProvenanceEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, data, selected }: EdgeProps) {
+  const [edgePath, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
+  const { onDelete, color, dashed } = (data ?? {}) as { onDelete?: () => void; color?: string; dashed?: boolean };
+  const stroke = selected ? "#2563eb" : (color ?? "#94a3b8");
+  return (
+    <>
+      <path d={edgePath} fill="none" stroke="transparent" strokeWidth={20} style={{ cursor: "pointer" }} />
+      <BaseEdge path={edgePath} markerEnd={markerEnd}
+        style={{ stroke, strokeWidth: selected ? 2 : 1.5, strokeOpacity: selected ? 0.9 : 0.55, strokeDasharray: dashed ? "5 4" : undefined, transition: "stroke 0.1s, stroke-opacity 0.1s, stroke-width 0.1s" }} />
+      {selected && onDelete && (
+        <EdgeLabelRenderer>
+          <div style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`, pointerEvents: "all" }}
+            className="nodrag nopan">
+            <button onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Remove connection"
+              className="w-5 h-5 rounded-full bg-white border border-[#ccc] text-[#888] hover:text-red-500 hover:border-red-300 flex items-center justify-center text-[10px] leading-none shadow-sm transition-colors">
+              ✕
+            </button>
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
+  );
+}
+
+function ManualEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, data, selected }: EdgeProps) {
+  const [hovered, setHovered] = useState(false);
+  const [edgePath, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
+  const { onDelete } = (data ?? {}) as { onDelete?: () => void };
+  const stroke = selected ? "#2563eb" : "#64748b";
+  return (
+    <>
+      {/* Invisible wide hit-area so the thin dashed line is easy to click */}
+      <path
+        d={edgePath}
+        fill="none"
+        stroke="transparent"
+        strokeWidth={20}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{ cursor: "pointer" }}
+      />
+      <BaseEdge
+        path={edgePath}
+        markerEnd={markerEnd}
+        style={{ stroke, strokeWidth: 1.5, strokeDasharray: "5 3", transition: "stroke 0.1s" }}
+      />
+      {(hovered || selected) && onDelete && (
+        <EdgeLabelRenderer>
+          <div
+            style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`, pointerEvents: "all" }}
+            className="nodrag nopan"
+          >
+            <button
+              onClick={(e) => { e.stopPropagation(); onDelete(); }}
+              title="Remove connection"
+              className="w-5 h-5 rounded-full bg-white border border-[#ccc] text-[#888] hover:text-red-500 hover:border-red-300 flex items-center justify-center text-[10px] leading-none shadow-sm transition-colors"
+            >
+              ✕
+            </button>
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
+  );
+}
+
+const edgeTypes: EdgeTypes = { manualEdge: ManualEdge, provenanceEdge: ProvenanceEdge };
 
 // ── Main component ────────────────────────────────────────────────────────────
 interface Props {
@@ -603,6 +717,7 @@ interface Props {
   onBranchFrom: (card: ResultCard, action: ActionType) => void;
   onMultiBranchFrom: (cards: ResultCard[], action: ActionType) => void;
   onAddUserNode: (card: ResultCard, parentCardIds: string[]) => void;
+  onDuplicateCard: (originalCard: ResultCard, parentCardIds: string[]) => void;
   onClearTree: () => void;
   onDismissCard: (genId: string, cardId: string) => void;
   onUpdateCard: (card: ResultCard) => void;
@@ -615,14 +730,19 @@ interface Props {
   collections: Collection[];
   onAddCollection: (col: Collection) => void;
   onAddCardsToCollection: (collectionId: string, cardIds: string[]) => void;
+  onRemoveProvenanceEdge: (fromId: string, toCardId: string) => void;
+  manualEdges: ManualEdge[];
+  onAddManualEdge: (edge: ManualEdge) => void;
+  onRemoveManualEdge: (id: string) => void;
 }
 
 export default function TreeView({
   generations, allGenerations, isGenerating, generatingAction, assets,
   brief, title, hoveredSourceIds, onHoverSources, onBranchFrom,
-  onMultiBranchFrom, onAddUserNode, onClearTree, onDismissCard, onUpdateCard, onAddAsReference,
+  onMultiBranchFrom, onAddUserNode, onDuplicateCard, onClearTree, onDismissCard, onUpdateCard, onAddAsReference,
   onBriefChange, onTitleChange, onAddAsset, onRemoveAsset, onSelectionChange,
   collections, onAddCollection, onAddCardsToCollection,
+  manualEdges, onAddManualEdge, onRemoveManualEdge, onRemoveProvenanceEdge,
 }: Props) {
   const { nodes, edges } = useMemo(
     () => computeLayout(generations, allGenerations),
@@ -638,6 +758,7 @@ export default function TreeView({
   const [toasts, setToasts] = useState<{ id: string; message: string }[]>([]);
   const seenGenErrorIds = useRef<Set<string>>(new Set());
   const [showCollectionColors, setShowCollectionColors] = useState(false);
+  const [connectMode, setConnectMode] = useState(false);
   const [collectionPickerOpen, setCollectionPickerOpen] = useState(false);
   const [viewport, setViewport] = useState({ x: 0, y: 0, zoom: 1 });
   const [creatingInPicker, setCreatingInPicker] = useState(false);
@@ -677,8 +798,12 @@ export default function TreeView({
   }, []);
 
   useEffect(() => {
-    onSelectionChange?.([...multiSelectedIds]);
-  }, [multiSelectedIds, onSelectionChange]);
+    if (multiSelectedIds.size > 0) {
+      onSelectionChange?.([...multiSelectedIds]);
+    } else {
+      onSelectionChange?.(selectedId ? [selectedId] : []);
+    }
+  }, [multiSelectedIds, selectedId, onSelectionChange]);
 
   const cardIds = useMemo(() => new Set(nodes.map((n) => n.card.id)), [nodes]);
 
@@ -694,6 +819,9 @@ export default function TreeView({
   }, [collections]);
 
   const selectedNode = nodes.find((n) => n.card.id === selectedId) ?? null;
+  const effectiveSelectedIds: Set<string> = multiSelectedIds.size > 0
+    ? multiSelectedIds
+    : (selectedId ? new Set([selectedId]) : new Set<string>());
   const siblings = selectedNode
     ? nodes.filter((n) => n.genId === selectedNode.genId && n.card.id !== selectedNode.card.id)
     : [];
@@ -731,14 +859,15 @@ export default function TreeView({
   }, []);
 
   const handleMultiAction = useCallback((action: ActionType) => {
+    const targetIds = multiSelectedIds.size > 0 ? multiSelectedIds : (selectedId ? new Set([selectedId]) : new Set<string>());
     const cards = nodes
-      .filter((n) => multiSelectedIds.has(n.card.id))
+      .filter((n) => targetIds.has(n.card.id))
       .map((n) => n.card);
-    if (cards.length === 0) return;
     onMultiBranchFrom(cards, action);
     setMultiSelectedIds(new Set());
     setSelectedId(null);
-  }, [nodes, multiSelectedIds, onMultiBranchFrom]);
+    setSelectedInputId(null);
+  }, [nodes, multiSelectedIds, selectedId, onMultiBranchFrom]);
 
   // ── File upload handlers ───────────────────────────────────────────────────
   const handleDraftFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -778,6 +907,8 @@ export default function TreeView({
         title, brief, onTitleChange, onBriefChange,
         onAddDraftFile: handleDraftFileChange,
         onAddReferenceFile: handleRefFileChange,
+        connectMode,
+        isSelected: selectedInputId === "__brief__",
       } satisfies BriefNodeData,
       width: INPUT_NODE_W,
       height: BRIEF_NODE_H,
@@ -789,7 +920,7 @@ export default function TreeView({
         id: `__asset_${asset.id}`,
         type: "assetNode",
         position: positionOverrides[`__asset_${asset.id}`] ?? { x: PAD, y },
-        data: { asset, onRemove: onRemoveAsset } satisfies AssetNodeData,
+        data: { asset, onRemove: onRemoveAsset, connectMode, isSelected: selectedInputId === `__asset_${asset.id}` } satisfies AssetNodeData,
         width: INPUT_NODE_W,
         height: ASSET_NODE_H,
       });
@@ -797,7 +928,7 @@ export default function TreeView({
     }
 
     return result;
-  }, [title, brief, assets, positionOverrides, onTitleChange, onBriefChange, onRemoveAsset, handleDraftFileChange, handleRefFileChange]);
+  }, [title, brief, assets, positionOverrides, connectMode, selectedInputId, onTitleChange, onBriefChange, onRemoveAsset, handleDraftFileChange, handleRefFileChange]);
 
   // ── Generation nodes (shifted right by INPUT_X_OFFSET) ───────────────────
   const rfNodes = useMemo((): Node[] =>
@@ -823,6 +954,7 @@ export default function TreeView({
           isSaved: false,
           isMultiSelected: multiSelectedIds.has(node.card.id),
           collectionColors: showCollectionColors ? cardCollectionsMap.get(node.card.id) : undefined,
+          connectMode,
           onRemove: handleRemove,
           onQuickBranch: (action) => handleQuickBranch(node.card, action),
         } satisfies CardNodeData,
@@ -830,7 +962,7 @@ export default function TreeView({
         height: h,
       };
     }),
-    [nodes, cardIds, positionOverrides, selectedId, multiSelectedIds, hoveredId, hoveredAncestorIds, hoveredSourceIds, handleRemove, handleQuickBranch, showCollectionColors, cardCollectionsMap]
+    [nodes, cardIds, positionOverrides, selectedId, multiSelectedIds, hoveredId, hoveredAncestorIds, hoveredSourceIds, handleRemove, handleQuickBranch, showCollectionColors, cardCollectionsMap, connectMode]
   );
 
   // ── Generation edges ──────────────────────────────────────────────────────
@@ -839,26 +971,27 @@ export default function TreeView({
       const s = TYPE_STYLE[edge.toType] ?? TYPE_STYLE.concept;
       const isActive = hoveredId === edge.toId || hoveredId === edge.fromId
         || hoveredSourceIds.has(edge.fromId);
+      const color = isActive ? "#f59e0b" : s.line;
       return {
         id: `${edge.fromId}-${edge.toId}`,
         source: edge.fromId,
         target: edge.toId,
-        type: "default",
-        style: {
-          stroke: isActive ? "#f59e0b" : s.line,
-          strokeWidth: isActive ? 2.5 : 1.5,
-          strokeOpacity: isActive ? 0.9 : 0.55,
+        type: "provenanceEdge",
+        selectable: true,
+        data: {
+          color,
+          onDelete: () => onRemoveProvenanceEdge(edge.fromId, edge.toId),
         },
         markerEnd: {
           type: MarkerType.Arrow,
-          color: isActive ? "#f59e0b" : s.line,
+          color,
           width: 12,
           height: 12,
           strokeWidth: 0,
         },
       };
     }),
-    [edges, hoveredId, hoveredSourceIds]
+    [edges, hoveredId, hoveredSourceIds, onRemoveProvenanceEdge]
   );
 
   // ── Input → generation edges ──────────────────────────────────────────────
@@ -885,12 +1018,18 @@ export default function TreeView({
           : node.includedReferenceIds.includes(asset.id);
         if (included) {
           const color = asset.type === "draft" ? "#888" : "#6666cc";
+          const fromId = `__asset_${asset.id}`;
           result.push({
-            id: `__asset_${asset.id}-${node.card.id}`,
-            source: `__asset_${asset.id}`,
+            id: `${fromId}-${node.card.id}`,
+            source: fromId,
             target: node.card.id,
-            type: "default",
-            style: { stroke: color, strokeWidth: 1.5, strokeOpacity: 0.3, strokeDasharray: "5 4" },
+            type: "provenanceEdge",
+            selectable: true,
+            data: {
+              color,
+              dashed: true,
+              onDelete: () => onRemoveProvenanceEdge(fromId, node.card.id),
+            },
             markerEnd: { type: MarkerType.Arrow, color, width: 10, height: 10, strokeWidth: 0 },
           });
         }
@@ -898,10 +1037,74 @@ export default function TreeView({
     }
 
     return result;
-  }, [nodes, cardIds, assets]);
+  }, [nodes, cardIds, assets, onRemoveProvenanceEdge]);
 
   const allRfNodes = useMemo(() => [...inputRfNodes, ...rfNodes], [inputRfNodes, rfNodes]);
-  const allRfEdges = useMemo(() => [...inputRfEdges, ...rfEdges], [inputRfEdges, rfEdges]);
+
+  const manualRfEdges = useMemo((): RFEdge[] =>
+    manualEdges
+      .filter((e) => {
+        const valid = (id: string) => cardIds.has(id) || id === "__brief__" || id.startsWith("__asset_");
+        return valid(e.fromCardId) && valid(e.toCardId);
+      })
+      .map((e): RFEdge => ({
+        id: `manual_${e.id}`,
+        source: e.fromCardId,
+        target: e.toCardId,
+        type: "manualEdge",
+        data: { onDelete: () => onRemoveManualEdge(e.id) },
+        markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b", width: 12, height: 12, strokeWidth: 0 },
+        selectable: true,
+        focusable: true,
+        deletable: true,
+      })),
+    [manualEdges, cardIds, onRemoveManualEdge]
+  );
+
+  const allRfEdges = useMemo(() => [...inputRfEdges, ...rfEdges, ...manualRfEdges], [inputRfEdges, rfEdges, manualRfEdges]);
+
+  // ── Controlled ReactFlow state (required for drag + edge interaction) ──────
+  // We manage displayNodes/displayEdges ourselves so ReactFlow can track
+  // in-flight drag positions via applyNodeChanges. The sync effect must
+  // PRESERVE current node positions: hoveredId changes cause allRfNodes to
+  // recompute mid-drag, and a naive setDisplayNodes(allRfNodes) would reset
+  // the dragged position, triggering ReactFlow error #015.
+  const [displayNodes, setDisplayNodes] = useState<Node[]>(allRfNodes);
+  const [displayEdges, setDisplayEdges] = useState<RFEdge[]>(allRfEdges);
+
+  useEffect(() => {
+    setDisplayNodes((current) => {
+      const nodeMap = new Map(current.map((n) => [n.id, n]));
+      return allRfNodes.map((n) => {
+        const existing = nodeMap.get(n.id);
+        if (!existing) return n; // new node — use layout position directly
+        // Use existing as base so ReactFlow's internal state (measured dimensions,
+        // internals map, etc.) survives the re-render. Override only data fields
+        // that change (isHovered, connectMode, etc.). Preserve position while the
+        // node is actively being dragged; otherwise use the layout/override pos.
+        return {
+          ...existing,
+          data: n.data,
+          position: existing.dragging ? existing.position : n.position,
+        };
+      });
+    });
+  }, [allRfNodes]);
+
+  useEffect(() => { setDisplayEdges(allRfEdges); }, [allRfEdges]);
+
+  const onNodesChange = useCallback((changes: NodeChange<Node>[]) => {
+    setDisplayNodes((nds) => applyNodeChanges(changes, nds));
+  }, []);
+
+  const onEdgesChange = useCallback((changes: EdgeChange<RFEdge>[]) => {
+    for (const change of changes) {
+      if (change.type === "remove" && change.id.startsWith("manual_")) {
+        onRemoveManualEdge(change.id.slice("manual_".length));
+      }
+    }
+    setDisplayEdges((eds) => applyEdgeChanges(changes, eds));
+  }, [onRemoveManualEdge]);
 
   // ── Event handlers ────────────────────────────────────────────────────────
   const handleNodeClick = useCallback((event: React.MouseEvent, rfNode: Node) => {
@@ -944,14 +1147,31 @@ export default function TreeView({
     onHoverSources(new Set(), new Set());
   }, [onHoverSources]);
 
+  const handleConnect = useCallback((connection: Connection) => {
+    const { source, target } = connection;
+    if (!source || !target || source === target) return;
+    onAddManualEdge({ id: crypto.randomUUID(), fromCardId: source, toCardId: target });
+  }, [onAddManualEdge]);
+
+  const handleNodesDelete = useCallback((deletedNodes: Node[]) => {
+    for (const rfNode of deletedNodes) {
+      if (rfNode.id === "__brief__" || rfNode.id.startsWith("__asset_")) continue;
+      const layoutNode = nodes.find((n) => n.card.id === rfNode.id);
+      if (layoutNode) handleRemove(layoutNode.genId, rfNode.id);
+    }
+  }, [nodes, handleRemove]);
+
   return (
     <div className="flex h-full w-full overflow-hidden">
       {/* ── React Flow canvas ────────────────────────────────────────────── */}
       <div className="flex-1 h-full" style={{ background: "#f0eeea" }}>
         <ReactFlow
-          nodes={allRfNodes}
-          edges={allRfEdges}
+          nodes={displayNodes}
+          edges={displayEdges}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
           onNodeClick={handleNodeClick}
           onNodeMouseEnter={handleNodeMouseEnter}
           onNodeMouseLeave={handleNodeMouseLeave}
@@ -968,8 +1188,11 @@ export default function TreeView({
           maxZoom={2.0}
           nodesDraggable={true}
           onNodeDragStop={handleNodeDragStop}
+          onNodesDelete={handleNodesDelete}
           connectOnClick={false}
-          nodesConnectable={false}
+          nodesConnectable={connectMode}
+          onConnect={handleConnect}
+          deleteKeyCode={["Delete", "Backspace"]}
         >
           {/* Gradient halo overlay — one layer per collection so colors stay distinct */}
           {showCollectionColors && (
@@ -1025,9 +1248,26 @@ export default function TreeView({
             </Panel>
           )}
 
-          {/* Top-right: Color toggle + Add node + Clear all */}
+          {/* Top-right: Color toggle + Connect mode + Add node + Clear all */}
           <Panel position="top-right">
             <div className="flex items-center gap-1.5 mr-2 mt-2">
+              <button
+                onClick={() => setConnectMode((p) => !p)}
+                title={connectMode ? "Exit connect mode (Drag handles to connect nodes)" : "Enter connect mode to draw connections between nodes"}
+                className={`border rounded-lg px-2.5 py-1.5 text-[11px] shadow-sm transition-colors flex items-center gap-1 ${
+                  connectMode
+                    ? "bg-[#111] border-[#111] text-white"
+                    : "bg-white border-[#e4e3e0] text-[#aaa] hover:text-[#555] hover:border-[#aaa]"
+                }`}
+              >
+                <span className="text-[12px] leading-none">⌥</span>
+                {connectMode ? "Connecting…" : "Connect"}
+              </button>
+              {connectMode && (
+                <span className="text-[10px] text-[#888] bg-white/80 border border-[#e4e3e0] rounded-lg px-2 py-1 shadow-sm">
+                  Drag handle → node · Delete to remove
+                </span>
+              )}
               {collections.length > 0 && (
                 <button
                   onClick={() => setShowCollectionColors((p) => !p)}
@@ -1093,12 +1333,12 @@ export default function TreeView({
             </Panel>
           )}
 
-          {/* Multi-select action bar */}
-          {multiSelectedIds.size > 0 && (
+          {/* Selection action bar (single or multi, including input nodes) */}
+          {(effectiveSelectedIds.size > 0 || !!selectedInputId) && (
             <Panel position="bottom-center">
               <div className="flex items-center gap-2 bg-white border border-[#222] rounded-lg shadow-lg px-3 py-2 mb-2 text-[11px]">
                 <span className="text-[#555] font-medium pr-1">
-                  {multiSelectedIds.size} selected
+                  {effectiveSelectedIds.size > 0 ? effectiveSelectedIds.size : 1} selected
                 </span>
                 <span className="text-[#ddd]">·</span>
                 {BRANCH_ACTIONS.map((a) => (
@@ -1132,9 +1372,10 @@ export default function TreeView({
                         <button
                           key={col.id}
                           onClick={() => {
-                            onAddCardsToCollection(col.id, [...multiSelectedIds]);
+                            onAddCardsToCollection(col.id, [...effectiveSelectedIds]);
                             setCollectionPickerOpen(false);
                             setMultiSelectedIds(new Set());
+                            setSelectedId(null);
                           }}
                           className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[#f5f5f4] text-left"
                         >
@@ -1155,7 +1396,7 @@ export default function TreeView({
                                   id: crypto.randomUUID(),
                                   title: newCollectionName.trim(),
                                   description: "",
-                                  cardIds: [...multiSelectedIds],
+                                  cardIds: [...effectiveSelectedIds],
                                   color: PICKER_COLORS[collections.length % PICKER_COLORS.length],
                                   createdAt: new Date().toISOString(),
                                 };
@@ -1164,6 +1405,7 @@ export default function TreeView({
                                 setCreatingInPicker(false);
                                 setCollectionPickerOpen(false);
                                 setMultiSelectedIds(new Set());
+                                setSelectedId(null);
                               }
                               if (e.key === "Escape") { setCreatingInPicker(false); setNewCollectionName(""); }
                             }}
@@ -1183,7 +1425,7 @@ export default function TreeView({
                 </div>
                 <span className="text-[#ddd]">·</span>
                 <button
-                  onClick={() => setMultiSelectedIds(new Set())}
+                  onClick={() => { setMultiSelectedIds(new Set()); setSelectedId(null); setSelectedInputId(null); }}
                   className="text-[#aaa] hover:text-[#555] transition-colors px-1"
                   title="Clear selection"
                 >
@@ -1253,6 +1495,7 @@ export default function TreeView({
             onBranchFrom(card, action);
             setSelectedId(null);
           }}
+          onDuplicate={() => onDuplicateCard(selectedNode.card, selectedNode.parentCardIds)}
           onRemove={() => handleRemove(selectedNode.genId, selectedNode.card.id)}
           onSelectSibling={(id) => setSelectedId(id)}
           onClose={() => setSelectedId(null)}
@@ -1276,13 +1519,7 @@ export default function TreeView({
           onRemove={() => { onRemoveAsset(selectedInputAsset.id); setSelectedInputId(null); }}
           onClose={() => setSelectedInputId(null)}
         />
-      ) : (
-        <div className="w-[200px] shrink-0 border-l border-[#e4e3e0] bg-white/60 flex items-center justify-center">
-          <p className="text-[10px] text-[#ccc] text-center px-4 leading-relaxed">
-            Click a node to see details and actions
-          </p>
-        </div>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -1610,6 +1847,7 @@ function DetailPanel({
   assets,
   onUpdateCard,
   onBranch,
+  onDuplicate,
   onRemove,
   onSelectSibling,
   onClose,
@@ -1621,6 +1859,7 @@ function DetailPanel({
   assets: Asset[];
   onUpdateCard: (card: ResultCard) => void;
   onBranch: (action: ActionType) => void;
+  onDuplicate: () => void;
   onRemove: () => void;
   onSelectSibling: (id: string) => void;
   onClose: () => void;
@@ -1628,6 +1867,7 @@ function DetailPanel({
   onAddChild: () => void;
 }) {
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  const [showCrop, setShowCrop] = useState(false);
   const s = TYPE_STYLE[node.card.type] ?? TYPE_STYLE.concept;
 
   const card = node.card;
@@ -1779,6 +2019,12 @@ function DetailPanel({
 
           <div className="p-3 flex flex-col gap-1">
             <button
+              onClick={onDuplicate}
+              className="w-full text-left text-[11px] px-3 py-1.5 rounded-lg hover:bg-[#f5f0ff] hover:text-purple-700 text-[#555] transition-colors"
+            >
+              ⧉ Duplicate node
+            </button>
+            <button
               onClick={onAddChild}
               className="w-full text-left text-[11px] px-3 py-1.5 rounded-lg hover:bg-[#f0f9f0] hover:text-green-700 text-[#555] transition-colors"
             >
@@ -1801,16 +2047,176 @@ function DetailPanel({
         </div>
       </aside>
 
-      {lightboxSrc && (
+      {lightboxSrc && !showCrop && (
         <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-8" onClick={() => setLightboxSrc(null)}>
           <div className="relative max-w-4xl max-h-full" onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => setLightboxSrc(null)} className="absolute -top-9 right-0 text-white/60 hover:text-white text-sm transition-colors">✕ Close</button>
+            <div className="absolute -top-9 left-0 right-0 flex items-center justify-between">
+              <button
+                onClick={() => setShowCrop(true)}
+                className="text-sm text-white/70 hover:text-white border border-white/30 hover:border-white/70 px-3 py-1 rounded transition-colors"
+              >
+                ✂ Crop & Edit
+              </button>
+              <button onClick={() => setLightboxSrc(null)} className="text-white/60 hover:text-white text-sm transition-colors">✕ Close</button>
+            </div>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={lightboxSrc} alt="Full size" className="max-w-full max-h-[82vh] object-contain rounded-xl shadow-2xl" />
           </div>
         </div>
       )}
+
+      {lightboxSrc && showCrop && (
+        <CropModal
+          src={lightboxSrc}
+          onSave={(croppedDataUrl) => {
+            onUpdateCard({ ...card, imageDataUrl: croppedDataUrl } as VisualCard);
+            setShowCrop(false);
+            setLightboxSrc(null);
+          }}
+          onClose={() => setShowCrop(false)}
+        />
+      )}
     </>
+  );
+}
+
+// ── Crop modal ────────────────────────────────────────────────────────────────
+function CropModal({ src, onSave, onClose }: { src: string; onSave: (dataUrl: string) => void; onClose: () => void }) {
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [ready, setReady] = useState(false);
+  const [crop, setCrop] = useState({ x: 0, y: 0, w: 0, h: 0 });
+  const dragRef = useRef<{
+    handle: "move" | "nw" | "ne" | "sw" | "se";
+    startX: number; startY: number;
+    startCrop: { x: number; y: number; w: number; h: number };
+  } | null>(null);
+
+  function handleImageLoad() {
+    const img = imgRef.current!;
+    const w = img.clientWidth;
+    const h = img.clientHeight;
+    const m = 0.1;
+    setCrop({ x: w * m, y: h * m, w: w * (1 - 2 * m), h: h * (1 - 2 * m) });
+    setReady(true);
+  }
+
+  function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)); }
+
+  function onHandlePointerDown(e: React.PointerEvent, handle: "move" | "nw" | "ne" | "sw" | "se") {
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    dragRef.current = { handle, startX: e.clientX, startY: e.clientY, startCrop: { ...crop } };
+  }
+
+  function onPointerMove(e: React.PointerEvent) {
+    if (!dragRef.current || !imgRef.current) return;
+    const { handle, startX, startY, startCrop } = dragRef.current;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    const maxW = imgRef.current.clientWidth;
+    const maxH = imgRef.current.clientHeight;
+    const MIN = 20;
+    let { x, y, w, h } = startCrop;
+    if (handle === "move") {
+      x = clamp(x + dx, 0, maxW - w);
+      y = clamp(y + dy, 0, maxH - h);
+    } else {
+      if (handle === "nw") {
+        const nx = clamp(x + dx, 0, x + w - MIN); const ny = clamp(y + dy, 0, y + h - MIN);
+        w += x - nx; h += y - ny; x = nx; y = ny;
+      } else if (handle === "ne") {
+        const ny = clamp(y + dy, 0, y + h - MIN);
+        w = clamp(w + dx, MIN, maxW - x); h += y - ny; y = ny;
+      } else if (handle === "sw") {
+        const nx = clamp(x + dx, 0, x + w - MIN);
+        w += x - nx; x = nx; h = clamp(h + dy, MIN, maxH - y);
+      } else {
+        w = clamp(w + dx, MIN, maxW - x); h = clamp(h + dy, MIN, maxH - y);
+      }
+    }
+    setCrop({ x, y, w, h });
+  }
+
+  function handleApply() {
+    const img = imgRef.current!;
+    const sx = img.naturalWidth / img.clientWidth;
+    const sy = img.naturalHeight / img.clientHeight;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(crop.w * sx);
+    canvas.height = Math.round(crop.h * sy);
+    canvas.getContext("2d")!.drawImage(img, Math.round(crop.x * sx), Math.round(crop.y * sy), canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
+    const mime = src.startsWith("data:image/png") ? "image/png" : "image/jpeg";
+    onSave(canvas.toDataURL(mime, 0.92));
+  }
+
+  const HANDLE_SIZE = 10;
+  const handles: Array<{ id: "nw" | "ne" | "sw" | "se"; left: number; top: number; cursor: string }> = [
+    { id: "nw", left: crop.x - HANDLE_SIZE / 2,           top: crop.y - HANDLE_SIZE / 2,           cursor: "nwse-resize" },
+    { id: "ne", left: crop.x + crop.w - HANDLE_SIZE / 2,  top: crop.y - HANDLE_SIZE / 2,           cursor: "nesw-resize" },
+    { id: "sw", left: crop.x - HANDLE_SIZE / 2,           top: crop.y + crop.h - HANDLE_SIZE / 2,  cursor: "nesw-resize" },
+    { id: "se", left: crop.x + crop.w - HANDLE_SIZE / 2,  top: crop.y + crop.h - HANDLE_SIZE / 2,  cursor: "nwse-resize" },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/92 flex flex-col items-center justify-center gap-5 p-8">
+      <div className="flex items-center gap-4">
+        <p className="text-white/60 text-sm">Drag corners to crop</p>
+        <button onClick={handleApply} className="bg-white text-[#111] text-sm px-4 py-1.5 rounded-sm hover:bg-white/90 transition-colors font-medium">
+          Save crop
+        </button>
+        <button onClick={onClose} className="text-white/50 hover:text-white text-sm transition-colors">Cancel</button>
+      </div>
+      <div
+        className="relative inline-block select-none"
+        onPointerMove={onPointerMove}
+        onPointerUp={() => { dragRef.current = null; }}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          ref={imgRef}
+          src={src}
+          alt="Crop"
+          className="block max-w-[80vw] max-h-[70vh] object-contain"
+          onLoad={handleImageLoad}
+          draggable={false}
+        />
+        {ready && (
+          <>
+            {/* Crop box — box-shadow darkens outside the selection */}
+            <div
+              style={{
+                position: "absolute", left: crop.x, top: crop.y, width: crop.w, height: crop.h,
+                border: "1.5px solid rgba(255,255,255,0.9)",
+                boxShadow: "0 0 0 9999px rgba(0,0,0,0.55)",
+                cursor: "move",
+              }}
+              onPointerDown={(e) => onHandlePointerDown(e, "move")}
+            >
+              {/* Rule-of-thirds grid lines */}
+              {[1, 2].map((n) => (
+                <div key={`v${n}`} style={{ position: "absolute", left: `${(n / 3) * 100}%`, top: 0, bottom: 0, width: 1, background: "rgba(255,255,255,0.3)" }} />
+              ))}
+              {[1, 2].map((n) => (
+                <div key={`h${n}`} style={{ position: "absolute", top: `${(n / 3) * 100}%`, left: 0, right: 0, height: 1, background: "rgba(255,255,255,0.3)" }} />
+              ))}
+            </div>
+            {/* Corner handles */}
+            {handles.map(({ id, left, top, cursor }) => (
+              <div
+                key={id}
+                style={{
+                  position: "absolute", left, top,
+                  width: HANDLE_SIZE, height: HANDLE_SIZE,
+                  background: "white", border: "1px solid rgba(0,0,0,0.4)",
+                  borderRadius: 2, cursor,
+                }}
+                onPointerDown={(e) => onHandlePointerDown(e, id)}
+              />
+            ))}
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 

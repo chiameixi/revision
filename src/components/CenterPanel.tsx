@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import type { ActionType, Asset, Collection, ConceptCard, Generation, ResultCard } from "@/types";
 import ResultCardComponent from "./cards/ResultCard";
 import TreeView from "./TreeView";
@@ -16,13 +16,13 @@ interface Props {
   title: string;
   hoveredSourceIds: Set<string>;
   onHoverSources: (cardIds: Set<string>, assetIds: Set<string>) => void;
-  onActionClick: (action: ActionType, selectedCardIds: string[]) => void;
   onDismissCard: (genId: string, cardId: string) => void;
   onUpdateCard: (card: ResultCard) => void;
   onGenerateVisuals: (card: ConceptCard) => void;
   onBranchFrom: (card: ResultCard, action: ActionType) => void;
   onMultiBranchFrom: (cards: ResultCard[], action: ActionType) => void;
   onAddUserNode: (card: ResultCard, parentCardIds: string[]) => void;
+  onDuplicateCard: (originalCard: ResultCard, parentCardIds: string[]) => void;
   onClearTree: () => void;
   onAddUserCard: (title: string, body: string) => void;
   onAddAsReference: (dataUrl: string, label: string) => void;
@@ -35,16 +35,13 @@ interface Props {
   onRemoveCollection: (id: string) => void;
   onUpdateCollection: (id: string, patch: Partial<Pick<Collection, "title" | "description" | "color">>) => void;
   onAddCardsToCollection: (collectionId: string, cardIds: string[]) => void;
+  onRemoveProvenanceEdge: (fromId: string, toCardId: string) => void;
+  manualEdges: import("@/types").ManualEdge[];
+  onAddManualEdge: (edge: import("@/types").ManualEdge) => void;
+  onRemoveManualEdge: (id: string) => void;
   onMoveCardToCollection: (cardId: string, toCollectionId: string | null) => void;
   onRemoveCardFromCollection: (collectionId: string, cardId: string) => void;
 }
-
-const TOOLBAR_ACTIONS: { id: ActionType; label: string; desc: string }[] = [
-  { id: "unpack_brief",          label: "Unpack Brief",           desc: "Turn brief into idea directions" },
-  { id: "analyze",               label: "Analyze",                desc: "Extract visual motifs from images" },
-  { id: "visual_variations",     label: "Visual Variations",      desc: "Arnheim dimension variations" },
-  { id: "conceptual_variations", label: "Conceptual Variations",  desc: "Concept directions as visuals" },
-];
 
 const ACTION_LABELS: Record<ActionType, string> = {
   unpack_brief:             "Unpack Brief",
@@ -65,13 +62,13 @@ export default function CenterPanel({
   title,
   hoveredSourceIds,
   onHoverSources,
-  onActionClick,
   onDismissCard,
   onUpdateCard,
   onGenerateVisuals,
   onBranchFrom,
   onMultiBranchFrom,
   onAddUserNode,
+  onDuplicateCard,
   onClearTree,
   onAddUserCard,
   onAddAsReference,
@@ -86,41 +83,17 @@ export default function CenterPanel({
   onAddCardsToCollection,
   onMoveCardToCollection,
   onRemoveCardFromCollection,
+  manualEdges,
+  onRemoveProvenanceEdge,
+  onAddManualEdge,
+  onRemoveManualEdge,
 }: Props) {
   const [view, setView] = useState<"feed" | "tree" | "clusters">("feed");
-  const [selectedCardIds, setSelectedCardIds] = useState<string[]>([]);
-
-  const handleSelectionChange = useCallback((ids: string[]) => {
-    setSelectedCardIds(ids);
-  }, []);
-
-  const selectionHint = selectedCardIds.length > 0
-    ? `${selectedCardIds.length} node${selectedCardIds.length > 1 ? "s" : ""} selected`
-    : null;
 
   return (
     <main className="flex-1 min-w-0 h-screen flex flex-col overflow-hidden">
-      {/* Action toolbar */}
-      <div className="px-5 pt-5 pb-4 border-b bg-white" style={{ borderColor: "#ccc9c0" }}>
-        <div className="flex flex-wrap items-center gap-2 mb-3">
-          {TOOLBAR_ACTIONS.map((action) => (
-            <button
-              key={action.id}
-              onClick={() => onActionClick(action.id, selectedCardIds)}
-              disabled={isGenerating}
-              title={action.desc}
-              className="text-[12px] px-3.5 py-1.5 rounded-sm border border-[#111] text-[#111] bg-white hover:bg-[#111] hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-            >
-              {action.label}
-            </button>
-          ))}
-          {selectionHint && (
-            <span className="text-[11px] text-[#888] ml-1">
-              · {selectionHint} as context
-            </span>
-          )}
-        </div>
-        {/* View toggle */}
+      {/* View toggle */}
+      <div className="px-5 pt-4 pb-3 border-b bg-white" style={{ borderColor: "#ccc9c0" }}>
         <div className="flex items-center gap-1">
           {(["feed", "tree", "clusters"] as const).map((v) => (
             <button
@@ -154,6 +127,7 @@ export default function CenterPanel({
             onBranchFrom={onBranchFrom}
             onMultiBranchFrom={onMultiBranchFrom}
             onAddUserNode={onAddUserNode}
+            onDuplicateCard={onDuplicateCard}
             onClearTree={onClearTree}
             onDismissCard={onDismissCard}
             onUpdateCard={onUpdateCard}
@@ -162,10 +136,13 @@ export default function CenterPanel({
             onTitleChange={onTitleChange}
             onAddAsset={onAddAsset}
             onRemoveAsset={onRemoveAsset}
-            onSelectionChange={handleSelectionChange}
             collections={collections}
             onAddCollection={onAddCollection}
             onAddCardsToCollection={onAddCardsToCollection}
+            manualEdges={manualEdges}
+            onRemoveProvenanceEdge={onRemoveProvenanceEdge}
+            onAddManualEdge={onAddManualEdge}
+            onRemoveManualEdge={onRemoveManualEdge}
           />
         </div>
       )}

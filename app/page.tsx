@@ -65,36 +65,7 @@ export default function WorkspacePage() {
     });
   }
 
-  const handleActionClick = useCallback(
-    (action: ActionType, selectedCardIds: string[]) => {
-      const drafts = state.assets.filter((a) => a.type === "draft");
-      const refs = state.assets.filter((a) => a.type === "reference");
-
-      let includedDraftIds: string[] = [];
-      let includedReferenceIds: string[] = [];
-      if (["analyze", "visual_variations", "conceptual_variations"].includes(action)) {
-        includedDraftIds = drafts.map((a) => a.id);
-      }
-      if (["analyze", "conceptual_variations"].includes(action)) {
-        includedReferenceIds = refs.map((a) => a.id);
-      }
-
-      setComposerCards(resolveCards(selectedCardIds));
-      setComposer({
-        open: true,
-        action,
-        includedDraftIds,
-        includedReferenceIds,
-        selectedCardIds,
-        userInstructions: "",
-        selectedDimensionIds: DIMENSIONS.map((d) => d.id),
-      });
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [state.assets, state.generations]
-  );
-
-  const handleSend = useCallback(
+const handleSend = useCallback(
     async (cfg: ComposerState) => {
       if (!cfg.action) return;
       setComposer((c) => ({ ...c, open: false }));
@@ -283,6 +254,24 @@ export default function WorkspacePage() {
     [actions]
   );
 
+  const handleDuplicateCard = useCallback(
+    (originalCard: ResultCard, parentCardIds: string[]) => {
+      const dupedId = crypto.randomUUID();
+      const duped = { ...originalCard, id: dupedId, createdAt: new Date().toISOString() };
+      actions.addGeneration({
+        id: crypto.randomUUID(),
+        actionType: "user_added",
+        cards: [duped],
+        sourceCardIds: parentCardIds,
+        includedDraftIds: [],
+        includedReferenceIds: [],
+        createdAt: new Date().toISOString(),
+      });
+      actions.adoptChildGenerations(originalCard.id, dupedId);
+    },
+    [actions]
+  );
+
   const handleAddUserCard = useCallback(
     (title: string, body: string) => {
       const card = { id: crypto.randomUUID(), type: "note" as const, title, body, createdAt: new Date().toISOString() };
@@ -328,13 +317,13 @@ export default function WorkspacePage() {
         title={state.title}
         hoveredSourceIds={hoveredSourceIds}
         onHoverSources={handleHoverSources}
-        onActionClick={handleActionClick}
         onDismissCard={handleDismissCard}
         onUpdateCard={actions.updateCard}
         onGenerateVisuals={handleGenerateVisuals}
         onBranchFrom={handleBranchFrom}
         onMultiBranchFrom={handleMultiBranchFrom}
         onAddUserNode={handleAddUserNode}
+        onDuplicateCard={handleDuplicateCard}
         onClearTree={handleClearTree}
         onAddUserCard={handleAddUserCard}
         onAddAsReference={handleAddAsReference}
@@ -349,6 +338,10 @@ export default function WorkspacePage() {
         onAddCardsToCollection={actions.addCardsToCollection}
         onMoveCardToCollection={actions.moveCardToCollection}
         onRemoveCardFromCollection={actions.removeCardFromCollection}
+        onRemoveProvenanceEdge={actions.removeProvenanceEdge}
+        manualEdges={state.manualEdges}
+        onAddManualEdge={actions.addManualEdge}
+        onRemoveManualEdge={actions.removeManualEdge}
       />
 
       {composer.open && (

@@ -105,6 +105,12 @@ export interface Collection {
   createdAt: string;
 }
 
+export interface ManualEdge {
+  id: string;
+  fromCardId: string;
+  toCardId: string;
+}
+
 export interface ProjectState {
   title: string;
   brief: string;
@@ -112,6 +118,7 @@ export interface ProjectState {
   generations: Generation[];
   highlights: Highlight[];
   collections: Collection[];
+  manualEdges: ManualEdge[];
 }
 
 // Concept card reference passed to generate_concept_visuals
