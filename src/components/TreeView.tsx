@@ -16,6 +16,8 @@ import {
   getBezierPath,
   applyNodeChanges,
   applyEdgeChanges,
+  useNodes,
+  useViewport,
   type Node,
   type Edge as RFEdge,
   type EdgeTypes,
@@ -30,26 +32,35 @@ import "@xyflow/react/dist/style.css";
 import type { Asset, Collection, Generation, ManualEdge, ResultCard, ActionType, VisualCard } from "@/types";
 
 // ── Layout constants ──────────────────────────────────────────────────────────
-const NODE_W = 168;
-const NODE_H = 76;
+// Chip nodes (concept / motif): fixed width, height wraps with text
+const CHIP_W = 160;
+const CHIP_H_MIN = 32;
+function chipHeight(title: string): number {
+  // ~22 chars per line at 10px medium in 160px chip (paddings ~32px)
+  const lines = Math.max(1, Math.ceil(title.length / 22));
+  return Math.max(CHIP_H_MIN, lines * 18 + 8);
+}
+// Note cards: standard rectangle
+const NODE_W = 140;
+const NODE_H = 44;
+// Visual image cards
 const VISUAL_NODE_W = 320;
 const VISUAL_NODE_H = 200;
 const COL_GAP = 96;
-const ROW_GAP = 20;
+const ROW_GAP = 16;
 const PAD = 48;
 const COL_STRIDE = VISUAL_NODE_W + COL_GAP;
 
 // ── Input node constants ──────────────────────────────────────────────────────
-const INPUT_NODE_W = VISUAL_NODE_W; // 224px — same width as visual cards
+const INPUT_NODE_W = VISUAL_NODE_W;
 const BRIEF_NODE_H = 200;
 const ASSET_NODE_H = 92;
-const INPUT_X_OFFSET = INPUT_NODE_W + COL_GAP; // shift all generation nodes right
+const INPUT_X_OFFSET = INPUT_NODE_W + COL_GAP;
 
 // ── Node size helper ──────────────────────────────────────────────────────────
 function nodeDims(card: ResultCard): { w: number; h: number } {
-  if (card.type === "visual" && (card as VisualCard).imageDataUrl) {
-    return { w: VISUAL_NODE_W, h: VISUAL_NODE_H };
-  }
+  if (card.type === "visual" && (card as VisualCard).imageDataUrl) return { w: VISUAL_NODE_W, h: VISUAL_NODE_H };
+  if (card.type === "concept" || card.type === "motif") return { w: CHIP_W, h: chipHeight(card.title) };
   return { w: NODE_W, h: NODE_H };
 }
 
@@ -58,10 +69,10 @@ const TYPE_STYLE: Record<string, {
   bg: string; border: string; selectedBorder: string;
   badgeBg: string; badgeText: string; line: string;
 }> = {
-  concept: { bg: "#fffbf5", border: "#b45309", selectedBorder: "#78350f", badgeBg: "#b45309", badgeText: "#ffffff", line: "#d97706" },
-  motif:   { bg: "#f0fdf4", border: "#16a34a", selectedBorder: "#166534", badgeBg: "#166534", badgeText: "#ffffff", line: "#4ade80" },
-  visual:  { bg: "#fafafa", border: "#333333", selectedBorder: "#111111", badgeBg: "#111111", badgeText: "#ffffff", line: "#888888" },
-  note:    { bg: "#fafaf8", border: "#888888", selectedBorder: "#111111", badgeBg: "#888888", badgeText: "#ffffff", line: "#bbbbbb" },
+  concept: { bg: "#ffffff", border: "#000000", selectedBorder: "#000000", badgeBg: "#000000", badgeText: "#ffffff", line: "rgba(0,0,0,0.45)" },
+  motif:   { bg: "#ffffff", border: "#000000", selectedBorder: "#000000", badgeBg: "#000000", badgeText: "#ffffff", line: "rgba(0,0,0,0.45)" },
+  visual:  { bg: "#ffffff", border: "#000000", selectedBorder: "#000000", badgeBg: "#000000", badgeText: "#ffffff", line: "rgba(0,0,0,0.35)" },
+  note:    { bg: "#ffffff", border: "rgba(0,0,0,0.35)", selectedBorder: "#000000", badgeBg: "rgba(0,0,0,0.5)", badgeText: "#ffffff", line: "rgba(0,0,0,0.25)" },
 };
 
 const TYPE_LABEL: Record<string, string> = {
@@ -90,8 +101,14 @@ const BRANCH_ACTIONS: { id: ActionType; label: string }[] = [
 ];
 
 const PICKER_COLORS = [
-  "#f59e0b", "#10b981", "#3b82f6", "#ef4444",
-  "#8b5cf6", "#f97316", "#14b8a6", "#ec4899",
+  "#c9a84c", // warm gold
+  "#7a9e5e", // sage green
+  "#c14f58", // muted rose
+  "#4a7a9b", // slate blue
+  "#8b6b4a", // warm brown
+  "#7b6b8e", // muted violet
+  "#4a8b7a", // teal
+  "#9b4a4a", // terracotta
 ];
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -123,6 +140,7 @@ type CardNodeData = {
   isSelected: boolean;
   isHovered: boolean;
   isAncestor: boolean;
+  isSourceOfSelected: boolean;
   isSaved: boolean;
   isMultiSelected: boolean;
   collectionColors?: string[];
@@ -280,7 +298,7 @@ function computeLayout(generations: Generation[], allGenerations: Generation[]):
 // ── Custom node components ────────────────────────────────────────────────────
 function TextCardNode(props: NodeProps) {
   const data = props.data as unknown as CardNodeData;
-  const { card, isSelected, isHovered, isAncestor, isMultiSelected, isSaved, collectionColors, connectMode, onRemove, genId, actionType } = data;
+  const { card, isSelected, isHovered, isAncestor, isSourceOfSelected, isMultiSelected, isSaved, collectionColors, connectMode, onRemove, genId, actionType } = data;
   const handleStyle = (pos: "left" | "right"): React.CSSProperties => ({
     opacity: connectMode ? 1 : 0,
     pointerEvents: connectMode ? "auto" : "none",
@@ -291,22 +309,101 @@ function TextCardNode(props: NodeProps) {
   });
   const s = TYPE_STYLE[card.type] ?? TYPE_STYLE.concept;
   const primaryColor = collectionColors?.[0];
+  const isChip = card.type === "concept" || card.type === "motif";
 
-  const borderColor = isMultiSelected ? "#2563eb"
-    : isAncestor ? "#f59e0b"
-    : isSelected ? s.selectedBorder
+  // Editorial gold for source-of-selected; subtle gray for hover-ancestor
+  const SOURCE_COLOR = "#2d4f8a";
+
+  const borderColor = isMultiSelected ? primaryColor ?? "#000"
+    : isSelected ? "#000"
+    : isSourceOfSelected ? SOURCE_COLOR
+    : isAncestor ? "rgba(0,0,0,0.4)"
     : primaryColor ?? s.border;
-  const shadow = isMultiSelected ? "0 0 0 3px rgba(37,99,235,0.25)"
-    : isAncestor ? "0 0 0 3px rgba(251,191,36,0.3)"
-    : isSelected ? "3px 3px 0px #111111"
-    : isHovered ? "2px 2px 0px #888"
-    : "1px 1px 0px #cccccc";
-
-  const bgColor = isMultiSelected ? "#eff6ff"
-    : isAncestor ? "#fffbeb"
-    : isSelected ? s.bg
+  const shadow = isMultiSelected ? `0 0 0 2px ${primaryColor ?? "rgba(0,0,0,0.4)"}`
+    : isSelected ? "2px 2px 0px #000"
+    : isSourceOfSelected ? `0 0 0 1.5px ${SOURCE_COLOR}`
+    : isAncestor ? "0 0 0 1px rgba(0,0,0,0.2)"
+    : isHovered ? "1px 1px 0px #888"
+    : "none";
+  const bgColor = isMultiSelected ? "#fafaf8"
+    : isSourceOfSelected ? "rgba(45,79,138,0.06)"
+    : isAncestor ? "#f5f4f0"
     : "#ffffff";
 
+  // ── Chip (concept / motif) ──────────────────────────────────────────────────
+  if (isChip) {
+    return (
+      <>
+        <Handle type="target" position={Position.Left} style={handleStyle("left")} />
+        <div
+          className="relative group"
+          style={{
+            width: CHIP_W,
+            minHeight: CHIP_H_MIN,
+            background: bgColor,
+            border: "none",
+            borderLeft: card.type === "concept" ? `1.5px solid ${borderColor}` : "none",
+            borderRadius: 0,
+            boxShadow: shadow,
+            transition: "all 0.15s ease",
+            cursor: "pointer",
+            userSelect: "none",
+            display: "flex",
+            alignItems: "flex-start",
+            flexWrap: "wrap",
+            gap: 4,
+            paddingLeft: card.type === "concept" ? 9 : 10,
+            paddingRight: 22,
+            paddingTop: 6,
+            paddingBottom: 6,
+            position: "relative",
+          }}
+        >
+          {/* Motif: 4 corner L-bracket marks */}
+          {card.type === "motif" && (
+            <>
+              {(["tl","tr","bl","br"] as const).map((pos) => {
+                const mk: React.CSSProperties = {
+                  position: "absolute", width: 8, height: 8,
+                  ...(pos === "tl" ? { top: 0, left: 0, borderTop: `1.5px solid ${borderColor}`, borderLeft: `1.5px solid ${borderColor}` } : {}),
+                  ...(pos === "tr" ? { top: 0, right: 0, borderTop: `1.5px solid ${borderColor}`, borderRight: `1.5px solid ${borderColor}` } : {}),
+                  ...(pos === "bl" ? { bottom: 0, left: 0, borderBottom: `1.5px solid ${borderColor}`, borderLeft: `1.5px solid ${borderColor}` } : {}),
+                  ...(pos === "br" ? { bottom: 0, right: 0, borderBottom: `1.5px solid ${borderColor}`, borderRight: `1.5px solid ${borderColor}` } : {}),
+                };
+                return <span key={pos} style={mk} />;
+              })}
+            </>
+          )}
+          {/* Collection dots */}
+          {collectionColors && collectionColors.length > 0 && !isMultiSelected && !isSelected && (
+            <div className="flex gap-0.5 shrink-0">
+              {collectionColors.map((c) => (
+                <div key={c} className="w-1.5 h-1.5 rounded-full" style={{ background: c }} />
+              ))}
+            </div>
+          )}
+          <p style={{ fontSize: 10, fontWeight: 500, color: "#2a2a2a", flex: 1, lineHeight: 1.4 }}>
+            {card.title}
+          </p>
+          {(isMultiSelected || isSelected) && (
+            <span style={{ fontSize: 8, color: "#000", flexShrink: 0, marginRight: 2 }}>✓</span>
+          )}
+          {isSaved && !isSelected && !isMultiSelected && (
+            <span style={{ fontSize: 9, color: "rgba(0,0,0,0.55)", flexShrink: 0, marginRight: 2 }}>★</span>
+          )}
+          <button
+            className="absolute right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 flex items-center justify-center text-[rgba(0,0,0,0.3)] hover:text-black text-[9px] leading-none"
+            style={{ top: "50%", transform: "translateY(-50%)" }}
+            onClick={(e) => { e.stopPropagation(); onRemove(genId, card.id); }}
+            title="Remove from tree"
+          >✕</button>
+        </div>
+        <Handle type="source" position={Position.Right} style={handleStyle("right")} />
+      </>
+    );
+  }
+
+  // ── Note card ───────────────────────────────────────────────────────────────
   return (
     <>
       <Handle type="target" position={Position.Left} style={handleStyle("left")} />
@@ -316,8 +413,8 @@ function TextCardNode(props: NodeProps) {
           width: NODE_W,
           height: NODE_H,
           background: bgColor,
-          border: `1.5px solid ${borderColor}`,
-          borderRadius: 10,
+          border: `1px solid ${borderColor}`,
+          borderRadius: 0,
           boxShadow: shadow,
           transition: "all 0.15s ease",
           overflow: "hidden",
@@ -328,32 +425,39 @@ function TextCardNode(props: NodeProps) {
         {collectionColors && collectionColors.length > 0 && !isMultiSelected && !isSelected && (
           <div className="absolute top-1.5 left-1.5 flex gap-0.5">
             {collectionColors.map((c) => (
-              <div key={c} className="w-2 h-2 rounded-full shrink-0" style={{ background: c }} />
+              <div key={c} className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: c }} />
             ))}
           </div>
         )}
-        <button
-          className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 text-[10px] leading-none z-10"
-          onClick={(e) => { e.stopPropagation(); onRemove(genId, card.id); }}
-          title="Remove from tree"
-        >✕</button>
-        <div className="p-2.5 flex flex-col gap-1 h-full">
-          <div className="flex items-center gap-1.5 pr-4">
-            <span
-              className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0"
-              style={{ background: s.badgeBg, color: s.badgeText }}
-            >
-              {TYPE_LABEL[card.type]}
-            </span>
-            {(isMultiSelected || isSelected) && <span className="text-[9px] text-blue-600 shrink-0">✓</span>}
-            {isSaved && <span className="text-[10px] text-amber-400 shrink-0" title="Saved">★</span>}
-          </div>
-          <p className="text-[11px] font-medium text-[#333] leading-tight line-clamp-2 flex-1">
+        {!connectMode && (
+          <button
+            className="absolute right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 flex items-center justify-center text-[rgba(0,0,0,0.3)] hover:text-black text-[9px] leading-none z-10"
+            style={{ top: "50%", transform: "translateY(-50%)" }}
+            onClick={(e) => { e.stopPropagation(); onRemove(genId, card.id); }}
+            title="Remove from tree"
+          >✕</button>
+        )}
+        <div className="p-2.5 flex flex-col justify-center" style={{ height: NODE_H }}>
+          {card.type !== "note" && (
+            <div className="flex items-center gap-1.5 pr-4">
+              <span
+                className="text-[8px] uppercase tracking-[0.14em] shrink-0"
+                style={{ color: "rgba(0,0,0,0.45)" }}
+              >
+                {TYPE_LABEL[card.type]}
+              </span>
+              {(isMultiSelected || isSelected) && <span className="text-[9px] text-black shrink-0">✓</span>}
+              {isSaved && <span className="text-[10px] shrink-0" style={{ color: "rgba(0,0,0,0.5)" }} title="Saved">★</span>}
+            </div>
+          )}
+          <p className="text-[11px] text-[#111] leading-tight line-clamp-2 flex-1">
             {card.title}
           </p>
-          <p className="text-[9px] text-[#bbb] truncate">
-            {ACTION_LABEL[actionType] ?? actionType}
-          </p>
+          {card.type !== "note" && (
+            <p className="text-[9px] truncate" style={{ color: "rgba(0,0,0,0.3)" }}>
+              {ACTION_LABEL[actionType] ?? actionType}
+            </p>
+          )}
         </div>
       </div>
       <Handle type="source" position={Position.Right} style={handleStyle("right")} />
@@ -369,7 +473,7 @@ const VISUAL_QUICK_ACTIONS: { id: ActionType; label: string }[] = [
 
 function VisualCardNode(props: NodeProps) {
   const data = props.data as unknown as CardNodeData;
-  const { card, isSelected, isHovered, isAncestor, isMultiSelected, isSaved, collectionColors, connectMode, onRemove, onQuickBranch, genId } = data;
+  const { card, isSelected, isHovered, isAncestor, isSourceOfSelected, isMultiSelected, isSaved, collectionColors, connectMode, onRemove, onQuickBranch, genId } = data;
   const handleStyle = (pos: "left" | "right"): React.CSSProperties => ({
     opacity: connectMode ? 1 : 0,
     pointerEvents: connectMode ? "auto" : "none",
@@ -381,16 +485,19 @@ function VisualCardNode(props: NodeProps) {
   const s = TYPE_STYLE.visual;
   const visualCard = card as VisualCard;
   const primaryColor = collectionColors?.[0];
+  const SOURCE_COLOR = "#2d4f8a";
 
-  const borderColor = isMultiSelected ? "#2563eb"
-    : isAncestor ? "#f59e0b"
-    : isSelected ? s.selectedBorder
+  const borderColor = isMultiSelected ? primaryColor ?? "#000"
+    : isSelected ? "#000"
+    : isSourceOfSelected ? SOURCE_COLOR
+    : isAncestor ? "rgba(0,0,0,0.4)"
     : primaryColor ?? s.border;
-  const shadow = isMultiSelected ? "0 0 0 3px rgba(37,99,235,0.25)"
-    : isAncestor ? "0 0 0 3px rgba(251,191,36,0.3)"
-    : isSelected ? "3px 3px 0px #111111"
-    : isHovered ? "2px 2px 0px #888"
-    : "1px 1px 0px #cccccc";
+  const shadow = isMultiSelected ? `0 0 0 2px ${primaryColor ?? "rgba(0,0,0,0.4)"}`
+    : isSelected ? "2px 2px 0px #000"
+    : isSourceOfSelected ? `0 0 0 1.5px ${SOURCE_COLOR}`
+    : isAncestor ? "0 0 0 1px rgba(0,0,0,0.2)"
+    : isHovered ? "1px 1px 0px #888"
+    : "none";
 
   return (
     <>
@@ -400,8 +507,8 @@ function VisualCardNode(props: NodeProps) {
         style={{
           width: VISUAL_NODE_W,
           height: VISUAL_NODE_H,
-          border: `1.5px solid ${borderColor}`,
-          borderRadius: 10,
+          border: `1px solid ${borderColor}`,
+          borderRadius: 0,
           boxShadow: shadow,
           transition: "all 0.15s ease",
           overflow: "hidden",
@@ -419,8 +526,8 @@ function VisualCardNode(props: NodeProps) {
           <span className="text-[8px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0 bg-black/50 text-white">
             {TYPE_LABEL[card.type]}
           </span>
-          {(isMultiSelected || isSelected) && <span className="text-[9px] text-white bg-blue-500/80 px-1 py-0.5 rounded shrink-0 font-bold">✓</span>}
-          {isSaved && <span className="text-[9px] text-amber-300 shrink-0 drop-shadow">★</span>}
+          {(isMultiSelected || isSelected) && <span className="text-[9px] text-white shrink-0">✓</span>}
+          {isSaved && <span className="text-[9px] text-white/80 shrink-0">★</span>}
           {collectionColors && collectionColors.length > 0 && !isMultiSelected && !isSelected && (
             <div className="flex gap-0.5">
               {collectionColors.map((c) => (
@@ -475,10 +582,10 @@ function BriefNode(props: NodeProps) {
         style={{
           width: INPUT_NODE_W,
           minHeight: BRIEF_NODE_H,
-          background: "#fffef8",
-          border: `1.5px solid ${isSelected ? "#2563eb" : "#d97706"}`,
-          borderRadius: 10,
-          boxShadow: isSelected ? "0 0 0 3px rgba(37,99,235,0.2)" : "1px 1px 0px #e0d0b0",
+          background: "rgba(255,255,255,0.5)",
+          border: `1.5px solid #000`,
+          borderRadius: 0,
+          boxShadow: isSelected ? "2px 2px 0px #000" : "none",
           padding: "12px",
           display: "flex",
           flexDirection: "column",
@@ -486,10 +593,10 @@ function BriefNode(props: NodeProps) {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <p style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: isSelected ? "#2563eb" : "#d97706", margin: 0 }}>
+          <p style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.14em", color: "rgba(0,0,0,0.45)", margin: 0, fontFamily: "inherit" }}>
             Project Brief
           </p>
-          {isSelected && <span style={{ fontSize: 9, color: "#2563eb", fontWeight: 700 }}>✓</span>}
+          {isSelected && <span style={{ fontSize: 9, color: "#000" }}>✓</span>}
         </div>
         <input
           className="nodrag nopan"
@@ -497,21 +604,21 @@ function BriefNode(props: NodeProps) {
           onChange={(e) => data.onTitleChange(e.target.value)}
           placeholder="Project title"
           style={{
-            fontSize: 12, fontWeight: 600, color: "#111", background: "transparent",
-            border: "none", borderBottom: "1px solid #f0d89a", outline: "none",
-            width: "100%", paddingBottom: 4,
+            fontSize: 14, fontWeight: 700, color: "#000", background: "transparent",
+            border: "none", borderBottom: "1px solid rgba(0,0,0,0.2)", outline: "none",
+            width: "100%", paddingBottom: 4, fontFamily: "inherit",
           }}
         />
         <textarea
           className="nodrag nopan"
           value={data.brief}
           onChange={(e) => data.onBriefChange(e.target.value)}
-          placeholder="Describe your design challenge..."
+          placeholder="Describe your design challenge…"
           rows={4}
           style={{
-            fontSize: 11, color: "#444", background: "transparent",
-            border: "1px solid #f0d89a", borderRadius: 6, padding: "6px 8px",
-            resize: "none", outline: "none", width: "100%", lineHeight: 1.5,
+            fontSize: 12, color: "#333232", background: "white",
+            border: "1px solid rgba(0,0,0,0.7)", borderRadius: 0, padding: "6px 8px",
+            resize: "none", outline: "none", width: "100%", lineHeight: 1.55,
             fontFamily: "inherit",
           }}
         />
@@ -536,9 +643,9 @@ function BriefNode(props: NodeProps) {
             className="nodrag nopan"
             onClick={(e) => { e.stopPropagation(); draftInputRef.current?.click(); }}
             style={{
-              flex: 1, fontSize: 9, color: "#888", background: "transparent",
-              border: "1px dashed #ccc", borderRadius: 5, padding: "4px 0",
-              cursor: "pointer",
+              flex: 1, fontSize: 11, color: "rgba(51,50,50,0.7)", background: "transparent",
+              border: "1px dashed rgba(0,0,0,0.35)", borderRadius: 0, padding: "5px 0",
+              cursor: "pointer", fontFamily: "inherit",
             }}
           >
             + Draft
@@ -547,12 +654,12 @@ function BriefNode(props: NodeProps) {
             className="nodrag nopan"
             onClick={(e) => { e.stopPropagation(); refInputRef.current?.click(); }}
             style={{
-              flex: 1, fontSize: 9, color: "#888", background: "transparent",
-              border: "1px dashed #c5c5e8", borderRadius: 5, padding: "4px 0",
-              cursor: "pointer",
+              flex: 1, fontSize: 11, color: "rgba(51,50,50,0.7)", background: "transparent",
+              border: "1px dashed rgba(0,0,0,0.35)", borderRadius: 0, padding: "5px 0",
+              cursor: "pointer", fontFamily: "inherit",
             }}
           >
-            + Reference
+            + References
           </button>
         </div>
       </div>
@@ -584,9 +691,9 @@ function AssetNode(props: NodeProps) {
           style={{
             width: VISUAL_NODE_W,
             height: VISUAL_NODE_H,
-            border: `1.5px solid ${isSelected ? "#2563eb" : "#aaa"}`,
-            borderRadius: 10,
-            boxShadow: isSelected ? "0 0 0 3px rgba(37,99,235,0.2)" : "1px 1px 0px #cccccc",
+            border: `1px solid ${isSelected ? "#000" : "rgba(0,0,0,0.3)"}`,
+            borderRadius: 0,
+            boxShadow: isSelected ? "2px 2px 0px #000" : "none",
             overflow: "hidden",
             position: "relative",
             cursor: "pointer",
@@ -623,10 +730,10 @@ function AssetNode(props: NodeProps) {
         style={{
           width: INPUT_NODE_W,
           height: ASSET_NODE_H,
-          background: "#f0f0ff",
-          border: `1.5px solid ${isSelected ? "#2563eb" : "#c5c5e8"}`,
-          borderRadius: 10,
-          boxShadow: isSelected ? "0 0 0 3px rgba(37,99,235,0.2)" : "1px 1px 0px #cccccc",
+          background: "#fafaf8",
+          border: `1px solid ${isSelected ? "#000" : "rgba(0,0,0,0.2)"}`,
+          borderRadius: 0,
+          boxShadow: isSelected ? "2px 2px 0px #000" : "none",
           overflow: "hidden",
           display: "flex",
           alignItems: "center",
@@ -644,10 +751,10 @@ function AssetNode(props: NodeProps) {
         <img src={asset.dataUrl} alt={asset.fileName} style={{ width: 68, height: 68, objectFit: "cover", borderRadius: 6, flexShrink: 0 }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 4 }}>
-            <p style={{ fontSize: 8, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: isSelected ? "#2563eb" : "#4444aa", margin: 0 }}>
+            <p style={{ fontSize: 8, textTransform: "uppercase", letterSpacing: "0.12em", color: "rgba(0,0,0,0.45)", margin: 0, fontFamily: "inherit" }}>
               ◈ Reference
             </p>
-            {isSelected && <span style={{ fontSize: 9, color: "#2563eb", fontWeight: 700 }}>✓</span>}
+            {isSelected && <span style={{ fontSize: 9, color: "#000" }}>✓</span>}
           </div>
           <p style={{ fontSize: 10, color: "#444", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {asset.fileName}
@@ -668,13 +775,15 @@ const nodeTypes: NodeTypes = {
 
 function ProvenanceEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, data, selected }: EdgeProps) {
   const [edgePath, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
-  const { onDelete, color, dashed } = (data ?? {}) as { onDelete?: () => void; color?: string; dashed?: boolean };
-  const stroke = selected ? "#2563eb" : (color ?? "#94a3b8");
+  const { onDelete, color, dashed, isSourceEdge } = (data ?? {}) as { onDelete?: () => void; color?: string; dashed?: boolean; isSourceEdge?: boolean };
+  const stroke = selected ? "#000" : (color ?? "#94a3b8");
+  const strokeWidth = isSourceEdge ? 2.5 : selected ? 2 : 1.5;
+  const strokeOpacity = isSourceEdge ? 0.85 : selected ? 0.9 : 0.45;
   return (
     <>
       <path d={edgePath} fill="none" stroke="transparent" strokeWidth={20} style={{ cursor: "pointer" }} />
       <BaseEdge path={edgePath} markerEnd={markerEnd}
-        style={{ stroke, strokeWidth: selected ? 2 : 1.5, strokeOpacity: selected ? 0.9 : 0.55, strokeDasharray: dashed ? "5 4" : undefined, transition: "stroke 0.1s, stroke-opacity 0.1s, stroke-width 0.1s" }} />
+        style={{ stroke, strokeWidth, strokeOpacity, strokeDasharray: dashed ? "5 4" : undefined, transition: "stroke 0.15s, stroke-opacity 0.15s, stroke-width 0.15s" }} />
       {selected && onDelete && (
         <EdgeLabelRenderer>
           <div style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`, pointerEvents: "all" }}
@@ -734,6 +843,39 @@ function ManualEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, target
 
 const edgeTypes: EdgeTypes = { manualEdge: ManualEdge, provenanceEdge: ProvenanceEdge };
 
+// Reads positions from ReactFlow's internal store (sync with drag frames, no lag)
+function CollectionHalos({ collections }: { collections: Collection[] }) {
+  const nodes = useNodes();
+  const { x, y, zoom } = useViewport();
+  return (
+    <svg
+      className="absolute inset-0 pointer-events-none"
+      style={{ width: "100%", height: "100%", zIndex: -1, overflow: "visible", mixBlendMode: "multiply" }}
+    >
+      <defs>
+        <filter id="halo-blur" x="-200%" y="-200%" width="500%" height="500%">
+          <feGaussianBlur stdDeviation="34" />
+        </filter>
+      </defs>
+      <g transform={`translate(${x},${y}) scale(${zoom})`}>
+        {collections.map((col) => (
+          <g key={col.id}>
+            {col.cardIds.flatMap((cid) => {
+              const rn = nodes.find((n) => n.id === cid);
+              if (!rn) return [];
+              const cx = rn.position.x + ((rn.measured?.width ?? rn.width ?? NODE_W) / 2);
+              const cy = rn.position.y + ((rn.measured?.height ?? rn.height ?? NODE_H) / 2);
+              return [
+                <circle key={cid} cx={cx} cy={cy} r={95} fill={col.color} opacity={0.38} filter="url(#halo-blur)" />,
+              ];
+            })}
+          </g>
+        ))}
+      </g>
+    </svg>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 interface Props {
   generations: Generation[];
@@ -785,13 +927,17 @@ export default function TreeView({
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [addNodeState, setAddNodeState] = useState<{ parentIds: string[] } | null>(null);
   const [confirmingClear, setConfirmingClear] = useState(false);
-  const [positionOverrides, setPositionOverrides] = useState<Record<string, { x: number; y: number }>>({});
+  const [positionOverrides, setPositionOverrides] = useState<Record<string, { x: number; y: number }>>(() => {
+    try { return JSON.parse(localStorage.getItem("treeview-positions") ?? "{}"); } catch { return {}; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("treeview-positions", JSON.stringify(positionOverrides)); } catch {}
+  }, [positionOverrides]);
   const [toasts, setToasts] = useState<{ id: string; message: string }[]>([]);
   const seenGenErrorIds = useRef<Set<string>>(new Set());
   const [showCollectionColors, setShowCollectionColors] = useState(false);
   const [connectMode, setConnectMode] = useState(false);
   const [collectionPickerOpen, setCollectionPickerOpen] = useState(false);
-  const [viewport, setViewport] = useState({ x: 0, y: 0, zoom: 1 });
   const [creatingInPicker, setCreatingInPicker] = useState(false);
   const [newCollectionName, setNewCollectionName] = useState("");
 
@@ -867,6 +1013,12 @@ export default function TreeView({
     const hNode = nodes.find((n) => n.card.id === hoveredId);
     return new Set((hNode?.parentCardIds ?? []).filter((pid) => cardIds.has(pid)));
   }, [hoveredId, nodes, cardIds]);
+
+  const selectedAncestorIds = useMemo(() => {
+    if (!selectedId) return new Set<string>();
+    const selNode = nodes.find((n) => n.card.id === selectedId);
+    return new Set((selNode?.parentCardIds ?? []).filter((pid) => cardIds.has(pid)));
+  }, [selectedId, nodes, cardIds]);
 
   const rfInstanceRef = useRef<ReactFlowInstance | null>(null);
 
@@ -1000,6 +1152,7 @@ export default function TreeView({
           isHovered: node.card.id === hoveredId,
           isAncestor: hoveredAncestorIds.has(node.card.id)
             || node.parentCardIds.some((pid) => hoveredSourceIds.has(pid)),
+          isSourceOfSelected: selectedAncestorIds.has(node.card.id),
           isSaved: false,
           isMultiSelected: multiSelectedIds.has(node.card.id),
           collectionColors: showCollectionColors ? cardCollectionsMap.get(node.card.id) : undefined,
@@ -1011,16 +1164,21 @@ export default function TreeView({
         height: h,
       };
     }),
-    [nodes, cardIds, positionOverrides, selectedId, multiSelectedIds, hoveredId, hoveredAncestorIds, hoveredSourceIds, handleRemove, handleQuickBranch, showCollectionColors, cardCollectionsMap, connectMode]
+    [nodes, cardIds, positionOverrides, selectedId, multiSelectedIds, hoveredId, hoveredAncestorIds, selectedAncestorIds, hoveredSourceIds, handleRemove, handleQuickBranch, showCollectionColors, cardCollectionsMap, connectMode]
   );
 
   // ── Generation edges ──────────────────────────────────────────────────────
+  const SOURCE_EDGE_COLOR = "#2d4f8a";
+
   const rfEdges = useMemo((): RFEdge[] =>
     edges.map((edge): RFEdge => {
       const s = TYPE_STYLE[edge.toType] ?? TYPE_STYLE.concept;
+      const isSourceEdge = !!selectedId && edge.toId === selectedId;
       const isActive = hoveredId === edge.toId || hoveredId === edge.fromId
         || hoveredSourceIds.has(edge.fromId);
-      const color = isActive ? "#f59e0b" : s.line;
+      const color = isSourceEdge ? SOURCE_EDGE_COLOR
+        : isActive ? "rgba(0,0,0,0.7)"
+        : s.line;
       return {
         id: `${edge.fromId}-${edge.toId}`,
         source: edge.fromId,
@@ -1029,18 +1187,19 @@ export default function TreeView({
         selectable: true,
         data: {
           color,
+          isSourceEdge,
           onDelete: () => onRemoveProvenanceEdge(edge.fromId, edge.toId),
         },
         markerEnd: {
           type: MarkerType.Arrow,
           color,
-          width: 12,
-          height: 12,
+          width: isSourceEdge ? 14 : 12,
+          height: isSourceEdge ? 14 : 12,
           strokeWidth: 0,
         },
       };
     }),
-    [edges, hoveredId, hoveredSourceIds, onRemoveProvenanceEdge]
+    [edges, selectedId, hoveredId, hoveredSourceIds, onRemoveProvenanceEdge]
   );
 
   // ── Input → generation edges ──────────────────────────────────────────────
@@ -1054,8 +1213,8 @@ export default function TreeView({
         source: "__brief__",
         target: node.card.id,
         type: "default",
-        style: { stroke: "#d97706", strokeWidth: 1.5, strokeOpacity: 0.35, strokeDasharray: "5 4" },
-        markerEnd: { type: MarkerType.Arrow, color: "#d97706", width: 10, height: 10, strokeWidth: 0 },
+        style: { stroke: "rgba(0,0,0,0.3)", strokeWidth: 1.5, strokeOpacity: 0.6, strokeDasharray: "5 4" },
+        markerEnd: { type: MarkerType.Arrow, color: "rgba(0,0,0,0.3)", width: 10, height: 10, strokeWidth: 0 },
       });
     }
 
@@ -1213,7 +1372,7 @@ export default function TreeView({
   return (
     <div className="flex h-full w-full overflow-hidden">
       {/* ── React Flow canvas ────────────────────────────────────────────── */}
-      <div className="flex-1 h-full" style={{ background: "#f0eeea" }}>
+      <div className="flex-1 h-full" style={{ background: "#f0eeeb" }}>
         <ReactFlow
           nodes={displayNodes}
           edges={displayEdges}
@@ -1228,9 +1387,7 @@ export default function TreeView({
           onInit={(instance) => {
             rfInstanceRef.current = instance;
             instance.fitView({ padding: 0.15 });
-            setViewport(instance.getViewport());
           }}
-          onViewportChange={setViewport}
           fitView
           fitViewOptions={{ padding: 0.15 }}
           minZoom={0.2}
@@ -1243,55 +1400,20 @@ export default function TreeView({
           onConnect={handleConnect}
           deleteKeyCode={["Delete", "Backspace"]}
         >
-          {/* Gradient halo overlay — one layer per collection so colors stay distinct */}
-          {showCollectionColors && (
-            <svg
-              className="absolute inset-0 pointer-events-none"
-              style={{ width: "100%", height: "100%", zIndex: -1, overflow: "visible", mixBlendMode: "multiply" }}
-            >
-              <defs>
-                <filter id="halo-blur" x="-200%" y="-200%" width="500%" height="500%">
-                  <feGaussianBlur stdDeviation="34" />
-                </filter>
-              </defs>
-              <g transform={`translate(${viewport.x},${viewport.y}) scale(${viewport.zoom})`}>
-                {collections.map((col) => (
-                  <g key={col.id}>
-                    {col.cardIds.flatMap((cid) => {
-                      const rn = allRfNodes.find((n) => n.id === cid);
-                      if (!rn) return [];
-                      const cx = rn.position.x + ((rn.width ?? NODE_W) / 2);
-                      const cy = rn.position.y + ((rn.height ?? NODE_H) / 2);
-                      return [
-                        <circle
-                          key={cid}
-                          cx={cx}
-                          cy={cy}
-                          r={95}
-                          fill={col.color}
-                          opacity={0.38}
-                          filter="url(#halo-blur)"
-                        />,
-                      ];
-                    })}
-                  </g>
-                ))}
-              </g>
-            </svg>
-          )}
+          {showCollectionColors && <CollectionHalos collections={collections} />}
 
           <Background
             variant={BackgroundVariant.Dots}
             gap={24}
             size={1}
-            color="#bbb"
+            color="rgba(0,0,0,0.15)"
           />
           <Controls showInteractive={false} />
 
           {/* Empty state hint */}
           {nodes.length === 0 && !isGenerating && (
             <Panel position="top-center">
-              <div className="mt-8 text-[11px] text-[#aaa] bg-white/80 border border-[#e4e3e0] rounded-lg px-4 py-2.5 shadow-sm">
+              <div className="mt-8 text-[12px] italic text-[rgba(0,0,0,0.35)] bg-white/80 border border-[rgba(0,0,0,0.1)] px-4 py-2.5" style={{ borderRadius: 0 }}>
                 Fill in your brief and run an action to build the concept tree
               </div>
             </Panel>
@@ -1303,17 +1425,18 @@ export default function TreeView({
               <button
                 onClick={() => setConnectMode((p) => !p)}
                 title={connectMode ? "Exit connect mode (Drag handles to connect nodes)" : "Enter connect mode to draw connections between nodes"}
-                className={`border rounded-lg px-2.5 py-1.5 text-[11px] shadow-sm transition-colors flex items-center gap-1 ${
+                className={`border px-2.5 py-1.5 text-[11px] transition-colors flex items-center gap-1 ${
                   connectMode
-                    ? "bg-[#111] border-[#111] text-white"
-                    : "bg-white border-[#e4e3e0] text-[#aaa] hover:text-[#555] hover:border-[#aaa]"
+                    ? "bg-black border-black text-white"
+                    : "bg-white border-[rgba(0,0,0,0.2)] text-[rgba(0,0,0,0.45)] hover:text-black hover:border-black"
                 }`}
+              style={{ borderRadius: 0 }}
               >
                 <span className="text-[12px] leading-none">⌥</span>
                 {connectMode ? "Connecting…" : "Connect"}
               </button>
               {connectMode && (
-                <span className="text-[10px] text-[#888] bg-white/80 border border-[#e4e3e0] rounded-lg px-2 py-1 shadow-sm">
+                <span className="text-[10px] italic text-[rgba(0,0,0,0.4)] bg-white border border-[rgba(0,0,0,0.15)] px-2 py-1" style={{ borderRadius: 0 }}>
                   Drag handle → node · Delete to remove
                 </span>
               )}
@@ -1321,11 +1444,12 @@ export default function TreeView({
                 <button
                   onClick={() => setShowCollectionColors((p) => !p)}
                   title={showCollectionColors ? "Hide collection colors" : "Show collection colors"}
-                  className={`bg-white border rounded-lg px-2.5 py-1.5 text-[11px] shadow-sm transition-colors flex items-center gap-1 ${
+                  className={`bg-white border px-2.5 py-1.5 text-[11px] transition-colors flex items-center gap-1 ${
                     showCollectionColors
-                      ? "border-[#555] text-[#111] bg-[#f5f5f4]"
-                      : "border-[#e4e3e0] text-[#aaa] hover:text-[#555] hover:border-[#aaa]"
+                      ? "border-black text-black bg-[#f5f4f0]"
+                      : "border-[rgba(0,0,0,0.2)] text-[rgba(0,0,0,0.45)] hover:text-black hover:border-black"
                   }`}
+                  style={{ borderRadius: 0 }}
                 >
                   <span className="text-[12px] leading-none">◉</span>
                   Colors
@@ -1337,7 +1461,8 @@ export default function TreeView({
                   setSelectedId(null);
                   setConfirmingClear(false);
                 }}
-                className="bg-white border border-[#e4e3e0] rounded-lg px-2.5 py-1.5 text-[11px] text-[#555] hover:text-[#111] hover:border-[#888] shadow-sm transition-colors flex items-center gap-1"
+                className="bg-white border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 text-[11px] text-[rgba(0,0,0,0.5)] hover:text-black hover:border-black transition-colors flex items-center gap-1"
+                style={{ borderRadius: 0 }}
                 title="Add a new node"
               >
                 <span className="text-[14px] leading-none font-light">+</span>
@@ -1345,7 +1470,7 @@ export default function TreeView({
               </button>
 
               {confirmingClear ? (
-                <div className="bg-white border border-red-200 rounded-lg px-2.5 py-1.5 shadow-sm flex items-center gap-2">
+                <div className="bg-white border border-red-200 px-2.5 py-1.5 flex items-center gap-2" style={{ borderRadius: 0 }}>
                   <span className="text-[10px] text-red-500">Clear all?</span>
                   <button
                     onClick={() => { onClearTree(); setConfirmingClear(false); setSelectedId(null); setMultiSelectedIds(new Set()); setPositionOverrides({}); }}
@@ -1363,7 +1488,8 @@ export default function TreeView({
               ) : (
                 <button
                   onClick={() => setConfirmingClear(true)}
-                  className="bg-white border border-[#e4e3e0] rounded-lg px-2.5 py-1.5 text-[11px] text-[#aaa] hover:text-red-500 hover:border-red-200 shadow-sm transition-colors"
+                  className="bg-white border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 text-[11px] text-[rgba(0,0,0,0.35)] hover:text-red-500 hover:border-red-300 transition-colors"
+                  style={{ borderRadius: 0 }}
                   title="Clear all nodes"
                 >
                   Clear all
@@ -1375,7 +1501,7 @@ export default function TreeView({
           {/* Generating indicator */}
           {isGenerating && (
             <Panel position="top-center">
-              <div className="flex items-center gap-2 bg-white border border-[#111] rounded-lg shadow-sm px-3 py-2 mt-2 text-[11px] text-[#555]">
+              <div className="flex items-center gap-2 bg-white border border-[#111] px-3 py-2 mt-2 text-[11px] text-[#555]" style={{ borderRadius: 0 }}>
                 <span className="inline-block w-3 h-3 border-2 border-[#555] border-t-transparent rounded-full animate-spin shrink-0" />
                 Running {generatingAction ? (ACTION_LABEL[generatingAction] ?? generatingAction) : "generation"}…
               </div>
@@ -1385,7 +1511,7 @@ export default function TreeView({
           {/* Selection action bar (single or multi, including input nodes) */}
           {(effectiveSelectedIds.size > 0 || !!selectedInputId) && (
             <Panel position="bottom-center">
-              <div className="flex items-center gap-2 bg-white border border-[#222] rounded-lg shadow-lg px-3 py-2 mb-2 text-[11px]">
+              <div className="flex items-center gap-2 bg-white border border-[rgba(0,0,0,0.2)] px-3 py-2 mb-2 text-[11px]" style={{ borderRadius: 0 }}>
                 <span className="text-[#555] font-medium pr-1">
                   {effectiveSelectedIds.size > 0 ? effectiveSelectedIds.size : 1} selected
                 </span>
@@ -1413,7 +1539,7 @@ export default function TreeView({
                     Collection →
                   </button>
                   {collectionPickerOpen && (
-                    <div className="absolute bottom-full left-0 mb-1.5 bg-white rounded-xl border border-[#e4e3e0] shadow-xl p-1.5 min-w-[180px] z-50">
+                    <div className="absolute bottom-full left-0 mb-1.5 bg-white border border-[rgba(0,0,0,0.15)] shadow-lg p-1.5 min-w-[180px] z-50" style={{ borderRadius: 0 }}>
                       {collections.length === 0 && !creatingInPicker && (
                         <p className="text-[10px] text-[#aaa] px-2 py-1">No collections yet</p>
                       )}
@@ -1426,7 +1552,7 @@ export default function TreeView({
                             setMultiSelectedIds(new Set());
                             setSelectedId(null);
                           }}
-                          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[#f5f5f4] text-left"
+                          className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-[#f5f5f4] text-left"
                         >
                           <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: col.color }} />
                           <span className="text-[11px] text-[#333] truncate">{col.title}</span>
@@ -1464,7 +1590,7 @@ export default function TreeView({
                       ) : (
                         <button
                           onClick={() => setCreatingInPicker(true)}
-                          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[#f5f5f4] text-left border-t border-[#f0efec] mt-1 pt-2"
+                          className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-[#f5f5f4] text-left border-t border-[#f0efec] mt-1 pt-2"
                         >
                           <span className="text-[11px] text-[#888]">+ New collection</span>
                         </button>
@@ -1491,7 +1617,7 @@ export default function TreeView({
                 {toasts.map((toast) => (
                   <div
                     key={toast.id}
-                    className="flex items-start gap-2 bg-white border border-red-200 rounded-lg shadow-md px-3 py-2 text-[11px]"
+                    className="flex items-start gap-2 bg-white border border-red-200 px-3 py-2 text-[11px]" style={{ borderRadius: 0 }}
                   >
                     <span className="text-red-500 shrink-0 mt-px">⚠</span>
                     <span className="text-[#333] flex-1 leading-snug">{toast.message}</span>
@@ -1506,6 +1632,38 @@ export default function TreeView({
               </div>
             </Panel>
           )}
+
+          {/* ── Node type legend ─────────────────────────────────────────── */}
+          <Panel position="bottom-left">
+            <div className="mb-2 ml-2 bg-white border border-[rgba(0,0,0,0.12)] px-3 py-2.5 flex flex-col gap-2" style={{ borderRadius: 0 }}>
+              <p className="text-[8px] uppercase tracking-[0.16em] text-[rgba(0,0,0,0.35)] mb-0.5">Node types</p>
+              {/* Concept */}
+              <div className="flex items-center gap-2">
+                <div style={{ width: 18, height: 14, borderLeft: "1.5px solid #000", flexShrink: 0 }} />
+                <span className="text-[10px] text-[rgba(0,0,0,0.6)]">Concept</span>
+              </div>
+              {/* Motif */}
+              <div className="flex items-center gap-2">
+                <div className="relative shrink-0" style={{ width: 18, height: 14 }}>
+                  <span style={{ position: "absolute", top: 0, left: 0, width: 6, height: 6, borderTop: "1.5px solid #000", borderLeft: "1.5px solid #000" }} />
+                  <span style={{ position: "absolute", top: 0, right: 0, width: 6, height: 6, borderTop: "1.5px solid #000", borderRight: "1.5px solid #000" }} />
+                  <span style={{ position: "absolute", bottom: 0, left: 0, width: 6, height: 6, borderBottom: "1.5px solid #000", borderLeft: "1.5px solid #000" }} />
+                  <span style={{ position: "absolute", bottom: 0, right: 0, width: 6, height: 6, borderBottom: "1.5px solid #000", borderRight: "1.5px solid #000" }} />
+                </div>
+                <span className="text-[10px] text-[rgba(0,0,0,0.6)]">Motif</span>
+              </div>
+              {/* Note */}
+              <div className="flex items-center gap-2">
+                <div style={{ width: 18, height: 14, border: "1px solid rgba(0,0,0,0.25)", flexShrink: 0 }} />
+                <span className="text-[10px] text-[rgba(0,0,0,0.6)]">Note</span>
+              </div>
+              {/* Visual */}
+              <div className="flex items-center gap-2">
+                <div style={{ width: 18, height: 14, border: "1px solid rgba(0,0,0,0.25)", background: "rgba(0,0,0,0.06)", flexShrink: 0 }} />
+                <span className="text-[10px] text-[rgba(0,0,0,0.6)]">Visual</span>
+              </div>
+            </div>
+          </Panel>
         </ReactFlow>
       </div>
 
@@ -1584,7 +1742,7 @@ export default function TreeView({
 }
 
 // ── Add node modal ────────────────────────────────────────────────────────────
-const NODE_TYPE_OPTIONS = ["concept", "motif", "visual", "note", "draft", "reference"] as const;
+const NODE_TYPE_OPTIONS = ["concept", "motif", "visual", "draft", "reference"] as const;
 type UserNodeType = (typeof NODE_TYPE_OPTIONS)[number];
 
 const ASSET_TYPE_BADGE: Record<string, { bg: string; text: string }> = {
@@ -1607,12 +1765,13 @@ function AddNodeModal({
 }) {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
-  const [cardType, setCardType] = useState<UserNodeType>("concept");
+  const [cardType, setCardType] = useState<UserNodeType | null>(null);
   const [parentIds, setParentIds] = useState<Set<string>>(new Set(initialParentIds));
   const [imageFile, setImageFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isAssetType = cardType === "draft" || cardType === "reference";
+  const effectiveType = cardType ?? "note";
 
   const toggleParent = (id: string) =>
     setParentIds((prev) => {
@@ -1627,11 +1786,11 @@ function AddNodeModal({
     const now = new Date().toISOString();
     const t = title.trim();
     const b = body.trim();
-    switch (cardType) {
+    switch (effectiveType) {
       case "concept": return { id, type: "concept", title: t, description: b, rationale: "", createdAt: now };
       case "motif":   return { id, type: "motif",   title: t, visualQuality: b, howItConveysIdea: "", category: "style", createdAt: now };
       case "visual":  return { id, type: "visual",  title: t, dimensionLabel: t, analysisText: b, createdAt: now };
-      case "note": default: return { id, type: "note", title: t, body: b, createdAt: now };
+      default:        return { id, type: "note", title: t, body: b, createdAt: now };
     }
   }
 
@@ -1663,7 +1822,7 @@ function AddNodeModal({
       onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}
     >
       <div
-        className="bg-white rounded-xl shadow-xl w-full max-w-md p-5"
+        className="bg-white shadow-xl w-full max-w-md p-5" style={{ borderRadius: 0 }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">
@@ -1682,16 +1841,24 @@ function AddNodeModal({
             return (
               <button
                 key={t}
-                onClick={() => { setCardType(t); setImageFile(null); }}
-                className="text-[9px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded transition-colors"
-                style={active
-                  ? { background: activeBg, color: activeText }
-                  : { background: "#f5f5f3", color: "#888" }}
+                onClick={() => { setCardType(cardType === t ? null : t); setImageFile(null); }}
+                className="text-[9px] font-semibold uppercase tracking-wide px-2.5 py-1 transition-colors"
+                style={{
+                  borderRadius: 0,
+                  ...(active
+                    ? { background: activeBg, color: activeText }
+                    : { background: "#f5f5f3", color: "#888" })
+                }}
               >
                 {TYPE_LABEL[t]}
               </button>
             );
           })}
+          {!cardType && (
+            <span className="text-[9px] italic text-[rgba(0,0,0,0.35)] self-center ml-1">
+              uncategorized
+            </span>
+          )}
         </div>
 
         {/* Asset upload UI */}
@@ -1951,7 +2118,7 @@ function DetailPanel({
       <aside className="w-full h-full border-l border-[#e4e3e0] bg-white flex flex-col overflow-hidden">
         <div className="px-4 py-3 border-b border-[#f0efec] shrink-0">
           <div className="flex items-start justify-between gap-2 mb-2">
-            <span className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded" style={{ background: s.badgeBg, color: s.badgeText }}>
+            <span className="text-[9px] uppercase tracking-[0.14em] px-1.5 py-0.5" style={{ background: s.badgeBg, color: s.badgeText, borderRadius: 0 }}>
               {TYPE_LABEL[card.type]}
             </span>
             <div className="flex items-center gap-1.5 shrink-0 -mt-0.5">
@@ -1970,7 +2137,7 @@ function DetailPanel({
               <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold mb-2">Sources</p>
               <div className="flex flex-col gap-1.5">
                 {sourceDrafts.map((a) => (
-                  <div key={a.id} className="px-2.5 py-2 rounded-lg flex items-center gap-2" style={{ background: "#f5f5f4", border: "1px solid #ccc" }}>
+                  <div key={a.id} className="px-2.5 py-2 flex items-center gap-2" style={{ background: "#f5f5f4", border: "1px solid rgba(0,0,0,0.12)", borderRadius: 0 }}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={a.dataUrl} alt={a.fileName} className="w-8 h-8 rounded object-cover shrink-0" />
                     <div>

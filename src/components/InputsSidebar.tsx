@@ -1,22 +1,5 @@
 "use client";
 
-/**
- * src/components/InputsSidebar.tsx
- *
- * Responsibility: Left panel — project title, design brief textarea, and
- * image upload areas for draft and reference images.
- *
- * This component is purely presentational: all state lives in the parent
- * (`app/page.tsx`) and is mutated through callback props.  The sidebar
- * receives `hoveredAssetIds` from the parent to highlight thumbnails when the
- * user hovers a result card that was generated from those images.
- *
- * File upload: images are read as base64 data URLs via `FileReader` and
- * immediately added to the asset list in the store.  The hidden file input
- * approach (triggered by a visible button) avoids custom styling constraints
- * on the native `<input type="file">` element.
- */
-
 import { useRef } from "react";
 import type { Asset } from "@/types";
 
@@ -65,52 +48,55 @@ export default function InputsSidebar({
         };
         reader.readAsDataURL(file);
       });
-      // Reset the input so the same file can be re-uploaded after removal.
       e.target.value = "";
     };
   }
 
   return (
-    <aside className="h-full flex flex-col bg-white border-r overflow-y-auto" style={{ borderColor: "#ccc9c0" }}>
+    <aside className="h-full flex flex-col bg-white overflow-y-auto" style={{ borderRight: "1px solid rgba(0,0,0,0.1)" }}>
       {/* Header */}
-      <div className="px-4 pt-4 pb-3 border-b flex items-start gap-2" style={{ borderColor: "#ccc9c0" }}>
-        <input
-          value={title}
-          onChange={(e) => onTitleChange(e.target.value)}
-          className="flex-1 min-w-0 text-sm text-[#111] bg-transparent outline-none placeholder-[#bbb]"
-          placeholder="Project title"
-        />
-        {onCollapse && (
-          <button
-            onClick={onCollapse}
-            className="shrink-0 text-[#bbb] hover:text-[#555] transition-colors mt-0.5"
-            title="Hide panel"
-            style={{ fontSize: 14, lineHeight: 1 }}
-          >‹</button>
-        )}
+      <div className="px-5 pt-5 pb-4" style={{ borderBottom: "1px solid rgba(0,0,0,0.1)" }}>
+        <div className="flex items-start gap-2">
+          <input
+            value={title}
+            onChange={(e) => onTitleChange(e.target.value)}
+            className="flex-1 min-w-0 text-[22px] font-bold text-black bg-transparent outline-none placeholder-[rgba(0,0,0,0.25)] leading-tight"
+            placeholder="Project Title"
+          />
+          {onCollapse && (
+            <button
+              onClick={onCollapse}
+              className="shrink-0 text-[rgba(0,0,0,0.3)] hover:text-black transition-colors mt-1.5"
+              title="Hide panel"
+              style={{ fontSize: 14, lineHeight: 1 }}
+            >‹</button>
+          )}
+        </div>
+        <div className="mt-3 h-px bg-black opacity-20" />
       </div>
 
       {/* Brief */}
-      <section className="px-4 py-4 border-b" style={{ borderColor: "#ccc9c0" }}>
-        <label className="text-[10px] uppercase tracking-widest text-[#888] block mb-2">
+      <section className="px-5 py-4" style={{ borderBottom: "1px solid rgba(0,0,0,0.1)" }}>
+        <label className="text-[9px] uppercase tracking-[0.18em] text-[rgba(0,0,0,0.4)] block mb-2">
           Design Brief
         </label>
         <textarea
           value={brief}
           onChange={(e) => onBriefChange(e.target.value)}
-          placeholder="Describe your design challenge, target users, goals, constraints..."
+          placeholder="Describe your design challenge, target users, goals, constraints…"
           rows={6}
-          className="w-full text-sm text-[#333] bg-white border border-[#ccc] rounded px-3 py-2.5 resize-none outline-none focus:border-[#111] placeholder-[#bbb] leading-relaxed"
+          className="w-full text-[15px] text-[#333232] bg-white border border-[rgba(0,0,0,0.7)] px-3 py-2.5 resize-none outline-none focus:border-black placeholder-[rgba(51,50,50,0.35)] leading-relaxed"
+          style={{ borderRadius: 0 }}
         />
       </section>
 
       {/* Drafts */}
-      <section className="px-4 py-4 border-b" style={{ borderColor: "#ccc9c0" }}>
-        <div className="flex items-center justify-between mb-2">
-          <label className="text-[10px] uppercase tracking-widest text-[#888]">
-            Drafts ({drafts.length})
+      <section className="px-5 py-4" style={{ borderBottom: "1px solid rgba(0,0,0,0.1)" }}>
+        <div className="flex items-center justify-between mb-3">
+          <label className="text-[9px] uppercase tracking-[0.18em] text-[rgba(0,0,0,0.4)]">
+            Drafts {drafts.length > 0 && `(${drafts.length})`}
           </label>
-          <button onClick={() => draftInput.current?.click()} className="text-[11px] text-[#111] underline hover:no-underline">
+          <button onClick={() => draftInput.current?.click()} className="text-[12px] text-black underline-offset-2 hover:opacity-60 transition-opacity">
             + Add
           </button>
         </div>
@@ -118,9 +104,10 @@ export default function InputsSidebar({
         {drafts.length === 0 ? (
           <button
             onClick={() => draftInput.current?.click()}
-            className="w-full border-2 border-dashed border-[#ccc] rounded py-4 text-xs text-[#bbb] hover:border-[#111] hover:text-[#555] transition-colors"
+            className="w-full border border-dashed border-[rgba(0,0,0,0.4)] py-4 text-[13px] text-[rgba(0,0,0,0.35)] hover:border-black hover:text-black transition-colors"
+            style={{ borderRadius: 0 }}
           >
-            Upload sketches, wireframes, screenshots
+            + Draft
           </button>
         ) : (
           <AssetGrid assets={drafts} onRemove={onRemoveAsset} hoveredAssetIds={hoveredAssetIds} />
@@ -128,12 +115,12 @@ export default function InputsSidebar({
       </section>
 
       {/* References */}
-      <section className="px-4 py-4">
-        <div className="flex items-center justify-between mb-2">
-          <label className="text-[10px] uppercase tracking-widest text-[#888]">
-            References ({refs.length})
+      <section className="px-5 py-4">
+        <div className="flex items-center justify-between mb-3">
+          <label className="text-[9px] uppercase tracking-[0.18em] text-[rgba(0,0,0,0.4)]">
+            References {refs.length > 0 && `(${refs.length})`}
           </label>
-          <button onClick={() => refInput.current?.click()} className="text-[11px] text-[#111] underline hover:no-underline">
+          <button onClick={() => refInput.current?.click()} className="text-[12px] text-black underline-offset-2 hover:opacity-60 transition-opacity">
             + Add
           </button>
         </div>
@@ -141,9 +128,10 @@ export default function InputsSidebar({
         {refs.length === 0 ? (
           <button
             onClick={() => refInput.current?.click()}
-            className="w-full border-2 border-dashed border-[#ccc] rounded py-4 text-xs text-[#bbb] hover:border-[#111] hover:text-[#555] transition-colors"
+            className="w-full border border-dashed border-[rgba(0,0,0,0.4)] py-4 text-[13px] text-[rgba(0,0,0,0.35)] hover:border-black hover:text-black transition-colors"
+            style={{ borderRadius: 0 }}
           >
-            Upload inspiration, style references
+            + References
           </button>
         ) : (
           <AssetGrid assets={refs} onRemove={onRemoveAsset} hoveredAssetIds={hoveredAssetIds} />
@@ -161,10 +149,10 @@ function AssetGrid({ assets, onRemove, hoveredAssetIds }: { assets: Asset[]; onR
         return (
           <div
             key={a.id}
-            className="relative group aspect-square rounded overflow-hidden bg-[#f5f5f4]"
+            className="relative group aspect-square overflow-hidden bg-[#f5f5f4]"
             style={{
-              border: `2px solid ${isHighlighted ? "#f59e0b" : "#ccc"}`,
-              boxShadow: isHighlighted ? "0 0 0 3px rgba(251,191,36,0.25)" : undefined,
+              border: `1.5px solid ${isHighlighted ? "#c9a84c" : "rgba(0,0,0,0.2)"}`,
+              boxShadow: isHighlighted ? "0 0 0 2px rgba(201,168,76,0.2)" : undefined,
               transition: "border-color 0.2s ease, box-shadow 0.2s ease",
             }}
           >

@@ -268,8 +268,18 @@ const handleSend = useCallback(
         createdAt: new Date().toISOString(),
       });
       actions.adoptChildGenerations(originalCard.id, dupedId);
+      // Duplicate any manual edges that involve the original node
+      for (const edge of state.manualEdges) {
+        if (edge.fromCardId === originalCard.id || edge.toCardId === originalCard.id) {
+          actions.addManualEdge({
+            id: crypto.randomUUID(),
+            fromCardId: edge.fromCardId === originalCard.id ? dupedId : edge.fromCardId,
+            toCardId: edge.toCardId === originalCard.id ? dupedId : edge.toCardId,
+          });
+        }
+      }
     },
-    [actions]
+    [actions, state.manualEdges]
   );
 
   const handleAddUserCard = useCallback(

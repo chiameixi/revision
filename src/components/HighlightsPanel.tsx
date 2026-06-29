@@ -1,26 +1,5 @@
 "use client";
 
-/**
- * src/components/HighlightsPanel.tsx
- *
- * Responsibility: Right panel — the curated collection of saved cards that
- * feeds context back into subsequent API calls.
- *
- * Cards can reach this panel in two ways:
- * 1. Clicking "Save" on a result card in the Feed / Tree / Cluster views.
- * 2. Dragging a result card and dropping it onto this panel (HTML5 drag-and-
- *    drop; the dragged data is serialised as `card-drag` on the DataTransfer).
- *
- * The "Include" checkbox on each `HighlightCard` sets `includeInNextCall`.
- * `page.tsx` reads that flag when building a `GenerateRequest`, converting
- * included highlights to plain-text summaries (`highlightSummaries`) rather
- * than raw JSON — this keeps the token count manageable and avoids sending
- * full image data back to the model unnecessarily.
- *
- * Pinned cards sort before unpinned ones; within each group, insertion order
- * (`orderIndex`) is preserved.
- */
-
 import { useState } from "react";
 import type { Highlight, ResultCard } from "@/types";
 import HighlightCard from "./HighlightCard";
@@ -85,88 +64,91 @@ export default function HighlightsPanel({
 
   return (
     <aside
-      className="h-full flex flex-col border-l overflow-hidden"
+      className="h-full flex flex-col overflow-hidden"
       style={{
-        background: isDragOver ? "#f5f5f4" : "#ffffff",
-        borderColor: isDragOver ? "#111" : "#ccc9c0",
+        background: isDragOver ? "#f5f4f0" : "#ffffff",
+        borderLeft: `1px solid ${isDragOver ? "rgba(0,0,0,0.3)" : "rgba(0,0,0,0.1)"}`,
+        transition: "background 0.15s ease, border-color 0.15s ease",
       }}
       onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
       onDragLeave={(e) => {
-        // Ignore leave events that are still inside the panel (child elements).
         if (e.relatedTarget && e.currentTarget.contains(e.relatedTarget as Node)) return;
         setIsDragOver(false);
       }}
       onDrop={handleDrop}
     >
       {/* Header */}
-      <div className="px-4 pt-5 pb-3 border-b shrink-0 sticky top-0 z-10 bg-inherit" style={{ borderColor: "#ccc9c0" }}>
+      <div className="px-5 pt-5 pb-4 shrink-0 sticky top-0 z-10 bg-inherit" style={{ borderBottom: "1px solid rgba(0,0,0,0.1)" }}>
         <div className="flex items-center justify-between mb-1">
-          <h2 className="text-sm text-[#111]">Highlights</h2>
-          <div className="flex items-center gap-2">
+          <h2 className="text-[18px] text-black">Highlights</h2>
+          <div className="flex items-center gap-3">
             {highlights.length > 0 && (
-              <span className="text-[10px] text-[#888]">{included}/{highlights.length} included</span>
+              <span className="text-[11px] text-[rgba(0,0,0,0.4)] italic">{included}/{highlights.length} included</span>
             )}
             <button
               onClick={() => setAddingNote((v) => !v)}
-              className="text-[11px] text-[#111] border border-[#111] px-2 py-0.5 rounded-sm hover:bg-[#111] hover:text-white transition-colors"
+              className="text-[12px] text-black border border-dashed border-[rgba(0,0,0,0.5)] px-2.5 py-0.5 hover:border-black transition-colors"
+              style={{ borderRadius: 0 }}
             >
               + Note
             </button>
             {onCollapse && (
               <button
                 onClick={onCollapse}
-                className="text-[#bbb] hover:text-[#555] transition-colors"
+                className="text-[rgba(0,0,0,0.3)] hover:text-black transition-colors"
                 title="Hide panel"
                 style={{ fontSize: 14, lineHeight: 1 }}
               >›</button>
             )}
           </div>
         </div>
-        <p className="text-[11px]" style={{ color: isDragOver ? "#111" : "#aaa" }}>
+        <p className="text-[11px] italic" style={{ color: isDragOver ? "rgba(0,0,0,0.7)" : "rgba(0,0,0,0.3)" }}>
           {isDragOver ? "Drop to save →" : "Drag cards here · included → next call"}
         </p>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-2">
+      <div className="flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-2">
         {/* Add note inline form */}
         {addingNote && (
-          <div className="border border-[#111] rounded p-3 bg-white flex flex-col gap-2">
+          <div className="border border-black p-3 bg-white flex flex-col gap-2" style={{ borderRadius: 0 }}>
             <input
               autoFocus
               placeholder="Title…"
               value={noteTitle}
               onChange={(e) => setNoteTitle(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && submitNote()}
-              className="text-[12px] border border-[#ccc] rounded px-2.5 py-1.5 outline-none focus:border-[#111] bg-white text-[#111]"
+              className="text-[14px] border border-[rgba(0,0,0,0.3)] px-2.5 py-1.5 outline-none focus:border-black bg-white text-black"
+              style={{ borderRadius: 0 }}
             />
             <textarea
               placeholder="Write something…"
               value={noteBody}
               onChange={(e) => setNoteBody(e.target.value)}
               rows={2}
-              className="text-[11px] border border-[#ccc] rounded px-2.5 py-1.5 resize-none outline-none focus:border-[#111] bg-white text-[#444]"
+              className="text-[13px] border border-[rgba(0,0,0,0.3)] px-2.5 py-1.5 resize-none outline-none focus:border-black bg-white text-[#333232]"
+              style={{ borderRadius: 0 }}
             />
-            <div className="flex gap-2">
-              <button onClick={submitNote} className="text-[11px] text-white bg-[#111] hover:bg-[#333] rounded px-3 py-1 transition-colors">Add</button>
-              <button onClick={() => { setAddingNote(false); setNoteTitle(""); setNoteBody(""); }} className="text-[11px] text-[#888] hover:text-[#111] transition-colors">Cancel</button>
+            <div className="flex gap-3">
+              <button onClick={submitNote} className="text-[12px] text-white bg-black hover:opacity-70 px-3 py-1 transition-opacity">Add</button>
+              <button onClick={() => { setAddingNote(false); setNoteTitle(""); setNoteBody(""); }} className="text-[12px] text-[rgba(0,0,0,0.45)] hover:text-black transition-colors">Cancel</button>
             </div>
           </div>
         )}
 
         {sorted.length === 0 && !addingNote ? (
           <div
-            className="flex flex-col items-center justify-center rounded border-2 border-dashed text-center py-16 mt-4 transition-all duration-150"
+            className="flex flex-col items-center justify-center border border-dashed text-center py-16 mt-4 transition-all duration-150"
             style={{
-              borderColor: isDragOver ? "#111" : "#ccc9c0",
-              background: isDragOver ? "#f5f5f4" : "transparent",
+              borderColor: isDragOver ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.2)",
+              background: isDragOver ? "#f5f4f0" : "transparent",
             }}
           >
             {isDragOver ? (
-              <p className="text-sm text-[#111]">Release to save</p>
+              <p className="text-[15px] text-black italic">Release to save</p>
             ) : (
               <>
-                <p className="text-sm text-[#bbb]">No highlights yet.</p>
-                <p className="text-xs text-[#ccc] mt-1">Drag cards here or save from results.</p>
+                <p className="text-[14px] text-[rgba(0,0,0,0.3)] italic">No highlights yet.</p>
+                <p className="text-[12px] text-[rgba(0,0,0,0.25)] mt-1">Drag cards here or save from results.</p>
               </>
             )}
           </div>

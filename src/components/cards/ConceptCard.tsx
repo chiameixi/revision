@@ -1,22 +1,5 @@
 "use client";
 
-/**
- * src/components/cards/ConceptCard.tsx
- *
- * Responsibility: Renders a single concept card (abstract idea / design
- * direction) produced by `unpack_brief`, `conceptual_variations`, or
- * `synthesize`.
- *
- * Fields: title, description (always visible), rationale (collapsible behind
- * "Why this works"), and an optional "Generate Visuals →" button that triggers
- * `generate_concept_visuals` for this specific card.
- *
- * The card has an inline edit mode (pencil icon on hover) that allows the
- * researcher to refine the title, description, or rationale.  Changes are
- * committed through `onUpdate` which patches the card everywhere it appears
- * (generation feed and highlights) via `store.updateCard`.
- */
-
 import { useState } from "react";
 import type { ConceptCard as ConceptCardType, ResultCard } from "@/types";
 
@@ -34,12 +17,13 @@ function EditField({ label, value, onChange, rows = 3 }: {
 }) {
   return (
     <div>
-      <p className="text-[10px] uppercase tracking-widest text-[#888] mb-0.5">{label}</p>
+      <p className="text-[9px] uppercase tracking-[0.16em] text-[rgba(0,0,0,0.4)] mb-1">{label}</p>
       <textarea
         value={value}
         onChange={(e) => onChange(e.target.value)}
         rows={rows}
-        className="w-full text-sm text-[#111] border border-[#b45309] rounded px-3 py-2 resize-y outline-none focus:ring-1 focus:ring-[#b45309] bg-white leading-relaxed"
+        className="w-full text-[14px] text-black border border-black px-3 py-2 resize-y outline-none bg-white leading-relaxed"
+        style={{ borderRadius: 0 }}
       />
     </div>
   );
@@ -56,20 +40,21 @@ export default function ConceptCard({ card, isSaved, onSave, onDismiss, onGenera
 
   if (isEditing) {
     return (
-      <div className="bg-[#fffbf5] border-2 border-[#b45309] rounded p-4 flex flex-col gap-3" style={{ boxShadow: "3px 3px 0px #b45309" }}>
+      <div className="bg-white p-4 flex flex-col gap-3" style={{ borderLeft: "1px solid black" }}>
         <div className="flex items-center justify-between">
-          <span className="text-[10px] uppercase tracking-widest bg-[#b45309] text-white px-2 py-0.5 rounded-sm">Concept</span>
-          <div className="flex items-center gap-2 shrink-0">
-            <button onClick={commitEdit} className="text-xs font-medium text-white bg-[#b45309] px-2.5 py-1 rounded-sm hover:bg-[#92400e] transition-colors">Save</button>
-            <button onClick={cancelEdit} className="text-xs text-[#888] hover:text-[#111] transition-colors">Cancel</button>
+          <ConceptLabel />
+          <div className="flex items-center gap-3 shrink-0">
+            <button onClick={commitEdit} className="text-[12px] text-white bg-black px-3 py-1 hover:opacity-70 transition-opacity">Save</button>
+            <button onClick={cancelEdit} className="text-[12px] text-[rgba(0,0,0,0.45)] hover:text-black transition-colors">Cancel</button>
           </div>
         </div>
         <div>
-          <p className="text-[10px] uppercase tracking-widest text-[#888] mb-0.5">Title</p>
+          <p className="text-[9px] uppercase tracking-[0.16em] text-[rgba(0,0,0,0.4)] mb-1">Title</p>
           <input
             value={draft.title}
             onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-            className="w-full text-[15px] text-[#111] border border-[#b45309] rounded px-3 py-2 outline-none focus:ring-1 focus:ring-[#b45309] bg-white"
+            className="w-full text-[16px] text-black border border-black px-3 py-2 outline-none bg-white"
+            style={{ borderRadius: 0 }}
           />
         </div>
         <EditField label="Description" value={draft.description} onChange={(v) => setDraft({ ...draft, description: v })} />
@@ -79,50 +64,63 @@ export default function ConceptCard({ card, isSaved, onSave, onDismiss, onGenera
   }
 
   return (
-    <div className="bg-[#fffbf5] border border-[#b45309] rounded p-4 flex flex-col gap-3 group hover:shadow-[2px_2px_0px_#b45309] transition-shadow">
+    <div className="bg-white p-4 flex flex-col gap-3 group" style={{ borderLeft: "1px solid black" }}>
       <div className="flex items-start justify-between gap-2">
-        <span className="text-[10px] uppercase tracking-widest bg-[#b45309] text-white px-2 py-0.5 rounded-sm shrink-0">Concept</span>
-        <div className="flex items-center gap-1.5 shrink-0">
+        <ConceptLabel />
+        <div className="flex items-center gap-2 shrink-0">
           {onUpdate && (
-            <button onClick={startEdit} className="text-[#ccc] hover:text-[#b45309] text-sm transition-colors opacity-0 group-hover:opacity-100" title="Edit">✎</button>
+            <button onClick={startEdit} className="text-[rgba(0,0,0,0.2)] hover:text-black text-sm transition-colors opacity-0 group-hover:opacity-100" title="Edit">✎</button>
           )}
           <button
             onClick={onSave}
             disabled={isSaved}
-            className={`text-xs px-2.5 py-1 rounded-sm border transition-colors ${
-              isSaved ? "text-[#aaa] border-[#ccc] cursor-default" : "text-[#b45309] border-[#b45309] hover:bg-[#b45309] hover:text-white"
+            className={`text-[11px] px-2 py-0.5 border transition-colors ${
+              isSaved ? "text-[rgba(0,0,0,0.3)] border-[rgba(0,0,0,0.2)] cursor-default" : "text-black border-black hover:bg-black hover:text-white"
             }`}
+            style={{ borderRadius: 0 }}
           >
             {isSaved ? "Saved" : "Save"}
           </button>
-          <button onClick={onDismiss} className="text-[#bbb] hover:text-[#111] text-lg leading-none">×</button>
+          <button onClick={onDismiss} className="text-[rgba(0,0,0,0.3)] hover:text-black text-lg leading-none transition-colors">×</button>
         </div>
       </div>
 
-      <h3 className="text-[15px] text-[#111] leading-snug">{card.title}</h3>
-      <p className="text-sm text-[#444] leading-relaxed">{card.description}</p>
+      <h3 className="text-[17px] text-black leading-snug">{card.title}</h3>
+      <p className="text-[14px] text-[#333232] leading-relaxed">{card.description}</p>
 
-      <button onClick={() => setExpanded((e) => !e)} className="text-xs text-[#999] hover:text-[#b45309] underline text-left transition-colors">
-        {expanded ? "Hide rationale" : "Why this works"}
+      <button onClick={() => setExpanded((e) => !e)} className="text-[12px] italic text-[rgba(0,0,0,0.45)] hover:text-black text-left transition-colors">
+        {expanded ? "Hide rationale" : "Why this works →"}
       </button>
 
       {expanded && (
-        <div className="pt-2 border-t border-[#f0d89a]">
-          <p className="text-[10px] uppercase tracking-widest text-[#b45309] mb-1">Rationale</p>
-          <p className="text-sm text-[#555] leading-relaxed">{card.rationale}</p>
+        <div className="pt-3 border-t border-[rgba(0,0,0,0.1)]">
+          <p className="text-[9px] uppercase tracking-[0.16em] text-[rgba(0,0,0,0.4)] mb-1.5">Rationale</p>
+          <p className="text-[14px] text-[#333232] leading-relaxed">{card.rationale}</p>
         </div>
       )}
 
       {onGenerateVisuals && (
-        <div className="pt-1 border-t border-[#f0d89a]">
+        <div className="pt-2 border-t border-[rgba(0,0,0,0.1)]">
           <button
             onClick={onGenerateVisuals}
-            className="text-xs text-[#b45309] border border-[#b45309] bg-white hover:bg-[#b45309] hover:text-white px-3 py-1.5 rounded-sm transition-colors w-full"
+            className="text-[12px] text-black border border-dashed border-[rgba(0,0,0,0.5)] hover:border-black px-3 py-1.5 transition-colors w-full"
+            style={{ borderRadius: 0 }}
           >
             Generate Visuals →
           </button>
         </div>
       )}
     </div>
+  );
+}
+
+function ConceptLabel() {
+  return (
+    <span
+      className="inline-flex items-center justify-center shrink-0 bg-white"
+      style={{ borderLeft: "1px solid black", paddingLeft: 12, paddingRight: 12, paddingTop: 6, paddingBottom: 6 }}
+    >
+      <span className="text-[15px] text-black" style={{ fontStyle: "normal", lineHeight: "1.5" }}>Concept</span>
+    </span>
   );
 }

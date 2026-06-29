@@ -21,10 +21,10 @@ const TYPE_STYLE: Record<string, {
   bg: string; border: string; selectedBorder: string;
   badgeBg: string; badgeText: string; line: string; clusterBg: string;
 }> = {
-  concept: { bg: "#fffbf5", border: "#b45309", selectedBorder: "#78350f", badgeBg: "#b45309", badgeText: "#ffffff", line: "#d97706", clusterBg: "#fffbf5" },
-  motif:   { bg: "#f0fdf4", border: "#16a34a", selectedBorder: "#166534", badgeBg: "#166534", badgeText: "#ffffff", line: "#4ade80", clusterBg: "#f0fdf4" },
-  visual:  { bg: "#fafafa", border: "#333333", selectedBorder: "#111111", badgeBg: "#111111", badgeText: "#ffffff", line: "#888888", clusterBg: "#fafafa" },
-  note:    { bg: "#fafaf8", border: "#888888", selectedBorder: "#111111", badgeBg: "#888888", badgeText: "#ffffff", line: "#bbbbbb", clusterBg: "#fafaf8" },
+  concept: { bg: "#ffffff", border: "#000000", selectedBorder: "#000000", badgeBg: "#000000", badgeText: "#ffffff", line: "rgba(0,0,0,0.4)", clusterBg: "#fafaf8" },
+  motif:   { bg: "#ffffff", border: "#000000", selectedBorder: "#000000", badgeBg: "#000000", badgeText: "#ffffff", line: "rgba(0,0,0,0.4)", clusterBg: "#fafaf8" },
+  visual:  { bg: "#ffffff", border: "#000000", selectedBorder: "#000000", badgeBg: "#000000", badgeText: "#ffffff", line: "rgba(0,0,0,0.3)", clusterBg: "#fafaf8" },
+  note:    { bg: "#ffffff", border: "rgba(0,0,0,0.35)", selectedBorder: "#000000", badgeBg: "rgba(0,0,0,0.5)", badgeText: "#ffffff", line: "rgba(0,0,0,0.2)", clusterBg: "#fafaf8" },
 };
 
 const TYPE_LABEL_PLURAL: Record<string, string> = {
@@ -49,8 +49,14 @@ const BRANCH_ACTIONS: { id: ActionType; label: string }[] = [
 ];
 
 export const COLLECTION_COLORS = [
-  "#f59e0b", "#10b981", "#3b82f6", "#ef4444",
-  "#8b5cf6", "#f97316", "#14b8a6", "#ec4899",
+  "#c9a84c", // warm gold
+  "#7a9e5e", // sage green
+  "#c14f58", // muted rose
+  "#4a7a9b", // slate blue
+  "#8b6b4a", // warm brown
+  "#7b6b8e", // muted violet
+  "#4a8b7a", // teal
+  "#9b4a4a", // terracotta
 ];
 
 const CARD_TYPES = ["concept", "motif", "visual", "note"] as const;
@@ -97,85 +103,105 @@ function MiniCard({ item, onRemove }: { item: ClusterItem; onRemove?: () => void
   const isSelected = selectedItem?.card.id === item.card.id;
   const ts = TYPE_STYLE[item.card.type] ?? TYPE_STYLE.concept;
   const isVisual = item.card.type === "visual";
+  const isChip = item.card.type === "concept" || item.card.type === "motif";
   const imgSrc = isVisual ? (item.card as VisualCard).imageDataUrl : undefined;
 
-  const borderColor = isSelected ? "#2563eb" : ts.border;
-  const shadow = isSelected ? "3px 3px 0px #111111" : "1px 1px 0px #cccccc";
-  const bgColor = isSelected ? ts.bg : "#ffffff";
+  const borderColor = isSelected ? "#000" : ts.border;
+  const shadow = isSelected ? "2px 2px 0px #000" : "none";
+  const bgColor = isSelected ? "#f5f4f0" : "#ffffff";
 
+  const sharedDrag = {
+    draggable: true,
+    onDragStart: (e: React.DragEvent) => { e.stopPropagation(); onCardDragStart(e, item.card.id); },
+    onClick: (e: React.MouseEvent) => { e.stopPropagation(); onCardClick(item); },
+  };
+
+  // ── Visual image card ───────────────────────────────────────────────────────
   if (isVisual && imgSrc) {
     return (
       <div
-        className="relative group/minicard overflow-hidden cursor-pointer nodrag nowheel"
-        draggable
-        onDragStart={(e) => { e.stopPropagation(); onCardDragStart(e, item.card.id); }}
-        onClick={(e) => { e.stopPropagation(); onCardClick(item); }}
-        style={{
-          height: 140,
-          border: `1.5px solid ${borderColor}`,
-          borderRadius: 10,
-          boxShadow: shadow,
-          transition: "all 0.15s ease",
-          userSelect: "none",
-        }}
+        {...sharedDrag}
+        className="relative group/minicard overflow-hidden cursor-pointer nodrag nowheel col-span-2"
+        style={{ height: 120, border: `1px solid ${borderColor}`, borderRadius: 0, boxShadow: shadow, transition: "all 0.15s ease", userSelect: "none" }}
       >
         {onRemove && (
-          <button
-            className="nodrag absolute top-1.5 right-1.5 opacity-0 group-hover/minicard:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 text-[10px] leading-none z-20"
-            title="Remove from collection"
-            onClick={(e) => { e.stopPropagation(); onRemove(); }}
-          >✕</button>
+          <button className="nodrag absolute top-1.5 right-1.5 opacity-0 group-hover/minicard:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 text-[10px] leading-none z-20"
+            title="Remove" onClick={(e) => { e.stopPropagation(); onRemove(); }}>✕</button>
         )}
-        <div className="absolute top-0 left-0 right-0 p-2 flex items-center gap-1.5 z-10 bg-gradient-to-b from-black/30 to-transparent">
-          <span className="text-[8px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0 bg-black/50 text-white">
-            {TYPE_LABEL_SINGLE[item.card.type]}
-          </span>
-          {isSelected && <span className="text-[9px] text-white bg-blue-500/80 px-1 py-0.5 rounded shrink-0 font-bold">✓</span>}
+        <div className="absolute top-0 left-0 right-0 p-1.5 flex items-center gap-1.5 z-10 bg-gradient-to-b from-black/30 to-transparent">
+          <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#fff", opacity: 0.8, flexShrink: 0 }} />
+          {isSelected && <span className="text-[8px] text-white bg-blue-500/80 px-1 rounded font-bold">✓</span>}
         </div>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={imgSrc} alt={item.card.title} className="w-full h-full object-cover" />
-        <div className="absolute bottom-0 left-0 right-0 px-2 py-1.5 bg-gradient-to-t from-black/80 via-black/50 to-transparent z-10">
+        <div className="absolute bottom-0 left-0 right-0 px-2 py-1 bg-gradient-to-t from-black/80 via-black/40 to-transparent z-10">
           <p className="text-[9px] text-white leading-tight truncate font-medium">{item.card.title}</p>
         </div>
       </div>
     );
   }
 
+  // ── Concept / motif chip ────────────────────────────────────────────────────
+  if (isChip) {
+    return (
+      <div
+        {...sharedDrag}
+        className="relative group/minicard cursor-pointer nodrag nowheel"
+        style={{
+          minHeight: 28, background: bgColor,
+          border: "none",
+          borderLeft: item.card.type === "concept" ? `1.5px solid ${borderColor}` : "none",
+          borderRadius: 0,
+          boxShadow: shadow,
+          transition: "all 0.15s ease",
+          userSelect: "none",
+          display: "flex", alignItems: "center", flexWrap: "wrap",
+          gap: 6, paddingLeft: item.card.type === "concept" ? 7 : 8, paddingRight: onRemove ? 22 : 8,
+          paddingTop: 4, paddingBottom: 4,
+          position: "relative",
+        }}
+      >
+        {item.card.type === "motif" && (
+          <>
+            <span style={{ position: "absolute", top: 0, left: 0, width: 7, height: 7, borderTop: "1.5px solid #000", borderLeft: "1.5px solid #000" }} />
+            <span style={{ position: "absolute", top: 0, right: 0, width: 7, height: 7, borderTop: "1.5px solid #000", borderRight: "1.5px solid #000" }} />
+            <span style={{ position: "absolute", bottom: 0, left: 0, width: 7, height: 7, borderBottom: "1.5px solid #000", borderLeft: "1.5px solid #000" }} />
+            <span style={{ position: "absolute", bottom: 0, right: 0, width: 7, height: 7, borderBottom: "1.5px solid #000", borderRight: "1.5px solid #000" }} />
+          </>
+        )}
+        <p style={{ fontSize: 10, fontWeight: 500, color: "#2a2a2a", flex: 1, lineHeight: 1.4 }}>
+          {item.card.title}
+        </p>
+        {isSelected && <span style={{ fontSize: 8, color: "#000", flexShrink: 0, marginRight: 2 }}>✓</span>}
+        {onRemove && (
+          <button className="nodrag absolute right-1.5 opacity-0 group-hover/minicard:opacity-100 transition-opacity w-4 h-4 rounded-full flex items-center justify-center text-[#bbb] hover:text-red-400 text-[9px] leading-none"
+            style={{ top: "50%", transform: "translateY(-50%)" }}
+            title="Remove" onClick={(e) => { e.stopPropagation(); onRemove(); }}>✕</button>
+        )}
+      </div>
+    );
+  }
+
+  // ── Note card ───────────────────────────────────────────────────────────────
   return (
     <div
+      {...sharedDrag}
       className="relative group/minicard overflow-hidden cursor-pointer nodrag nowheel"
-      draggable
-      onDragStart={(e) => { e.stopPropagation(); onCardDragStart(e, item.card.id); }}
-      onClick={(e) => { e.stopPropagation(); onCardClick(item); }}
-      style={{
-        height: 76,
-        background: bgColor,
-        border: `1.5px solid ${borderColor}`,
-        borderRadius: 10,
-        boxShadow: shadow,
-        transition: "all 0.15s ease",
-        userSelect: "none",
-      }}
+      style={{ height: 68, background: bgColor, border: `1px solid ${borderColor}`, borderRadius: 0, boxShadow: shadow, transition: "all 0.15s ease", userSelect: "none" }}
     >
       {onRemove && (
-        <button
-          className="nodrag absolute top-1.5 right-1.5 opacity-0 group-hover/minicard:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 text-[10px] leading-none z-10"
-          title="Remove from collection"
-          onClick={(e) => { e.stopPropagation(); onRemove(); }}
-        >✕</button>
+        <button className="nodrag absolute top-1.5 right-1.5 opacity-0 group-hover/minicard:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 text-[10px] leading-none z-10"
+          title="Remove" onClick={(e) => { e.stopPropagation(); onRemove(); }}>✕</button>
       )}
-      <div className="p-2.5 flex flex-col gap-1 h-full">
+      <div className="p-2 flex flex-col gap-0.5 h-full">
         <div className="flex items-center gap-1.5 pr-4">
-          <span
-            className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0"
-            style={{ background: ts.badgeBg, color: ts.badgeText }}
-          >
+          <span className="text-[8px] uppercase tracking-[0.12em] shrink-0" style={{ color: "rgba(0,0,0,0.4)" }}>
             {TYPE_LABEL_SINGLE[item.card.type]}
           </span>
-          {isSelected && <span className="text-[9px] text-blue-600 shrink-0">✓</span>}
+          {isSelected && <span className="text-[9px] text-black shrink-0">✓</span>}
         </div>
-        <p className="text-[11px] font-medium text-[#333] leading-tight line-clamp-2 flex-1">{item.card.title}</p>
-        <p className="text-[9px] text-[#bbb] truncate">{ACTION_LABEL[item.actionType] ?? item.actionType}</p>
+        <p className="text-[10px] text-[#111] leading-tight line-clamp-2 flex-1">{item.card.title}</p>
+        <p className="text-[9px] truncate" style={{ color: "rgba(0,0,0,0.3)" }}>{ACTION_LABEL[item.actionType] ?? item.actionType}</p>
       </div>
     </div>
   );
@@ -200,12 +226,13 @@ function CollectionNodeComponent({ data }: NodeProps) {
 
   return (
     <div
-      className="rounded-2xl overflow-hidden transition-shadow"
+      className="overflow-hidden transition-shadow"
       style={{
         width: 320,
-        background: isDragOver ? `${color}18` : "#fff",
-        border: `2px solid ${isDragOver ? color : "#e4e3e0"}`,
-        boxShadow: isDragOver ? `0 0 0 3px ${color}33` : "0 2px 8px rgba(0,0,0,0.08)",
+        background: isDragOver ? `${color}10` : "#fff",
+        border: `1.5px solid ${isDragOver ? color : "rgba(0,0,0,0.18)"}`,
+        borderRadius: 0,
+        boxShadow: isDragOver ? `2px 2px 0px ${color}` : "none",
       }}
       onDragOver={onContainerDragOver}
       onDragEnter={(e) => onContainerDragEnter(e, collectionId)}
@@ -215,7 +242,7 @@ function CollectionNodeComponent({ data }: NodeProps) {
       {/* Header — acts as drag handle for the RF node */}
       <div
         className="px-3 py-2.5 flex items-center gap-2 cursor-grab"
-        style={{ background: `${color}22`, borderBottom: `1px solid ${color}44` }}
+        style={{ background: `${color}16`, borderBottom: `1px solid ${color}55` }}
       >
         <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color }} />
         {isEditing ? (
@@ -274,8 +301,8 @@ function CollectionNodeComponent({ data }: NodeProps) {
       <div className="nodrag nowheel p-2.5">
         {items.length === 0 ? (
           <div
-            className="flex items-center justify-center py-5 rounded-lg border-2 border-dashed"
-            style={{ borderColor: `${color}55` }}
+            className="flex items-center justify-center py-5 border border-dashed"
+            style={{ borderColor: `${color}70`, borderRadius: 0 }}
           >
             <p className="text-[10px] text-[#bbb]">{isDragOver ? "Drop here ↓" : "Drag cards here"}</p>
           </div>
@@ -311,18 +338,18 @@ function TypeGroupNodeComponent({ data }: NodeProps) {
   if (items.length === 0) {
     return (
       <div
-        className="rounded-2xl overflow-hidden opacity-40"
-        style={{ width: 320, background: s.clusterBg, border: `1.5px dashed ${s.border}` }}
+        className="overflow-hidden opacity-35"
+        style={{ width: 320, background: s.clusterBg, border: `1px dashed rgba(0,0,0,0.3)`, borderRadius: 0 }}
         onDragOver={onContainerDragOver}
         onDragEnter={(e) => onContainerDragEnter(e, `type::${typeName}`)}
         onDragLeave={onContainerDragLeave}
         onDrop={(e) => onContainerDrop(e, null)}
       >
         <div className="px-3 py-3 flex items-center gap-2 cursor-grab">
-          <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full" style={{ background: s.badgeBg, color: s.badgeText }}>
+          <span className="text-[9px] uppercase tracking-[0.14em]" style={{ color: "rgba(0,0,0,0.45)" }}>
             {TYPE_LABEL_PLURAL[typeName]}
           </span>
-          <span className="text-[9px] text-[#bbb]">none yet</span>
+          <span className="text-[9px] italic" style={{ color: "rgba(0,0,0,0.3)" }}>none yet</span>
         </div>
       </div>
     );
@@ -330,12 +357,13 @@ function TypeGroupNodeComponent({ data }: NodeProps) {
 
   return (
     <div
-      className="rounded-2xl overflow-hidden transition-shadow"
+      className="overflow-hidden transition-shadow"
       style={{
         width: 320,
-        background: isDragOver ? "#eff6ff" : s.clusterBg,
-        border: `1.5px solid ${isDragOver ? "#2563eb" : s.border}`,
-        boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+        background: isDragOver ? "#f5f4f0" : s.clusterBg,
+        border: `1px solid ${isDragOver ? "#000" : "rgba(0,0,0,0.18)"}`,
+        borderRadius: 0,
+        boxShadow: isDragOver ? "2px 2px 0px rgba(0,0,0,0.4)" : "none",
       }}
       onDragOver={onContainerDragOver}
       onDragEnter={(e) => onContainerDragEnter(e, `type::${typeName}`)}
@@ -344,12 +372,12 @@ function TypeGroupNodeComponent({ data }: NodeProps) {
     >
       <div
         className="px-3 py-2.5 flex items-center gap-2 cursor-grab"
-        style={{ background: `${s.badgeBg}18`, borderBottom: `1px solid ${s.border}44` }}
+        style={{ background: "rgba(0,0,0,0.04)", borderBottom: "1px solid rgba(0,0,0,0.1)" }}
       >
-        <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full" style={{ background: s.badgeBg, color: s.badgeText }}>
+        <span className="text-[9px] uppercase tracking-[0.14em]" style={{ color: "rgba(0,0,0,0.5)" }}>
           {TYPE_LABEL_PLURAL[typeName]}
         </span>
-        <span className="text-[9px] text-[#aaa] flex-1">{items.length}</span>
+        <span className="text-[9px] flex-1" style={{ color: "rgba(0,0,0,0.3)" }}>{items.length}</span>
       </div>
       <div className="nodrag nowheel p-2.5">
         <div className="grid grid-cols-2 gap-2">
@@ -588,30 +616,33 @@ export default function ClusterView({
             {/* New collection button */}
             <Panel position="top-right">
               {newColForm.open ? (
-                <div className="bg-white rounded-2xl border border-[#e4e3e0] shadow-lg p-4 w-64 flex flex-col gap-3">
-                  <p className="text-[11px] font-semibold text-[#333]">New Collection</p>
+                <div className="bg-white border border-[rgba(0,0,0,0.18)] shadow-lg p-4 w-64 flex flex-col gap-3" style={{ borderRadius: 0 }}>
+                  <p className="text-[11px] uppercase tracking-[0.12em] text-[rgba(0,0,0,0.5)]">New Collection</p>
                   <input
                     autoFocus
                     placeholder="Collection title…"
                     value={newColForm.title}
                     onChange={(e) => setNewColForm((p) => ({ ...p, title: e.target.value }))}
                     onKeyDown={(e) => e.key === "Enter" && createCollection()}
-                    className="text-[11px] border border-[#e4e3e0] rounded-lg px-2.5 py-1.5 outline-none focus:border-[#3b82f6]/60"
+                    className="text-[11px] border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 outline-none focus:border-black"
+                    style={{ borderRadius: 0 }}
                   />
                   <input
                     placeholder="Description (optional)…"
                     value={newColForm.description}
                     onChange={(e) => setNewColForm((p) => ({ ...p, description: e.target.value }))}
                     onKeyDown={(e) => e.key === "Enter" && createCollection()}
-                    className="text-[11px] border border-[#e4e3e0] rounded-lg px-2.5 py-1.5 outline-none focus:border-[#3b82f6]/60"
+                    className="text-[11px] border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 outline-none focus:border-black"
+                    style={{ borderRadius: 0 }}
                   />
                   <div className="flex gap-1.5 flex-wrap">
                     {COLLECTION_COLORS.map((color, i) => (
                       <button
                         key={color}
                         onClick={() => setNewColForm((p) => ({ ...p, colorIdx: i }))}
-                        className="w-5 h-5 rounded-full border-2 transition-transform"
+                        className="w-5 h-5 border-2 transition-transform"
                         style={{
+                          borderRadius: 0,
                           background: color,
                           borderColor: newColForm.colorIdx === i ? "#333" : "transparent",
                           transform: newColForm.colorIdx === i ? "scale(1.2)" : "scale(1)",
@@ -622,18 +653,20 @@ export default function ClusterView({
                   <div className="flex gap-2">
                     <button
                       onClick={createCollection}
-                      className="text-[11px] text-white bg-[#333] hover:bg-[#111] rounded-lg px-3 py-1 font-medium transition-colors"
+                      className="text-[11px] text-white bg-black hover:bg-[#333] px-3 py-1 transition-colors"
+                      style={{ borderRadius: 0 }}
                     >Create</button>
                     <button
                       onClick={() => setNewColForm((p) => ({ ...p, open: false, title: "", description: "" }))}
-                      className="text-[11px] text-[#aaa] hover:text-[#555] transition-colors"
+                      className="text-[11px] text-[rgba(0,0,0,0.4)] hover:text-black transition-colors"
                     >Cancel</button>
                   </div>
                 </div>
               ) : (
                 <button
                   onClick={() => setNewColForm((p) => ({ ...p, open: true }))}
-                  className="bg-white rounded-xl border border-[#e4e3e0] shadow-sm hover:shadow-md text-[11px] text-[#555] hover:text-[#111] font-medium px-4 py-2 transition-all"
+                  className="bg-white border border-[rgba(0,0,0,0.2)] hover:border-black text-[11px] text-[rgba(0,0,0,0.5)] hover:text-black px-4 py-2 transition-colors"
+                  style={{ borderRadius: 0 }}
                 >
                   + New Collection
                 </button>

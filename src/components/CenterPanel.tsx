@@ -93,17 +93,18 @@ export default function CenterPanel({
   return (
     <main className="flex-1 min-w-0 h-screen flex flex-col overflow-hidden">
       {/* View toggle */}
-      <div className="px-5 pt-4 pb-3 border-b bg-white" style={{ borderColor: "#ccc9c0" }}>
+      <div className="px-5 pt-2.5 pb-2.5 bg-white" style={{ borderBottom: "1px solid rgba(0,0,0,0.1)" }}>
         <div className="flex items-center gap-1">
           {(["feed", "tree", "clusters"] as const).map((v) => (
             <button
               key={v}
               onClick={() => setView(v)}
-              className={`text-[11px] px-3 py-1 rounded-sm border transition-colors capitalize ${
+              className={`text-[12px] px-2.5 py-1 transition-colors capitalize tracking-wide ${
                 view === v
-                  ? "bg-[#111] text-white border-[#111]"
-                  : "text-[#888] border-transparent hover:border-[#ccc] hover:text-[#111]"
+                  ? "text-black border-b border-black"
+                  : "text-[rgba(0,0,0,0.35)] hover:text-black"
               }`}
+              style={{ borderRadius: 0 }}
             >
               {v}
             </button>
@@ -171,18 +172,18 @@ export default function CenterPanel({
 
       {/* Feed */}
       {view === "feed" && (
-        <div className="flex-1 overflow-y-auto px-5 py-5 flex flex-col gap-6">
+        <div className="flex-1 overflow-y-auto px-6 py-6 flex flex-col gap-8">
           {isGenerating && (
-            <div className="flex items-center gap-3 text-sm text-[#555] bg-white border border-[#111] rounded-sm px-4 py-3">
-              <span className="inline-block w-4 h-4 border-2 border-[#111] border-t-transparent rounded-full animate-spin" />
-              Running {generatingAction ? ACTION_LABELS[generatingAction] : "generation"}…
+            <div className="flex items-center gap-3 text-[14px] text-[#333232] bg-white border border-black px-4 py-3" style={{ borderRadius: 0 }}>
+              <span className="inline-block w-3.5 h-3.5 border border-black border-t-transparent rounded-full animate-spin" />
+              {generatingAction ? ACTION_LABELS[generatingAction] : "Generating"}…
             </div>
           )}
 
           {generations.length === 0 && !isGenerating && (
-            <div className="flex flex-col items-center justify-center h-full text-center py-24 text-[#aaa]">
-              <p className="text-sm mb-1">Add inputs on the left, then choose an action above.</p>
-              <p className="text-xs">Results will appear here as structured cards.</p>
+            <div className="flex flex-col items-center justify-center h-full text-center py-24 text-[rgba(0,0,0,0.3)]">
+              <p className="text-[15px] italic mb-1">Add inputs on the left, then choose an action above.</p>
+              <p className="text-[13px]">Results will appear here as structured cards.</p>
             </div>
           )}
 
@@ -235,7 +236,7 @@ function GenerationBlock({
 
   const hasAnySources = sourceDrafts.length > 0 || sourceRefs.length > 0;
 
-  function truncate(s: string, n = 24) { return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+  function truncate(s: string, n = 22) { return s.length > n ? s.slice(0, n - 1) + "…" : s; }
 
   function handleMouseEnter() {
     if (hasAnySources) {
@@ -244,9 +245,10 @@ function GenerationBlock({
   }
 
   return (
-    <div className="flex flex-col gap-3" onMouseEnter={handleMouseEnter} onMouseLeave={() => onHoverSources(new Set(), new Set())}>
-      <div className="flex items-center gap-2 text-[11px] text-[#aaa] flex-wrap">
-        <span className="font-semibold text-[#888]">{label}</span>
+    <div className="flex flex-col gap-4" onMouseEnter={handleMouseEnter} onMouseLeave={() => onHoverSources(new Set(), new Set())}>
+      {/* Generation header */}
+      <div className="flex items-center gap-3 text-[12px] text-[rgba(0,0,0,0.38)]">
+        <span className="italic text-[rgba(0,0,0,0.55)]">{label}</span>
         <span>·</span>
         <span>{time}</span>
         {gen.cards.length > 0 && (
@@ -258,19 +260,19 @@ function GenerationBlock({
         {(gen.sourceCardIds ?? []).length > 0 && (
           <>
             <span>·</span>
-            <span className="text-[10px] text-[#bbb]">{gen.sourceCardIds!.length} node{gen.sourceCardIds!.length > 1 ? "s" : ""} as context</span>
+            <span>{gen.sourceCardIds!.length} node{gen.sourceCardIds!.length > 1 ? "s" : ""} as context</span>
           </>
         )}
         {hasAnySources && (
           <>
             <span>·</span>
             {sourceDrafts.map((a) => (
-              <span key={a.id} className="text-[10px] px-1.5 py-0.5 rounded-sm border" style={{ background: "#f5f5f4", borderColor: "#ccc", color: "#555" }} title={`Draft: ${a.fileName}`}>
+              <span key={a.id} className="italic" title={`Draft: ${a.fileName}`}>
                 ✎ {truncate(a.fileName)}
               </span>
             ))}
             {sourceRefs.map((a) => (
-              <span key={a.id} className="text-[10px] px-1.5 py-0.5 rounded-sm border" style={{ background: "#f0f0ff", borderColor: "#c5c5e8", color: "#4444aa" }} title={`Reference: ${a.fileName}`}>
+              <span key={a.id} className="italic" title={`Reference: ${a.fileName}`}>
                 ◈ {truncate(a.fileName)}
               </span>
             ))}
@@ -279,7 +281,7 @@ function GenerationBlock({
       </div>
 
       {gen.error && (
-        <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
+        <div className="text-[13px] text-black bg-white border border-black px-4 py-3" style={{ borderRadius: 0 }}>
           {gen.error}
         </div>
       )}
