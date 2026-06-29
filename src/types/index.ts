@@ -71,6 +71,7 @@ export interface Asset {
   fileName: string;
   dataUrl: string;
   note: string;
+  createdAt?: string;
 }
 
 export interface Highlight {

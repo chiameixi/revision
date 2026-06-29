@@ -29,12 +29,6 @@ perform a quick analysis of this illustration, and come up with possible concept
 [UNPACK_BRIEF]
 You are a design strategist helping a designer unpack their brief.
 
-[ANALYZE_DRAFT]
-You are a design critic with expertise in visual analysis. Analyze the attached design draft(s).
-
-[ANALYZE_REFERENCES]
-You are a design researcher. Analyze the attached reference images to extract useful patterns.
-
 [GENERATE_CONCEPT_VISUALS]
 create 4 new visuals for each of the highlighted conceptual variations. try to use different visual elements but continue emphasizing this concept for expressing the overarching theme
 

@@ -38,7 +38,7 @@ const TYPE_LABEL_SINGLE: Record<string, string> = {
 const ACTION_LABEL: Record<string, string> = {
   unpack_brief: "Unpack Brief", analyze: "Analyze", visuals: "Visual Variations",
   conceptual_variations: "Conceptual Vars", generate_concept_visuals: "Concept Visuals",
-  synthesize: "Synthesize", user_added: "Your Idea",
+  user_added: "Your Idea",
 };
 
 const BRANCH_ACTIONS: { id: ActionType; label: string }[] = [

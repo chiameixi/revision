@@ -187,7 +187,7 @@ const generateWithImageOutput = (prompt: string, url: string) => generateImageOu
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
-// Shared by unpack_brief, conceptual_variations, synthesize
+// Shared by unpack_brief and conceptual_variations
 const conceptSchema = {
   type: Type.OBJECT,
   required: ["concepts"],
@@ -552,43 +552,6 @@ Generate a 2×2 panel of 4 distinct visuals. Each visual should use clearly diff
     failed: results.filter((r) => r.status === "rejected").length,
   });
 
-  return cards;
-}
-
-async function handleSynthesize(req: GenerateRequest, log: BatchLogger): Promise<ConceptCard[]> {
-  if (!req.highlightSummaries.length) throw new Error("No saved highlights to synthesize.");
-
-  const prompt = `${getPrompt("SYNTHESIZE")}
-
-Design Context:
-${req.brief || "(none provided)"}
-
-Saved Ideas:
-${req.highlightSummaries.map((s, i) => `${i + 1}. ${s}`).join("\n\n")}
-${buildUserInstructions(req.userInstructions)}
-Return a JSON object with a "concepts" array. Each concept has:
-- title (3–6 words)
-- description (1–2 sentences: what this synthesized concept direction means)
-- rationale (1–2 sentences: why this combination of ideas is compelling)
-
-Generate 3–5 distinct concept directions that synthesize and elevate the best threads from the saved ideas.`;
-
-  log.write("request.json", { model: JSON_MODEL, imageCount: 0, prompt });
-  logPrompt("synthesize", JSON_MODEL, prompt, 0);
-  const startedAt = nowIso();
-  const { result: data, rawText } = await generateJson<{
-    concepts: Omit<ConceptCard, "id" | "type" | "createdAt">[];
-  }>(prompt, conceptSchema);
-  const endedAt = nowIso();
-  log.write("response.json", { rawText });
-  const cards = (data.concepts ?? []).map((item) => ({
-    id: crypto.randomUUID(),
-    type: "concept" as const,
-    createdAt: new Date().toISOString(),
-    ...item,
-  }));
-  log.write("result.json", cards);
-  log.write("timing.json", { startedAt, endedAt, durationSeconds: msDiff(startedAt, endedAt) });
   return cards;
 }
 
