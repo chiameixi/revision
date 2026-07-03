@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { Highlight, ResultCard, VisualCard } from "@/types";
+import styles from "./HighlightCard.module.css";
 
 const TYPE_LABELS: Record<string, string> = {
   concept: "Concept",
@@ -58,7 +59,7 @@ export default function HighlightCard({
 
   if (editingCard) {
     return (
-      <div className="bg-white border-2 border-black overflow-hidden" style={{ borderRadius: 0 }}>
+      <div className={`bg-white border-2 border-black overflow-hidden ${styles.sq}`}>
         <div className="p-3 flex flex-col gap-2">
           <div className="flex items-center justify-between gap-1">
             <span className="text-[9px] uppercase tracking-[0.16em] text-[rgba(0,0,0,0.45)]">
@@ -78,8 +79,7 @@ export default function HighlightCard({
           <input
             value={cardDraft.title}
             onChange={(e) => setCardDraft({ ...cardDraft, title: e.target.value } as ResultCard)}
-            className="text-[13px] text-black border border-black px-2 py-1.5 outline-none bg-white"
-            style={{ borderRadius: 0 }}
+            className={`text-[13px] text-black border border-black px-2 py-1.5 outline-none bg-white ${styles.sq}`}
           />
           <div>
             <p className="text-[9px] uppercase tracking-[0.14em] text-[rgba(0,0,0,0.4)] mb-0.5">{mainLabel}</p>
@@ -87,8 +87,7 @@ export default function HighlightCard({
               value={((cardDraft as unknown) as Record<string, string>)[mainField] ?? ""}
               onChange={(e) => setCardDraft({ ...cardDraft, [mainField]: e.target.value } as ResultCard)}
               rows={3}
-              className="w-full text-[12px] text-[#333232] border border-black px-2 py-1.5 resize-y outline-none bg-white leading-relaxed"
-              style={{ borderRadius: 0 }}
+              className={`w-full text-[12px] text-[#333232] border border-black px-2 py-1.5 resize-y outline-none bg-white leading-relaxed ${styles.sq}`}
             />
           </div>
         </div>
@@ -98,13 +97,12 @@ export default function HighlightCard({
 
   return (
     <div
-      className="overflow-hidden group"
+      className={`overflow-hidden group ${styles.sq}`}
       style={{
         border: isHighlighted ? "1px solid rgba(201,168,76,0.8)" : "1px solid rgba(0,0,0,0.18)",
         borderLeft: isHighlighted ? "2.5px solid rgba(201,168,76,0.9)" : pinned ? "2.5px solid black" : "1px solid rgba(0,0,0,0.18)",
         background: isHighlighted ? "rgba(201,168,76,0.05)" : "white",
         transition: "border-color 0.2s ease, background 0.2s ease",
-        borderRadius: 0,
       }}
     >
       <div className="p-3 flex flex-col gap-2">
@@ -130,18 +128,15 @@ export default function HighlightCard({
           <img
             src={(card as VisualCard).imageDataUrl}
             alt={card.title}
-            className="w-full object-cover transition-all border border-[rgba(0,0,0,0.1)]"
-            style={{ maxHeight: expanded ? 200 : 96, objectPosition: "top", borderRadius: 0 }}
+            className={`w-full object-cover object-top transition-all border border-[rgba(0,0,0,0.1)] ${styles.sq}`}
+            style={{ maxHeight: expanded ? 200 : 96 }}
           />
         )}
 
         {/* Subtext */}
         {subtext && (
           <div>
-            <p
-              className="text-[12px] text-[#333232] leading-relaxed"
-              style={expanded ? {} : { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}
-            >
+            <p className={`text-[12px] text-[#333232] leading-relaxed ${expanded ? "" : styles.lineClamp}`}>
               {subtext}
             </p>
             {subtext.length > 90 && (
@@ -160,8 +155,7 @@ export default function HighlightCard({
               onChange={(e) => setNoteValue(e.target.value)}
               rows={2}
               autoFocus
-              className="text-[12px] border border-black px-2 py-1.5 resize-none outline-none text-black bg-white"
-              style={{ borderRadius: 0 }}
+              className={`text-[12px] border border-black px-2 py-1.5 resize-none outline-none text-black bg-white ${styles.sq}`}
               placeholder="Add a note…"
             />
             <div className="flex gap-2">

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { ConceptCard as ConceptCardType, ResultCard } from "@/types";
+import styles from "./ConceptCard.module.css";
 
 interface Props {
   card: ConceptCardType;
@@ -22,8 +23,7 @@ function EditField({ label, value, onChange, rows = 3 }: {
         value={value}
         onChange={(e) => onChange(e.target.value)}
         rows={rows}
-        className="w-full text-[14px] text-black border border-black px-3 py-2 resize-y outline-none bg-white leading-relaxed"
-        style={{ borderRadius: 0 }}
+        className={`w-full text-[14px] text-black border border-black px-3 py-2 resize-y outline-none bg-white leading-relaxed ${styles.sq}`}
       />
     </div>
   );
@@ -40,7 +40,7 @@ export default function ConceptCard({ card, isSaved, onSave, onDismiss, onGenera
 
   if (isEditing) {
     return (
-      <div className="bg-white p-4 flex flex-col gap-3" style={{ borderLeft: "1px solid black" }}>
+      <div className={`bg-white p-4 flex flex-col gap-3 ${styles.card}`}>
         <div className="flex items-center justify-between">
           <ConceptLabel />
           <div className="flex items-center gap-3 shrink-0">
@@ -53,8 +53,7 @@ export default function ConceptCard({ card, isSaved, onSave, onDismiss, onGenera
           <input
             value={draft.title}
             onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-            className="w-full text-[16px] text-black border border-black px-3 py-2 outline-none bg-white"
-            style={{ borderRadius: 0 }}
+            className={`w-full text-[16px] text-black border border-black px-3 py-2 outline-none bg-white ${styles.sq}`}
           />
         </div>
         <EditField label="Description" value={draft.description} onChange={(v) => setDraft({ ...draft, description: v })} />
@@ -64,7 +63,7 @@ export default function ConceptCard({ card, isSaved, onSave, onDismiss, onGenera
   }
 
   return (
-    <div className="bg-white p-4 flex flex-col gap-3 group" style={{ borderLeft: "1px solid black" }}>
+    <div className={`bg-white p-4 flex flex-col gap-3 group ${styles.card}`}>
       <div className="flex items-start justify-between gap-2">
         <ConceptLabel />
         <div className="flex items-center gap-2 shrink-0">
@@ -74,10 +73,9 @@ export default function ConceptCard({ card, isSaved, onSave, onDismiss, onGenera
           <button
             onClick={onSave}
             disabled={isSaved}
-            className={`text-[11px] px-2 py-0.5 border transition-colors ${
+            className={`text-[11px] px-2 py-0.5 border transition-colors ${styles.sq} ${
               isSaved ? "text-[rgba(0,0,0,0.3)] border-[rgba(0,0,0,0.2)] cursor-default" : "text-black border-black hover:bg-black hover:text-white"
             }`}
-            style={{ borderRadius: 0 }}
           >
             {isSaved ? "Saved" : "Save"}
           </button>
@@ -103,8 +101,7 @@ export default function ConceptCard({ card, isSaved, onSave, onDismiss, onGenera
         <div className="pt-2 border-t border-[rgba(0,0,0,0.1)]">
           <button
             onClick={onGenerateVisuals}
-            className="text-[12px] text-black border border-dashed border-[rgba(0,0,0,0.5)] hover:border-black px-3 py-1.5 transition-colors w-full"
-            style={{ borderRadius: 0 }}
+            className={`text-[12px] text-black border border-dashed border-[rgba(0,0,0,0.5)] hover:border-black px-3 py-1.5 transition-colors w-full ${styles.sq}`}
           >
             Generate Visuals →
           </button>
@@ -116,11 +113,8 @@ export default function ConceptCard({ card, isSaved, onSave, onDismiss, onGenera
 
 function ConceptLabel() {
   return (
-    <span
-      className="inline-flex items-center justify-center shrink-0 bg-white"
-      style={{ borderLeft: "1px solid black", paddingLeft: 12, paddingRight: 12, paddingTop: 6, paddingBottom: 6 }}
-    >
-      <span className="text-[15px] text-black" style={{ fontStyle: "normal", lineHeight: "1.5" }}>Concept</span>
+    <span className={`inline-flex items-center justify-center shrink-0 bg-white ${styles.label}`}>
+      <span className={`text-[15px] text-black ${styles.labelText}`}>Concept</span>
     </span>
   );
 }

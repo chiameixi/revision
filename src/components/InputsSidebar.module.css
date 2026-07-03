@@ -1,0 +1,16 @@
+.aside {
+  border-right: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.divider {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.collapseBtn {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.sq {
+  border-radius: 0;
+}

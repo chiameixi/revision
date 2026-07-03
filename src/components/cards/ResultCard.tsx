@@ -5,6 +5,7 @@ import type { ConceptCard as ConceptCardType, NoteCard, ResultCard as ResultCard
 import ConceptCard from "./ConceptCard";
 import MotifCard from "./MotifCard";
 import VisualCard from "./VisualVariationCard";
+import styles from "./ResultCard.module.css";
 
 interface Props {
   card: ResultCardType;
@@ -81,7 +82,7 @@ function NoteCardComponent({
 
   if (isEditing) {
     return (
-      <div className="bg-white border-2 border-black p-4 flex flex-col gap-3" style={{ borderRadius: 0 }}>
+      <div className={`bg-white border-2 border-black p-4 flex flex-col gap-3 ${styles.sq}`}>
         <div className="flex items-center justify-between">
           <NoteLabel />
           <div className="flex items-center gap-3 shrink-0">
@@ -91,25 +92,25 @@ function NoteCardComponent({
         </div>
         <div>
           <p className="text-[9px] uppercase tracking-[0.16em] text-[rgba(0,0,0,0.4)] mb-1">Title</p>
-          <input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} className="w-full text-[16px] text-black border border-black px-3 py-2 outline-none bg-white" style={{ borderRadius: 0 }} />
+          <input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} className={`w-full text-[16px] text-black border border-black px-3 py-2 outline-none bg-white ${styles.sq}`} />
         </div>
         <div>
           <p className="text-[9px] uppercase tracking-[0.16em] text-[rgba(0,0,0,0.4)] mb-1">Body</p>
-          <textarea value={draft.body} onChange={(e) => setDraft({ ...draft, body: e.target.value })} rows={4} className="w-full text-[14px] text-black border border-black px-3 py-2 resize-y outline-none bg-white leading-relaxed" style={{ borderRadius: 0 }} />
+          <textarea value={draft.body} onChange={(e) => setDraft({ ...draft, body: e.target.value })} rows={4} className={`w-full text-[14px] text-black border border-black px-3 py-2 resize-y outline-none bg-white leading-relaxed ${styles.sq}`} />
         </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-white border border-black p-4 flex flex-col gap-3 group" style={{ borderRadius: 0 }}>
+    <div className={`bg-white border border-black p-4 flex flex-col gap-3 group ${styles.sq}`}>
       <div className="flex items-start justify-between gap-2">
         <NoteLabel />
         <div className="flex items-center gap-2 shrink-0">
           {onUpdate && (
             <button onClick={startEdit} className="text-[rgba(0,0,0,0.2)] hover:text-black text-sm transition-colors opacity-0 group-hover:opacity-100" title="Edit">✎</button>
           )}
-          <button onClick={onSave} disabled={isSaved} className={`text-[11px] px-2 py-0.5 border transition-colors ${isSaved ? "text-[rgba(0,0,0,0.3)] border-[rgba(0,0,0,0.2)] cursor-default" : "text-black border-black hover:bg-black hover:text-white"}`} style={{ borderRadius: 0 }}>
+          <button onClick={onSave} disabled={isSaved} className={`text-[11px] px-2 py-0.5 border transition-colors ${styles.sq} ${isSaved ? "text-[rgba(0,0,0,0.3)] border-[rgba(0,0,0,0.2)] cursor-default" : "text-black border-black hover:bg-black hover:text-white"}`}>
             {isSaved ? "Saved" : "Save"}
           </button>
           <button onClick={onDismiss} className="text-[rgba(0,0,0,0.3)] hover:text-black text-lg leading-none transition-colors">×</button>

@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import type { Asset, ComposerState, ResultCard } from "@/types";
 import { DIMENSIONS } from "@/lib/dimensions";
+import styles from "./CallComposerModal.module.css";
 
 const ACTION_LABELS: Record<string, string> = {
   unpack_brief: "Unpack Brief",
@@ -97,9 +98,9 @@ export default function CallComposerModal({
       className="fixed inset-0 bg-black/25 z-50 flex items-center justify-center p-4"
       onClick={handleBackdropClick}
     >
-      <div className="bg-white border border-black w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden" style={{ borderRadius: 0 }}>
+      <div className={`bg-white border border-black w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden ${styles.sq}`}>
         {/* Header */}
-        <div className="px-6 pt-6 pb-5" style={{ borderBottom: "1px solid rgba(0,0,0,0.12)" }}>
+        <div className={`px-6 pt-6 pb-5 ${styles.header}`}>
           <div className="flex items-start justify-between gap-4">
             <div>
               <h2 className="text-[20px] text-black">{ACTION_LABELS[action]}</h2>
@@ -114,7 +115,7 @@ export default function CallComposerModal({
           {/* Brief preview */}
           <div>
             <p className="text-[9px] uppercase tracking-[0.16em] text-[rgba(0,0,0,0.4)] mb-2">Brief</p>
-            <div className="bg-[#f5f4f0] border border-[rgba(0,0,0,0.2)] px-3 py-2.5 text-[14px] text-[#333232] max-h-20 overflow-y-auto leading-relaxed" style={{ borderRadius: 0 }}>
+            <div className={`bg-[#f5f4f0] border border-[rgba(0,0,0,0.2)] px-3 py-2.5 text-[14px] text-[#333232] max-h-20 overflow-y-auto leading-relaxed ${styles.sq}`}>
               {brief || <span className="italic text-[rgba(0,0,0,0.3)]">No brief provided</span>}
             </div>
           </div>
@@ -131,10 +132,9 @@ export default function CallComposerModal({
                   return (
                     <label
                       key={card.id}
-                      className={`flex items-start gap-2.5 px-3 py-2 border cursor-pointer transition-colors ${
+                      className={`flex items-start gap-2.5 px-3 py-2 border cursor-pointer transition-colors ${styles.sq} ${
                         included ? "border-black bg-[#f5f4f0]" : "border-[rgba(0,0,0,0.18)] hover:border-[rgba(0,0,0,0.4)] opacity-50"
                       }`}
-                      style={{ borderRadius: 0 }}
                     >
                       <input
                         type="checkbox"
@@ -155,7 +155,7 @@ export default function CallComposerModal({
 
           {/* No canvas selection hint */}
           {!showSelectedCards && action !== "generate_concept_visuals" && (
-            <div className="text-[12px] italic text-[rgba(0,0,0,0.35)] bg-[#f5f4f0] border border-[rgba(0,0,0,0.1)] px-3 py-2.5" style={{ borderRadius: 0 }}>
+            <div className={`text-[12px] italic text-[rgba(0,0,0,0.35)] bg-[#f5f4f0] border border-[rgba(0,0,0,0.1)] px-3 py-2.5 ${styles.sq}`}>
               No canvas nodes selected — select nodes on the canvas before running an action to include them as context.
             </div>
           )}
@@ -166,7 +166,7 @@ export default function CallComposerModal({
               <p className="text-[9px] uppercase tracking-[0.16em] text-[rgba(0,0,0,0.4)] mb-2">Generating visuals for</p>
               <div className="flex flex-col gap-1.5">
                 {(state.conceptCards ?? []).map((card) => (
-                  <div key={card.id} className="bg-[#f5f4f0] border border-black px-3 py-2" style={{ borderRadius: 0 }}>
+                  <div key={card.id} className={`bg-[#f5f4f0] border border-black px-3 py-2 ${styles.sq}`}>
                     <p className="text-[13px] text-black">{card.title}</p>
                     <p className="text-[12px] italic text-[rgba(0,0,0,0.5)] mt-0.5 leading-snug">{card.description}</p>
                   </div>
@@ -189,10 +189,9 @@ export default function CallComposerModal({
                     <button
                       key={a.id}
                       onClick={() => toggleDraft(a.id)}
-                      className={`relative w-16 h-16 overflow-hidden border-2 transition-all ${
+                      className={`relative w-16 h-16 overflow-hidden border-2 transition-all ${styles.sq} ${
                         included ? "border-black opacity-100" : "border-[rgba(0,0,0,0.2)] opacity-40 hover:opacity-70"
                       }`}
-                      style={{ borderRadius: 0 }}
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={a.dataUrl} alt={a.fileName} className="w-full h-full object-cover" />
@@ -217,10 +216,9 @@ export default function CallComposerModal({
                     <button
                       key={a.id}
                       onClick={() => toggleRef(a.id)}
-                      className={`relative w-16 h-16 overflow-hidden border-2 transition-all ${
+                      className={`relative w-16 h-16 overflow-hidden border-2 transition-all ${styles.sq} ${
                         included ? "border-black opacity-100" : "border-[rgba(0,0,0,0.2)] opacity-40 hover:opacity-70"
                       }`}
-                      style={{ borderRadius: 0 }}
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={a.dataUrl} alt={a.fileName} className="w-full h-full object-cover" />
@@ -255,10 +253,9 @@ export default function CallComposerModal({
                     <button
                       key={dim.id}
                       onClick={() => toggleDimension(dim.id)}
-                      className={`text-[12px] px-2.5 py-1 border transition-colors ${
+                      className={`text-[12px] px-2.5 py-1 border transition-colors ${styles.sq} ${
                         selected ? "bg-black text-white border-black" : "text-[rgba(0,0,0,0.55)] border-[rgba(0,0,0,0.25)] hover:border-black hover:text-black"
                       }`}
-                      style={{ borderRadius: 0 }}
                     >
                       {dim.label}
                     </button>
@@ -282,19 +279,17 @@ export default function CallComposerModal({
               onChange={(e) => onChange({ ...state, userInstructions: e.target.value })}
               placeholder="Add any specific focus, constraints, or direction for this call…"
               rows={3}
-              className="w-full text-[14px] text-[#333232] bg-[#f5f4f0] border border-[rgba(0,0,0,0.2)] px-3 py-2.5 resize-none outline-none focus:border-black placeholder-[rgba(0,0,0,0.3)] leading-relaxed italic"
-              style={{ borderRadius: 0 }}
+              className={`w-full text-[14px] text-[#333232] bg-[#f5f4f0] border border-[rgba(0,0,0,0.2)] px-3 py-2.5 resize-none outline-none focus:border-black placeholder-[rgba(0,0,0,0.3)] leading-relaxed italic ${styles.sq}`}
             />
           </div>
         </div>
 
         {/* Footer */}
-        <div className="px-6 pb-6 pt-4 flex items-center justify-between gap-4" style={{ borderTop: "1px solid rgba(0,0,0,0.12)" }}>
+        <div className={`px-6 pb-6 pt-4 flex items-center justify-between gap-4 ${styles.footer}`}>
           <button onClick={onClose} className="text-[14px] italic text-[rgba(0,0,0,0.45)] hover:text-black transition-colors">Cancel</button>
           <button
             onClick={() => onSend(state)}
-            className="bg-black text-white text-[15px] px-6 py-2.5 hover:opacity-75 transition-opacity"
-            style={{ borderRadius: 0 }}
+            className={`bg-black text-white text-[15px] px-6 py-2.5 hover:opacity-75 transition-opacity ${styles.sq}`}
           >
             Send →
           </button>

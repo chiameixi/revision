@@ -30,6 +30,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import type { Asset, Collection, Generation, ManualEdge, ResultCard, ActionType, VisualCard } from "@/types";
+import styles from "./TreeView.module.css";
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 // Chip nodes (concept / motif): fixed width, height wraps with text
@@ -302,10 +303,7 @@ function TextCardNode(props: NodeProps) {
   const handleStyle = (pos: "left" | "right"): React.CSSProperties => ({
     opacity: connectMode ? 1 : 0,
     pointerEvents: connectMode ? "auto" : "none",
-    width: 10, height: 10,
     background: pos === "right" ? "#64748b" : "#94a3b8",
-    border: "2px solid white",
-    borderRadius: "50%",
   });
   const s = TYPE_STYLE[card.type] ?? TYPE_STYLE.concept;
   const primaryColor = collectionColors?.[0];
@@ -334,29 +332,14 @@ function TextCardNode(props: NodeProps) {
   if (isChip) {
     return (
       <>
-        <Handle type="target" position={Position.Left} style={handleStyle("left")} />
+        <Handle type="target" position={Position.Left} className={styles.handleDot} style={handleStyle("left")} />
         <div
-          className="relative group"
+          className={`relative group ${styles.chipNode}`}
           style={{
-            width: CHIP_W,
-            minHeight: CHIP_H_MIN,
             background: bgColor,
-            border: "none",
             borderLeft: card.type === "concept" ? `1.5px solid ${borderColor}` : "none",
-            borderRadius: 0,
             boxShadow: shadow,
-            transition: "all 0.15s ease",
-            cursor: "pointer",
-            userSelect: "none",
-            display: "flex",
-            alignItems: "flex-start",
-            flexWrap: "wrap",
-            gap: 4,
             paddingLeft: card.type === "concept" ? 9 : 10,
-            paddingRight: 22,
-            paddingTop: 6,
-            paddingBottom: 6,
-            position: "relative",
           }}
         >
           {/* Motif: 4 corner L-bracket marks */}
@@ -382,23 +365,22 @@ function TextCardNode(props: NodeProps) {
               ))}
             </div>
           )}
-          <p style={{ fontSize: 10, fontWeight: 500, color: "#2a2a2a", flex: 1, lineHeight: 1.4 }}>
+          <p className={styles.chipText}>
             {card.title}
           </p>
           {(isMultiSelected || isSelected) && (
-            <span style={{ fontSize: 8, color: "#000", flexShrink: 0, marginRight: 2 }}>✓</span>
+            <span className={styles.chipCheck}>✓</span>
           )}
           {isSaved && !isSelected && !isMultiSelected && (
-            <span style={{ fontSize: 9, color: "rgba(0,0,0,0.55)", flexShrink: 0, marginRight: 2 }}>★</span>
+            <span className={styles.chipStar}>★</span>
           )}
           <button
-            className="absolute right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 flex items-center justify-center text-[rgba(0,0,0,0.3)] hover:text-black text-[9px] leading-none"
-            style={{ top: "50%", transform: "translateY(-50%)" }}
+            className={`absolute right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 flex items-center justify-center text-[rgba(0,0,0,0.3)] hover:text-black text-[9px] leading-none ${styles.centerY}`}
             onClick={(e) => { e.stopPropagation(); onRemove(genId, card.id); }}
             title="Remove from tree"
           >✕</button>
         </div>
-        <Handle type="source" position={Position.Right} style={handleStyle("right")} />
+        <Handle type="source" position={Position.Right} className={styles.handleDot} style={handleStyle("right")} />
       </>
     );
   }
@@ -406,20 +388,13 @@ function TextCardNode(props: NodeProps) {
   // ── Note card ───────────────────────────────────────────────────────────────
   return (
     <>
-      <Handle type="target" position={Position.Left} style={handleStyle("left")} />
+      <Handle type="target" position={Position.Left} className={styles.handleDot} style={handleStyle("left")} />
       <div
-        className="relative group"
+        className={`relative group ${styles.noteNode}`}
         style={{
-          width: NODE_W,
-          height: NODE_H,
           background: bgColor,
           border: `1px solid ${borderColor}`,
-          borderRadius: 0,
           boxShadow: shadow,
-          transition: "all 0.15s ease",
-          overflow: "hidden",
-          cursor: "pointer",
-          userSelect: "none",
         }}
       >
         {collectionColors && collectionColors.length > 0 && !isMultiSelected && !isSelected && (
@@ -431,36 +406,32 @@ function TextCardNode(props: NodeProps) {
         )}
         {!connectMode && (
           <button
-            className="absolute right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 flex items-center justify-center text-[rgba(0,0,0,0.3)] hover:text-black text-[9px] leading-none z-10"
-            style={{ top: "50%", transform: "translateY(-50%)" }}
+            className={`absolute right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 flex items-center justify-center text-[rgba(0,0,0,0.3)] hover:text-black text-[9px] leading-none z-10 ${styles.centerY}`}
             onClick={(e) => { e.stopPropagation(); onRemove(genId, card.id); }}
             title="Remove from tree"
           >✕</button>
         )}
-        <div className="p-2.5 flex flex-col justify-center" style={{ height: NODE_H }}>
+        <div className={`p-2.5 flex flex-col justify-center ${styles.noteBody}`}>
           {card.type !== "note" && (
             <div className="flex items-center gap-1.5 pr-4">
-              <span
-                className="text-[8px] uppercase tracking-[0.14em] shrink-0"
-                style={{ color: "rgba(0,0,0,0.45)" }}
-              >
+              <span className="text-[8px] uppercase tracking-[0.14em] shrink-0 text-[rgba(0,0,0,0.45)]">
                 {TYPE_LABEL[card.type]}
               </span>
               {(isMultiSelected || isSelected) && <span className="text-[9px] text-black shrink-0">✓</span>}
-              {isSaved && <span className="text-[10px] shrink-0" style={{ color: "rgba(0,0,0,0.5)" }} title="Saved">★</span>}
+              {isSaved && <span className="text-[10px] shrink-0 text-[rgba(0,0,0,0.5)]" title="Saved">★</span>}
             </div>
           )}
           <p className="text-[11px] text-[#111] leading-tight line-clamp-2 flex-1">
             {card.title}
           </p>
           {card.type !== "note" && (
-            <p className="text-[9px] truncate" style={{ color: "rgba(0,0,0,0.3)" }}>
+            <p className="text-[9px] truncate text-[rgba(0,0,0,0.3)]">
               {ACTION_LABEL[actionType] ?? actionType}
             </p>
           )}
         </div>
       </div>
-      <Handle type="source" position={Position.Right} style={handleStyle("right")} />
+      <Handle type="source" position={Position.Right} className={styles.handleDot} style={handleStyle("right")} />
     </>
   );
 }
@@ -477,10 +448,7 @@ function VisualCardNode(props: NodeProps) {
   const handleStyle = (pos: "left" | "right"): React.CSSProperties => ({
     opacity: connectMode ? 1 : 0,
     pointerEvents: connectMode ? "auto" : "none",
-    width: 10, height: 10,
     background: pos === "right" ? "#64748b" : "#94a3b8",
-    border: "2px solid white",
-    borderRadius: "50%",
   });
   const s = TYPE_STYLE.visual;
   const visualCard = card as VisualCard;
@@ -501,19 +469,12 @@ function VisualCardNode(props: NodeProps) {
 
   return (
     <>
-      <Handle type="target" position={Position.Left} style={handleStyle("left")} />
+      <Handle type="target" position={Position.Left} className={styles.handleDot} style={handleStyle("left")} />
       <div
-        className="relative group"
+        className={`relative group ${styles.visualNode}`}
         style={{
-          width: VISUAL_NODE_W,
-          height: VISUAL_NODE_H,
           border: `1px solid ${borderColor}`,
-          borderRadius: 0,
           boxShadow: shadow,
-          transition: "all 0.15s ease",
-          overflow: "hidden",
-          cursor: "pointer",
-          userSelect: "none",
         }}
       >
         <button
@@ -564,7 +525,7 @@ function VisualCardNode(props: NodeProps) {
           </div>
         </div>
       </div>
-      <Handle type="source" position={Position.Right} style={handleStyle("right")} />
+      <Handle type="source" position={Position.Right} className={styles.handleDot} style={handleStyle("right")} />
     </>
   );
 }
@@ -578,49 +539,23 @@ function BriefNode(props: NodeProps) {
 
   return (
     <>
-      <div
-        style={{
-          width: INPUT_NODE_W,
-          minHeight: BRIEF_NODE_H,
-          background: "rgba(255,255,255,0.5)",
-          border: `1.5px solid #000`,
-          borderRadius: 0,
-          boxShadow: isSelected ? "2px 2px 0px #000" : "none",
-          padding: "12px",
-          display: "flex",
-          flexDirection: "column",
-          gap: 8,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <p style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.14em", color: "rgba(0,0,0,0.45)", margin: 0, fontFamily: "inherit" }}>
-            Project Brief
-          </p>
-          {isSelected && <span style={{ fontSize: 9, color: "#000" }}>✓</span>}
+      <div className={styles.briefNode} style={{ boxShadow: isSelected ? "2px 2px 0px #000" : "none" }}>
+        <div className={styles.briefRow}>
+          <p className={styles.briefLabel}>Project Brief</p>
+          {isSelected && <span className={styles.briefCheck}>✓</span>}
         </div>
         <input
-          className="nodrag nopan"
+          className={`nodrag nopan ${styles.briefTitleInput}`}
           value={data.title}
           onChange={(e) => data.onTitleChange(e.target.value)}
           placeholder="Project title"
-          style={{
-            fontSize: 14, fontWeight: 700, color: "#000", background: "transparent",
-            border: "none", borderBottom: "1px solid rgba(0,0,0,0.2)", outline: "none",
-            width: "100%", paddingBottom: 4, fontFamily: "inherit",
-          }}
         />
         <textarea
-          className="nodrag nopan"
+          className={`nodrag nopan ${styles.briefTextarea}`}
           value={data.brief}
           onChange={(e) => data.onBriefChange(e.target.value)}
           placeholder="Describe your design challenge…"
           rows={4}
-          style={{
-            fontSize: 12, color: "#333232", background: "white",
-            border: "1px solid rgba(0,0,0,0.7)", borderRadius: 0, padding: "6px 8px",
-            resize: "none", outline: "none", width: "100%", lineHeight: 1.55,
-            fontFamily: "inherit",
-          }}
         />
         <input
           ref={draftInputRef}
@@ -638,36 +573,31 @@ function BriefNode(props: NodeProps) {
           className="hidden"
           onChange={data.onAddReferenceFile}
         />
-        <div style={{ display: "flex", gap: 6 }}>
+        <div className={styles.briefBtnRow}>
           <button
-            className="nodrag nopan"
+            className={`nodrag nopan ${styles.briefUploadBtn}`}
             onClick={(e) => { e.stopPropagation(); draftInputRef.current?.click(); }}
-            style={{
-              flex: 1, fontSize: 11, color: "rgba(51,50,50,0.7)", background: "transparent",
-              border: "1px dashed rgba(0,0,0,0.35)", borderRadius: 0, padding: "5px 0",
-              cursor: "pointer", fontFamily: "inherit",
-            }}
           >
             + Draft
           </button>
           <button
-            className="nodrag nopan"
+            className={`nodrag nopan ${styles.briefUploadBtn}`}
             onClick={(e) => { e.stopPropagation(); refInputRef.current?.click(); }}
-            style={{
-              flex: 1, fontSize: 11, color: "rgba(51,50,50,0.7)", background: "transparent",
-              border: "1px dashed rgba(0,0,0,0.35)", borderRadius: 0, padding: "5px 0",
-              cursor: "pointer", fontFamily: "inherit",
-            }}
           >
             + References
           </button>
         </div>
       </div>
-      <Handle type="source" position={Position.Right} style={{
-        opacity: data.connectMode ? 1 : 0,
-        pointerEvents: data.connectMode ? "auto" : "none",
-        width: 10, height: 10, background: "#64748b", border: "2px solid white", borderRadius: "50%",
-      }} />
+      <Handle
+        type="source"
+        position={Position.Right}
+        className={styles.handleDot}
+        style={{
+          opacity: data.connectMode ? 1 : 0,
+          pointerEvents: data.connectMode ? "auto" : "none",
+          background: "#64748b",
+        }}
+      />
     </>
   );
 }
@@ -680,23 +610,17 @@ function AssetNode(props: NodeProps) {
   const handleStyle: React.CSSProperties = {
     opacity: data.connectMode ? 1 : 0,
     pointerEvents: data.connectMode ? "auto" : "none",
-    width: 10, height: 10, background: "#64748b", border: "2px solid white", borderRadius: "50%",
+    background: "#64748b",
   };
 
   if (isDraft) {
     return (
       <>
         <div
-          className="group"
+          className={`group ${styles.assetDraftNode}`}
           style={{
-            width: VISUAL_NODE_W,
-            height: VISUAL_NODE_H,
             border: `1px solid ${isSelected ? "#000" : "rgba(0,0,0,0.3)"}`,
-            borderRadius: 0,
             boxShadow: isSelected ? "2px 2px 0px #000" : "none",
-            overflow: "hidden",
-            position: "relative",
-            cursor: "pointer",
           }}
         >
           <button
@@ -705,20 +629,16 @@ function AssetNode(props: NodeProps) {
             title="Remove"
           >✕</button>
           <div className="absolute top-0 left-0 right-0 p-2 flex items-center gap-1.5 z-10 bg-gradient-to-b from-black/30 to-transparent">
-            <span style={{ fontSize: 8, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, padding: "2px 6px", borderRadius: 4, background: "rgba(0,0,0,0.45)", color: "white" }}>
-              ✎ Draft
-            </span>
-            {isSelected && <span style={{ fontSize: 9, color: "white", background: "rgba(37,99,235,0.8)", padding: "1px 5px", borderRadius: 4, fontWeight: 700 }}>✓</span>}
+            <span className={styles.draftBadge}>✎ Draft</span>
+            {isSelected && <span className={styles.draftCheckBadge}>✓</span>}
           </div>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={asset.dataUrl} alt={asset.fileName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          <img src={asset.dataUrl} alt={asset.fileName} className="w-full h-full object-cover" />
           <div className="absolute bottom-0 left-0 right-0 px-2 py-1.5 bg-gradient-to-t from-black/70 via-black/40 to-transparent z-10">
-            <p style={{ fontSize: 9, color: "white", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", margin: 0 }}>
-              {asset.fileName}
-            </p>
+            <p className="text-[9px] text-white truncate m-0">{asset.fileName}</p>
           </div>
         </div>
-        <Handle type="source" position={Position.Right} style={handleStyle} />
+        <Handle type="source" position={Position.Right} className={styles.handleDot} style={handleStyle} />
       </>
     );
   }
@@ -726,20 +646,10 @@ function AssetNode(props: NodeProps) {
   return (
     <>
       <div
-        className="group"
+        className={`group ${styles.assetRefNode}`}
         style={{
-          width: INPUT_NODE_W,
-          height: ASSET_NODE_H,
-          background: "#fafaf8",
           border: `1px solid ${isSelected ? "#000" : "rgba(0,0,0,0.2)"}`,
-          borderRadius: 0,
           boxShadow: isSelected ? "2px 2px 0px #000" : "none",
-          overflow: "hidden",
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          padding: "8px 10px",
-          position: "relative",
         }}
       >
         <button
@@ -748,20 +658,16 @@ function AssetNode(props: NodeProps) {
           title="Remove"
         >✕</button>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={asset.dataUrl} alt={asset.fileName} style={{ width: 68, height: 68, objectFit: "cover", borderRadius: 6, flexShrink: 0 }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 4 }}>
-            <p style={{ fontSize: 8, textTransform: "uppercase", letterSpacing: "0.12em", color: "rgba(0,0,0,0.45)", margin: 0, fontFamily: "inherit" }}>
-              ◈ Reference
-            </p>
-            {isSelected && <span style={{ fontSize: 9, color: "#000" }}>✓</span>}
+        <img src={asset.dataUrl} alt={asset.fileName} className="w-[68px] h-[68px] object-cover rounded-md shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className={styles.refRow}>
+            <p className={styles.refMetaLabel}>◈ Reference</p>
+            {isSelected && <span className={styles.briefCheck}>✓</span>}
           </div>
-          <p style={{ fontSize: 10, color: "#444", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {asset.fileName}
-          </p>
+          <p className={styles.refFileName}>{asset.fileName}</p>
         </div>
       </div>
-      <Handle type="source" position={Position.Right} style={handleStyle} />
+      <Handle type="source" position={Position.Right} className={styles.handleDot} style={handleStyle} />
     </>
   );
 }
@@ -1372,7 +1278,7 @@ export default function TreeView({
   return (
     <div className="flex h-full w-full overflow-hidden">
       {/* ── React Flow canvas ────────────────────────────────────────────── */}
-      <div className="flex-1 h-full" style={{ background: "#f0eeeb" }}>
+      <div className={`flex-1 h-full ${styles.canvas}`}>
         <ReactFlow
           nodes={displayNodes}
           edges={displayEdges}
@@ -1413,7 +1319,7 @@ export default function TreeView({
           {/* Empty state hint */}
           {nodes.length === 0 && !isGenerating && (
             <Panel position="top-center">
-              <div className="mt-8 text-[12px] italic text-[rgba(0,0,0,0.35)] bg-white/80 border border-[rgba(0,0,0,0.1)] px-4 py-2.5" style={{ borderRadius: 0 }}>
+              <div className={`mt-8 text-[12px] italic text-[rgba(0,0,0,0.35)] bg-white/80 border border-[rgba(0,0,0,0.1)] px-4 py-2.5 ${styles.sq}`}>
                 Fill in your brief and run an action to build the concept tree
               </div>
             </Panel>
@@ -1425,18 +1331,17 @@ export default function TreeView({
               <button
                 onClick={() => setConnectMode((p) => !p)}
                 title={connectMode ? "Exit connect mode (Drag handles to connect nodes)" : "Enter connect mode to draw connections between nodes"}
-                className={`border px-2.5 py-1.5 text-[11px] transition-colors flex items-center gap-1 ${
+                className={`border px-2.5 py-1.5 text-[11px] transition-colors flex items-center gap-1 ${styles.sq} ${
                   connectMode
                     ? "bg-black border-black text-white"
                     : "bg-white border-[rgba(0,0,0,0.2)] text-[rgba(0,0,0,0.45)] hover:text-black hover:border-black"
                 }`}
-              style={{ borderRadius: 0 }}
               >
                 <span className="text-[12px] leading-none">⌥</span>
                 {connectMode ? "Connecting…" : "Connect"}
               </button>
               {connectMode && (
-                <span className="text-[10px] italic text-[rgba(0,0,0,0.4)] bg-white border border-[rgba(0,0,0,0.15)] px-2 py-1" style={{ borderRadius: 0 }}>
+                <span className={`text-[10px] italic text-[rgba(0,0,0,0.4)] bg-white border border-[rgba(0,0,0,0.15)] px-2 py-1 ${styles.sq}`}>
                   Drag handle → node · Delete to remove
                 </span>
               )}
@@ -1444,12 +1349,11 @@ export default function TreeView({
                 <button
                   onClick={() => setShowCollectionColors((p) => !p)}
                   title={showCollectionColors ? "Hide collection colors" : "Show collection colors"}
-                  className={`bg-white border px-2.5 py-1.5 text-[11px] transition-colors flex items-center gap-1 ${
+                  className={`bg-white border px-2.5 py-1.5 text-[11px] transition-colors flex items-center gap-1 ${styles.sq} ${
                     showCollectionColors
                       ? "border-black text-black bg-[#f5f4f0]"
                       : "border-[rgba(0,0,0,0.2)] text-[rgba(0,0,0,0.45)] hover:text-black hover:border-black"
                   }`}
-                  style={{ borderRadius: 0 }}
                 >
                   <span className="text-[12px] leading-none">◉</span>
                   Colors
@@ -1461,8 +1365,7 @@ export default function TreeView({
                   setSelectedId(null);
                   setConfirmingClear(false);
                 }}
-                className="bg-white border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 text-[11px] text-[rgba(0,0,0,0.5)] hover:text-black hover:border-black transition-colors flex items-center gap-1"
-                style={{ borderRadius: 0 }}
+                className={`bg-white border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 text-[11px] text-[rgba(0,0,0,0.5)] hover:text-black hover:border-black transition-colors flex items-center gap-1 ${styles.sq}`}
                 title="Add a new node"
               >
                 <span className="text-[14px] leading-none font-light">+</span>
@@ -1470,7 +1373,7 @@ export default function TreeView({
               </button>
 
               {confirmingClear ? (
-                <div className="bg-white border border-red-200 px-2.5 py-1.5 flex items-center gap-2" style={{ borderRadius: 0 }}>
+                <div className={`bg-white border border-red-200 px-2.5 py-1.5 flex items-center gap-2 ${styles.sq}`}>
                   <span className="text-[10px] text-red-500">Clear all?</span>
                   <button
                     onClick={() => { onClearTree(); setConfirmingClear(false); setSelectedId(null); setMultiSelectedIds(new Set()); setPositionOverrides({}); }}
@@ -1488,8 +1391,7 @@ export default function TreeView({
               ) : (
                 <button
                   onClick={() => setConfirmingClear(true)}
-                  className="bg-white border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 text-[11px] text-[rgba(0,0,0,0.35)] hover:text-red-500 hover:border-red-300 transition-colors"
-                  style={{ borderRadius: 0 }}
+                  className={`bg-white border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 text-[11px] text-[rgba(0,0,0,0.35)] hover:text-red-500 hover:border-red-300 transition-colors ${styles.sq}`}
                   title="Clear all nodes"
                 >
                   Clear all
@@ -1501,7 +1403,7 @@ export default function TreeView({
           {/* Generating indicator */}
           {isGenerating && (
             <Panel position="top-center">
-              <div className="flex items-center gap-2 bg-white border border-[#111] px-3 py-2 mt-2 text-[11px] text-[#555]" style={{ borderRadius: 0 }}>
+              <div className={`flex items-center gap-2 bg-white border border-[#111] px-3 py-2 mt-2 text-[11px] text-[#555] ${styles.sq}`}>
                 <span className="inline-block w-3 h-3 border-2 border-[#555] border-t-transparent rounded-full animate-spin shrink-0" />
                 Running {generatingAction ? (ACTION_LABEL[generatingAction] ?? generatingAction) : "generation"}…
               </div>
@@ -1511,7 +1413,7 @@ export default function TreeView({
           {/* Selection action bar (single or multi, including input nodes) */}
           {(effectiveSelectedIds.size > 0 || !!selectedInputId) && (
             <Panel position="bottom-center">
-              <div className="flex items-center gap-2 bg-white border border-[rgba(0,0,0,0.2)] px-3 py-2 mb-2 text-[11px]" style={{ borderRadius: 0 }}>
+              <div className={`flex items-center gap-2 bg-white border border-[rgba(0,0,0,0.2)] px-3 py-2 mb-2 text-[11px] ${styles.sq}`}>
                 <span className="text-[#555] font-medium pr-1">
                   {effectiveSelectedIds.size > 0 ? effectiveSelectedIds.size : 1} selected
                 </span>
@@ -1539,7 +1441,7 @@ export default function TreeView({
                     Collection →
                   </button>
                   {collectionPickerOpen && (
-                    <div className="absolute bottom-full left-0 mb-1.5 bg-white border border-[rgba(0,0,0,0.15)] shadow-lg p-1.5 min-w-[180px] z-50" style={{ borderRadius: 0 }}>
+                    <div className={`absolute bottom-full left-0 mb-1.5 bg-white border border-[rgba(0,0,0,0.15)] shadow-lg p-1.5 min-w-[180px] z-50 ${styles.sq}`}>
                       {collections.length === 0 && !creatingInPicker && (
                         <p className="text-[10px] text-[#aaa] px-2 py-1">No collections yet</p>
                       )}
@@ -1617,7 +1519,7 @@ export default function TreeView({
                 {toasts.map((toast) => (
                   <div
                     key={toast.id}
-                    className="flex items-start gap-2 bg-white border border-red-200 px-3 py-2 text-[11px]" style={{ borderRadius: 0 }}
+                    className={`flex items-start gap-2 bg-white border border-red-200 px-3 py-2 text-[11px] ${styles.sq}`}
                   >
                     <span className="text-red-500 shrink-0 mt-px">⚠</span>
                     <span className="text-[#333] flex-1 leading-snug">{toast.message}</span>
@@ -1635,31 +1537,31 @@ export default function TreeView({
 
           {/* ── Node type legend ─────────────────────────────────────────── */}
           <Panel position="bottom-left">
-            <div className="mb-2 ml-2 bg-white border border-[rgba(0,0,0,0.12)] px-3 py-2.5 flex flex-col gap-2" style={{ borderRadius: 0 }}>
+            <div className={`mb-2 ml-2 bg-white border border-[rgba(0,0,0,0.12)] px-3 py-2.5 flex flex-col gap-2 ${styles.sq}`}>
               <p className="text-[8px] uppercase tracking-[0.16em] text-[rgba(0,0,0,0.35)] mb-0.5">Node types</p>
               {/* Concept */}
               <div className="flex items-center gap-2">
-                <div style={{ width: 18, height: 14, borderLeft: "1.5px solid #000", flexShrink: 0 }} />
+                <div className="w-[18px] h-[14px] shrink-0 border-l-[1.5px] border-l-black" />
                 <span className="text-[10px] text-[rgba(0,0,0,0.6)]">Concept</span>
               </div>
               {/* Motif */}
               <div className="flex items-center gap-2">
-                <div className="relative shrink-0" style={{ width: 18, height: 14 }}>
-                  <span style={{ position: "absolute", top: 0, left: 0, width: 6, height: 6, borderTop: "1.5px solid #000", borderLeft: "1.5px solid #000" }} />
-                  <span style={{ position: "absolute", top: 0, right: 0, width: 6, height: 6, borderTop: "1.5px solid #000", borderRight: "1.5px solid #000" }} />
-                  <span style={{ position: "absolute", bottom: 0, left: 0, width: 6, height: 6, borderBottom: "1.5px solid #000", borderLeft: "1.5px solid #000" }} />
-                  <span style={{ position: "absolute", bottom: 0, right: 0, width: 6, height: 6, borderBottom: "1.5px solid #000", borderRight: "1.5px solid #000" }} />
+                <div className="relative shrink-0 w-[18px] h-[14px]">
+                  <span className="absolute top-0 left-0 w-1.5 h-1.5 border-t-[1.5px] border-l-[1.5px] border-black" />
+                  <span className="absolute top-0 right-0 w-1.5 h-1.5 border-t-[1.5px] border-r-[1.5px] border-black" />
+                  <span className="absolute bottom-0 left-0 w-1.5 h-1.5 border-b-[1.5px] border-l-[1.5px] border-black" />
+                  <span className="absolute bottom-0 right-0 w-1.5 h-1.5 border-b-[1.5px] border-r-[1.5px] border-black" />
                 </div>
                 <span className="text-[10px] text-[rgba(0,0,0,0.6)]">Motif</span>
               </div>
               {/* Note */}
               <div className="flex items-center gap-2">
-                <div style={{ width: 18, height: 14, border: "1px solid rgba(0,0,0,0.25)", flexShrink: 0 }} />
+                <div className="w-[18px] h-[14px] shrink-0 border border-[rgba(0,0,0,0.25)]" />
                 <span className="text-[10px] text-[rgba(0,0,0,0.6)]">Note</span>
               </div>
               {/* Visual */}
               <div className="flex items-center gap-2">
-                <div style={{ width: 18, height: 14, border: "1px solid rgba(0,0,0,0.25)", background: "rgba(0,0,0,0.06)", flexShrink: 0 }} />
+                <div className="w-[18px] h-[14px] shrink-0 border border-[rgba(0,0,0,0.25)] bg-[rgba(0,0,0,0.06)]" />
                 <span className="text-[10px] text-[rgba(0,0,0,0.6)]">Visual</span>
               </div>
             </div>
@@ -1686,12 +1588,11 @@ export default function TreeView({
 
       {/* ── Detail panel ─────────────────────────────────────────────────── */}
       {(selectedNode || selectedInputIsBrief || selectedInputAsset) && (
-        <div style={{ width: panelWidth, flexShrink: 0, position: "relative", display: "flex" }}>
+        <div className="relative flex shrink-0" style={{ width: panelWidth }}>
           {/* Drag handle */}
           <div
             onPointerDown={handlePanelResizeStart}
-            style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4, cursor: "col-resize", zIndex: 10 }}
-            className="hover:bg-blue-300/40 transition-colors"
+            className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize z-10 hover:bg-blue-300/40 transition-colors"
           />
           {selectedNode ? (
             <DetailPanel
@@ -1822,7 +1723,7 @@ function AddNodeModal({
       onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}
     >
       <div
-        className="bg-white shadow-xl w-full max-w-md p-5" style={{ borderRadius: 0 }}
+        className={`bg-white shadow-xl w-full max-w-md p-5 ${styles.sq}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">
@@ -1842,13 +1743,8 @@ function AddNodeModal({
               <button
                 key={t}
                 onClick={() => { setCardType(cardType === t ? null : t); setImageFile(null); }}
-                className="text-[9px] font-semibold uppercase tracking-wide px-2.5 py-1 transition-colors"
-                style={{
-                  borderRadius: 0,
-                  ...(active
-                    ? { background: activeBg, color: activeText }
-                    : { background: "#f5f5f3", color: "#888" })
-                }}
+                className={`text-[9px] font-semibold uppercase tracking-wide px-2.5 py-1 transition-colors ${styles.sq}`}
+                style={active ? { background: activeBg, color: activeText } : { background: "#f5f5f3", color: "#888" }}
               >
                 {TYPE_LABEL[t]}
               </button>
@@ -2029,10 +1925,7 @@ function InputDetailPanel(props: InputDetailPanelProps) {
     <aside className="w-full h-full border-l border-[#e4e3e0] bg-white flex flex-col overflow-hidden">
       <div className="px-4 py-3 border-b border-[#f0efec] shrink-0">
         <div className="flex items-start justify-between gap-2 mb-2">
-          <span
-            className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded"
-            style={isDraft ? { background: "#f5f5f4", color: "#555" } : { background: "#e8e8f8", color: "#4444aa" }}
-          >
+          <span className={`text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${isDraft ? styles.draftTag : styles.refTag}`}>
             {isDraft ? "✎ Draft" : "◈ Reference"}
           </span>
           <div className="flex items-center gap-1.5 shrink-0 -mt-0.5">
@@ -2118,7 +2011,7 @@ function DetailPanel({
       <aside className="w-full h-full border-l border-[#e4e3e0] bg-white flex flex-col overflow-hidden">
         <div className="px-4 py-3 border-b border-[#f0efec] shrink-0">
           <div className="flex items-start justify-between gap-2 mb-2">
-            <span className="text-[9px] uppercase tracking-[0.14em] px-1.5 py-0.5" style={{ background: s.badgeBg, color: s.badgeText, borderRadius: 0 }}>
+            <span className={`text-[9px] uppercase tracking-[0.14em] px-1.5 py-0.5 ${styles.sq}`} style={{ background: s.badgeBg, color: s.badgeText }}>
               {TYPE_LABEL[card.type]}
             </span>
             <div className="flex items-center gap-1.5 shrink-0 -mt-0.5">
@@ -2137,7 +2030,7 @@ function DetailPanel({
               <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold mb-2">Sources</p>
               <div className="flex flex-col gap-1.5">
                 {sourceDrafts.map((a) => (
-                  <div key={a.id} className="px-2.5 py-2 flex items-center gap-2" style={{ background: "#f5f5f4", border: "1px solid rgba(0,0,0,0.12)", borderRadius: 0 }}>
+                  <div key={a.id} className={`px-2.5 py-2 flex items-center gap-2 ${styles.draftSourceTag}`}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={a.dataUrl} alt={a.fileName} className="w-8 h-8 rounded object-cover shrink-0" />
                     <div>
@@ -2147,7 +2040,7 @@ function DetailPanel({
                   </div>
                 ))}
                 {sourceRefs.map((a) => (
-                  <div key={a.id} className="px-2.5 py-2 rounded-lg flex items-center gap-2" style={{ background: "#f0f0ff", border: "1px solid #c5c5e8" }}>
+                  <div key={a.id} className={`px-2.5 py-2 rounded-lg flex items-center gap-2 ${styles.refSourceTag}`}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={a.dataUrl} alt={a.fileName} className="w-8 h-8 rounded object-cover shrink-0" />
                     <div>

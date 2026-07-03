@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { ActionType, Asset, Collection, ConceptCard, Generation, ResultCard } from "@/types";
+import styles from "./CenterPanel.module.css";
 import ResultCardComponent from "./cards/ResultCard";
 import TreeView from "./TreeView";
 import ClusterView from "./ClusterView";
@@ -93,18 +94,17 @@ export default function CenterPanel({
   return (
     <main className="flex-1 min-w-0 h-screen flex flex-col overflow-hidden">
       {/* View toggle */}
-      <div className="px-5 pt-2.5 pb-2.5 bg-white" style={{ borderBottom: "1px solid rgba(0,0,0,0.1)" }}>
+      <div className={`px-5 pt-2.5 pb-2.5 bg-white ${styles.toolbar}`}>
         <div className="flex items-center gap-1">
           {(["feed", "tree", "clusters"] as const).map((v) => (
             <button
               key={v}
               onClick={() => setView(v)}
-              className={`text-[12px] px-2.5 py-1 transition-colors capitalize tracking-wide ${
+              className={`text-[12px] px-2.5 py-1 transition-colors capitalize tracking-wide ${styles.sq} ${
                 view === v
                   ? "text-black border-b border-black"
                   : "text-[rgba(0,0,0,0.35)] hover:text-black"
               }`}
-              style={{ borderRadius: 0 }}
             >
               {v}
             </button>
@@ -174,7 +174,7 @@ export default function CenterPanel({
       {view === "feed" && (
         <div className="flex-1 overflow-y-auto px-6 py-6 flex flex-col gap-8">
           {isGenerating && (
-            <div className="flex items-center gap-3 text-[14px] text-[#333232] bg-white border border-black px-4 py-3" style={{ borderRadius: 0 }}>
+            <div className={`flex items-center gap-3 text-[14px] text-[#333232] bg-white border border-black px-4 py-3 ${styles.sq}`}>
               <span className="inline-block w-3.5 h-3.5 border border-black border-t-transparent rounded-full animate-spin" />
               {generatingAction ? ACTION_LABELS[generatingAction] : "Generating"}…
             </div>
@@ -281,7 +281,7 @@ function GenerationBlock({
       </div>
 
       {gen.error && (
-        <div className="text-[13px] text-black bg-white border border-black px-4 py-3" style={{ borderRadius: 0 }}>
+        <div className={`text-[13px] text-black bg-white border border-black px-4 py-3 ${styles.sq}`}>
           {gen.error}
         </div>
       )}

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Highlight, ResultCard } from "@/types";
 import HighlightCard from "./HighlightCard";
+import styles from "./HighlightsPanel.module.css";
 
 interface Props {
   highlights: Highlight[];
@@ -78,7 +79,7 @@ export default function HighlightsPanel({
       onDrop={handleDrop}
     >
       {/* Header */}
-      <div className="px-5 pt-5 pb-4 shrink-0 sticky top-0 z-10 bg-inherit" style={{ borderBottom: "1px solid rgba(0,0,0,0.1)" }}>
+      <div className={`px-5 pt-5 pb-4 shrink-0 sticky top-0 z-10 bg-inherit ${styles.header}`}>
         <div className="flex items-center justify-between mb-1">
           <h2 className="text-[18px] text-black">Highlights</h2>
           <div className="flex items-center gap-3">
@@ -87,17 +88,15 @@ export default function HighlightsPanel({
             )}
             <button
               onClick={() => setAddingNote((v) => !v)}
-              className="text-[12px] text-black border border-dashed border-[rgba(0,0,0,0.5)] px-2.5 py-0.5 hover:border-black transition-colors"
-              style={{ borderRadius: 0 }}
+              className={`text-[12px] text-black border border-dashed border-[rgba(0,0,0,0.5)] px-2.5 py-0.5 hover:border-black transition-colors ${styles.sq}`}
             >
               + Note
             </button>
             {onCollapse && (
               <button
                 onClick={onCollapse}
-                className="text-[rgba(0,0,0,0.3)] hover:text-black transition-colors"
+                className={`text-[rgba(0,0,0,0.3)] hover:text-black transition-colors ${styles.collapseBtn}`}
                 title="Hide panel"
-                style={{ fontSize: 14, lineHeight: 1 }}
               >›</button>
             )}
           </div>
@@ -110,23 +109,21 @@ export default function HighlightsPanel({
       <div className="flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-2">
         {/* Add note inline form */}
         {addingNote && (
-          <div className="border border-black p-3 bg-white flex flex-col gap-2" style={{ borderRadius: 0 }}>
+          <div className={`border border-black p-3 bg-white flex flex-col gap-2 ${styles.sq}`}>
             <input
               autoFocus
               placeholder="Title…"
               value={noteTitle}
               onChange={(e) => setNoteTitle(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && submitNote()}
-              className="text-[14px] border border-[rgba(0,0,0,0.3)] px-2.5 py-1.5 outline-none focus:border-black bg-white text-black"
-              style={{ borderRadius: 0 }}
+              className={`text-[14px] border border-[rgba(0,0,0,0.3)] px-2.5 py-1.5 outline-none focus:border-black bg-white text-black ${styles.sq}`}
             />
             <textarea
               placeholder="Write something…"
               value={noteBody}
               onChange={(e) => setNoteBody(e.target.value)}
               rows={2}
-              className="text-[13px] border border-[rgba(0,0,0,0.3)] px-2.5 py-1.5 resize-none outline-none focus:border-black bg-white text-[#333232]"
-              style={{ borderRadius: 0 }}
+              className={`text-[13px] border border-[rgba(0,0,0,0.3)] px-2.5 py-1.5 resize-none outline-none focus:border-black bg-white text-[#333232] ${styles.sq}`}
             />
             <div className="flex gap-3">
               <button onClick={submitNote} className="text-[12px] text-white bg-black hover:opacity-70 px-3 py-1 transition-opacity">Add</button>

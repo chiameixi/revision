@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { MotifCard as MotifCardType, ResultCard } from "@/types";
+import cls from "./MotifCard.module.css";
 
 interface Props {
   card: MotifCardType;
@@ -11,23 +12,23 @@ interface Props {
   onUpdate?: (card: ResultCard) => void;
 }
 
+const CORNER_CLASS: Record<"tl" | "tr" | "bl" | "br", string> = {
+  tl: cls.cornerTL,
+  tr: cls.cornerTR,
+  bl: cls.cornerBL,
+  br: cls.cornerBR,
+};
+
 function CornerMark({ pos }: { pos: "tl" | "tr" | "bl" | "br" }) {
-  const base: React.CSSProperties = { position: "absolute", width: 12, height: 12 };
-  const styles: Record<string, React.CSSProperties> = {
-    tl: { top: 0, left: 0, borderTop: "1px solid black", borderLeft: "1px solid black" },
-    tr: { top: 0, right: 0, borderTop: "1px solid black", borderRight: "1px solid black" },
-    bl: { bottom: 0, left: 0, borderBottom: "1px solid black", borderLeft: "1px solid black" },
-    br: { bottom: 0, right: 0, borderBottom: "1px solid black", borderRight: "1px solid black" },
-  };
-  return <span style={{ ...base, ...styles[pos] }} />;
+  return <span className={`${cls.corner} ${CORNER_CLASS[pos]}`} />;
 }
 
 function MotifLabel({ category }: { category?: string }) {
   return (
     <span className="inline-flex items-center gap-2 shrink-0">
-      <span className="text-[15px] text-black" style={{ fontStyle: "normal", lineHeight: "1.5" }}>Motif</span>
+      <span className={`text-[15px] text-black ${cls.labelText}`}>Motif</span>
       {category && (
-        <span className="text-[12px] text-[rgba(0,0,0,0.45)]" style={{ fontStyle: "normal" }}>&middot; {category}</span>
+        <span className="text-[12px] text-[rgba(0,0,0,0.45)] not-italic">&middot; {category}</span>
       )}
     </span>
   );
@@ -59,8 +60,7 @@ export default function MotifCard({ card, isSaved, onSave, onDismiss, onUpdate }
           <input
             value={draft.title}
             onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-            className="w-full text-[16px] text-black border border-black px-3 py-2 outline-none bg-white"
-            style={{ borderRadius: 0 }}
+            className={`w-full text-[16px] text-black border border-black px-3 py-2 outline-none bg-white ${cls.sq}`}
           />
         </div>
         <div>
@@ -69,8 +69,7 @@ export default function MotifCard({ card, isSaved, onSave, onDismiss, onUpdate }
             value={draft.visualQuality}
             onChange={(e) => setDraft({ ...draft, visualQuality: e.target.value })}
             rows={2}
-            className="w-full text-[14px] text-black border border-black px-3 py-2 resize-y outline-none bg-white leading-relaxed"
-            style={{ borderRadius: 0 }}
+            className={`w-full text-[14px] text-black border border-black px-3 py-2 resize-y outline-none bg-white leading-relaxed ${cls.sq}`}
           />
         </div>
         <div>
@@ -79,8 +78,7 @@ export default function MotifCard({ card, isSaved, onSave, onDismiss, onUpdate }
             value={draft.howItConveysIdea}
             onChange={(e) => setDraft({ ...draft, howItConveysIdea: e.target.value })}
             rows={2}
-            className="w-full text-[14px] text-black border border-black px-3 py-2 resize-y outline-none bg-white leading-relaxed"
-            style={{ borderRadius: 0 }}
+            className={`w-full text-[14px] text-black border border-black px-3 py-2 resize-y outline-none bg-white leading-relaxed ${cls.sq}`}
           />
         </div>
       </div>
@@ -100,10 +98,9 @@ export default function MotifCard({ card, isSaved, onSave, onDismiss, onUpdate }
           <button
             onClick={onSave}
             disabled={isSaved}
-            className={`text-[11px] px-2 py-0.5 border transition-colors ${
+            className={`text-[11px] px-2 py-0.5 border transition-colors ${cls.sq} ${
               isSaved ? "text-[rgba(0,0,0,0.3)] border-[rgba(0,0,0,0.2)] cursor-default" : "text-black border-black hover:bg-black hover:text-white"
             }`}
-            style={{ borderRadius: 0 }}
           >
             {isSaved ? "Saved" : "Save"}
           </button>

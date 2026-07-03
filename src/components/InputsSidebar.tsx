@@ -2,6 +2,7 @@
 
 import { useRef } from "react";
 import type { Asset } from "@/types";
+import styles from "./InputsSidebar.module.css";
 
 interface Props {
   title: string;
@@ -53,9 +54,9 @@ export default function InputsSidebar({
   }
 
   return (
-    <aside className="h-full flex flex-col bg-white overflow-y-auto" style={{ borderRight: "1px solid rgba(0,0,0,0.1)" }}>
+    <aside className={`h-full flex flex-col bg-white overflow-y-auto ${styles.aside}`}>
       {/* Header */}
-      <div className="px-5 pt-5 pb-4" style={{ borderBottom: "1px solid rgba(0,0,0,0.1)" }}>
+      <div className={`px-5 pt-5 pb-4 ${styles.divider}`}>
         <div className="flex items-start gap-2">
           <input
             value={title}
@@ -66,9 +67,8 @@ export default function InputsSidebar({
           {onCollapse && (
             <button
               onClick={onCollapse}
-              className="shrink-0 text-[rgba(0,0,0,0.3)] hover:text-black transition-colors mt-1.5"
+              className={`shrink-0 text-[rgba(0,0,0,0.3)] hover:text-black transition-colors mt-1.5 ${styles.collapseBtn}`}
               title="Hide panel"
-              style={{ fontSize: 14, lineHeight: 1 }}
             >‹</button>
           )}
         </div>
@@ -76,7 +76,7 @@ export default function InputsSidebar({
       </div>
 
       {/* Brief */}
-      <section className="px-5 py-4" style={{ borderBottom: "1px solid rgba(0,0,0,0.1)" }}>
+      <section className={`px-5 py-4 ${styles.divider}`}>
         <label className="text-[9px] uppercase tracking-[0.18em] text-[rgba(0,0,0,0.4)] block mb-2">
           Design Brief
         </label>
@@ -85,13 +85,12 @@ export default function InputsSidebar({
           onChange={(e) => onBriefChange(e.target.value)}
           placeholder="Describe your design challenge, target users, goals, constraints…"
           rows={6}
-          className="w-full text-[15px] text-[#333232] bg-white border border-[rgba(0,0,0,0.7)] px-3 py-2.5 resize-none outline-none focus:border-black placeholder-[rgba(51,50,50,0.35)] leading-relaxed"
-          style={{ borderRadius: 0 }}
+          className={`w-full text-[15px] text-[#333232] bg-white border border-[rgba(0,0,0,0.7)] px-3 py-2.5 resize-none outline-none focus:border-black placeholder-[rgba(51,50,50,0.35)] leading-relaxed ${styles.sq}`}
         />
       </section>
 
       {/* Drafts */}
-      <section className="px-5 py-4" style={{ borderBottom: "1px solid rgba(0,0,0,0.1)" }}>
+      <section className={`px-5 py-4 ${styles.divider}`}>
         <div className="flex items-center justify-between mb-3">
           <label className="text-[9px] uppercase tracking-[0.18em] text-[rgba(0,0,0,0.4)]">
             Drafts {drafts.length > 0 && `(${drafts.length})`}
@@ -104,8 +103,7 @@ export default function InputsSidebar({
         {drafts.length === 0 ? (
           <button
             onClick={() => draftInput.current?.click()}
-            className="w-full border border-dashed border-[rgba(0,0,0,0.4)] py-4 text-[13px] text-[rgba(0,0,0,0.35)] hover:border-black hover:text-black transition-colors"
-            style={{ borderRadius: 0 }}
+            className={`w-full border border-dashed border-[rgba(0,0,0,0.4)] py-4 text-[13px] text-[rgba(0,0,0,0.35)] hover:border-black hover:text-black transition-colors ${styles.sq}`}
           >
             + Draft
           </button>
@@ -128,8 +126,7 @@ export default function InputsSidebar({
         {refs.length === 0 ? (
           <button
             onClick={() => refInput.current?.click()}
-            className="w-full border border-dashed border-[rgba(0,0,0,0.4)] py-4 text-[13px] text-[rgba(0,0,0,0.35)] hover:border-black hover:text-black transition-colors"
-            style={{ borderRadius: 0 }}
+            className={`w-full border border-dashed border-[rgba(0,0,0,0.4)] py-4 text-[13px] text-[rgba(0,0,0,0.35)] hover:border-black hover:text-black transition-colors ${styles.sq}`}
           >
             + References
           </button>

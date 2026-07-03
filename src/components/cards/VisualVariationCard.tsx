@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { VisualCard as VisualCardType, ResultCard } from "@/types";
+import styles from "./VisualVariationCard.module.css";
 
 interface Props {
   card: VisualCardType;
@@ -29,7 +30,7 @@ export default function VisualCard({ card, isSaved, onSave, onDismiss, onAddAsRe
 
   if (isEditing) {
     return (
-      <div className="bg-white border-2 border-black overflow-hidden flex flex-col" style={{ borderRadius: 0 }}>
+      <div className={`bg-white border-2 border-black overflow-hidden flex flex-col ${styles.sq}`}>
         <div className="flex items-center justify-between p-4 pb-3">
           <VisualLabel label={card.dimensionLabel} />
           <div className="flex items-center gap-3 shrink-0">
@@ -47,8 +48,7 @@ export default function VisualCard({ card, isSaved, onSave, onDismiss, onAddAsRe
             <input
               value={draft.title}
               onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-              className="w-full text-[16px] text-black border border-black px-3 py-2 outline-none bg-white"
-              style={{ borderRadius: 0 }}
+              className={`w-full text-[16px] text-black border border-black px-3 py-2 outline-none bg-white ${styles.sq}`}
             />
           </div>
           <div>
@@ -57,8 +57,7 @@ export default function VisualCard({ card, isSaved, onSave, onDismiss, onAddAsRe
               value={draft.analysisText}
               onChange={(e) => setDraft({ ...draft, analysisText: e.target.value })}
               rows={4}
-              className="w-full text-[14px] text-black border border-black px-3 py-2 resize-y outline-none bg-white leading-relaxed"
-              style={{ borderRadius: 0 }}
+              className={`w-full text-[14px] text-black border border-black px-3 py-2 resize-y outline-none bg-white leading-relaxed ${styles.sq}`}
             />
           </div>
         </div>
@@ -67,7 +66,7 @@ export default function VisualCard({ card, isSaved, onSave, onDismiss, onAddAsRe
   }
 
   return (
-    <div className="bg-white border border-black overflow-hidden flex flex-col group" style={{ borderRadius: 0 }}>
+    <div className={`bg-white border border-black overflow-hidden flex flex-col group ${styles.sq}`}>
       <div className="flex items-start justify-between gap-2 p-4 pb-3">
         <VisualLabel label={card.dimensionLabel} />
         <div className="flex items-center gap-2 shrink-0">
@@ -77,10 +76,9 @@ export default function VisualCard({ card, isSaved, onSave, onDismiss, onAddAsRe
           <button
             onClick={onSave}
             disabled={isSaved}
-            className={`text-[11px] px-2 py-0.5 border transition-colors ${
+            className={`text-[11px] px-2 py-0.5 border transition-colors ${styles.sq} ${
               isSaved ? "text-[rgba(0,0,0,0.3)] border-[rgba(0,0,0,0.2)] cursor-default" : "text-black border-black hover:bg-black hover:text-white"
             }`}
-            style={{ borderRadius: 0 }}
           >
             {isSaved ? "Saved" : "Save"}
           </button>
@@ -113,12 +111,11 @@ export default function VisualCard({ card, isSaved, onSave, onDismiss, onAddAsRe
               <button
                 onClick={handleAddAsReference}
                 disabled={added}
-                className={`text-[12px] w-full px-3 py-1.5 border border-dashed transition-colors ${
+                className={`text-[12px] w-full px-3 py-1.5 border border-dashed transition-colors ${styles.sq} ${
                   added
                     ? "text-[rgba(0,0,0,0.3)] border-[rgba(0,0,0,0.2)] cursor-default"
                     : "text-black border-[rgba(0,0,0,0.4)] hover:border-black"
                 }`}
-                style={{ borderRadius: 0 }}
               >
                 {added ? "✓ Added to inputs" : "+ Use as Reference"}
               </button>

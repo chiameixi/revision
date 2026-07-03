@@ -15,6 +15,7 @@ import "@xyflow/react/dist/style.css";
 import type {
   Asset, Collection, Generation, ResultCard, ActionType, VisualCard,
 } from "@/types";
+import styles from "./ClusterView.module.css";
 
 // ── Style maps ────────────────────────────────────────────────────────────────
 const TYPE_STYLE: Record<string, {
@@ -121,15 +122,15 @@ function MiniCard({ item, onRemove }: { item: ClusterItem; onRemove?: () => void
     return (
       <div
         {...sharedDrag}
-        className="relative group/minicard overflow-hidden cursor-pointer nodrag nowheel col-span-2"
-        style={{ height: 120, border: `1px solid ${borderColor}`, borderRadius: 0, boxShadow: shadow, transition: "all 0.15s ease", userSelect: "none" }}
+        className={`relative group/minicard overflow-hidden cursor-pointer nodrag nowheel col-span-2 ${styles.visualCard}`}
+        style={{ border: `1px solid ${borderColor}`, boxShadow: shadow }}
       >
         {onRemove && (
           <button className="nodrag absolute top-1.5 right-1.5 opacity-0 group-hover/minicard:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 text-[10px] leading-none z-20"
             title="Remove" onClick={(e) => { e.stopPropagation(); onRemove(); }}>✕</button>
         )}
         <div className="absolute top-0 left-0 right-0 p-1.5 flex items-center gap-1.5 z-10 bg-gradient-to-b from-black/30 to-transparent">
-          <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#fff", opacity: 0.8, flexShrink: 0 }} />
+          <div className={styles.dotBadge} />
           {isSelected && <span className="text-[8px] text-white bg-blue-500/80 px-1 rounded font-bold">✓</span>}
         </div>
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -146,36 +147,27 @@ function MiniCard({ item, onRemove }: { item: ClusterItem; onRemove?: () => void
     return (
       <div
         {...sharedDrag}
-        className="relative group/minicard cursor-pointer nodrag nowheel"
+        className={`relative group/minicard cursor-pointer nodrag nowheel ${styles.chipNode}`}
         style={{
-          minHeight: 28, background: bgColor,
-          border: "none",
+          background: bgColor,
           borderLeft: item.card.type === "concept" ? `1.5px solid ${borderColor}` : "none",
-          borderRadius: 0,
           boxShadow: shadow,
-          transition: "all 0.15s ease",
-          userSelect: "none",
-          display: "flex", alignItems: "center", flexWrap: "wrap",
-          gap: 6, paddingLeft: item.card.type === "concept" ? 7 : 8, paddingRight: onRemove ? 22 : 8,
-          paddingTop: 4, paddingBottom: 4,
-          position: "relative",
+          paddingLeft: item.card.type === "concept" ? 7 : 8,
+          paddingRight: onRemove ? 22 : 8,
         }}
       >
         {item.card.type === "motif" && (
           <>
-            <span style={{ position: "absolute", top: 0, left: 0, width: 7, height: 7, borderTop: "1.5px solid #000", borderLeft: "1.5px solid #000" }} />
-            <span style={{ position: "absolute", top: 0, right: 0, width: 7, height: 7, borderTop: "1.5px solid #000", borderRight: "1.5px solid #000" }} />
-            <span style={{ position: "absolute", bottom: 0, left: 0, width: 7, height: 7, borderBottom: "1.5px solid #000", borderLeft: "1.5px solid #000" }} />
-            <span style={{ position: "absolute", bottom: 0, right: 0, width: 7, height: 7, borderBottom: "1.5px solid #000", borderRight: "1.5px solid #000" }} />
+            <span className={`${styles.chipCorner} ${styles.chipCornerTL}`} />
+            <span className={`${styles.chipCorner} ${styles.chipCornerTR}`} />
+            <span className={`${styles.chipCorner} ${styles.chipCornerBL}`} />
+            <span className={`${styles.chipCorner} ${styles.chipCornerBR}`} />
           </>
         )}
-        <p style={{ fontSize: 10, fontWeight: 500, color: "#2a2a2a", flex: 1, lineHeight: 1.4 }}>
-          {item.card.title}
-        </p>
-        {isSelected && <span style={{ fontSize: 8, color: "#000", flexShrink: 0, marginRight: 2 }}>✓</span>}
+        <p className={styles.chipText}>{item.card.title}</p>
+        {isSelected && <span className={styles.chipCheck}>✓</span>}
         {onRemove && (
-          <button className="nodrag absolute right-1.5 opacity-0 group-hover/minicard:opacity-100 transition-opacity w-4 h-4 rounded-full flex items-center justify-center text-[#bbb] hover:text-red-400 text-[9px] leading-none"
-            style={{ top: "50%", transform: "translateY(-50%)" }}
+          <button className={`nodrag absolute right-1.5 opacity-0 group-hover/minicard:opacity-100 transition-opacity w-4 h-4 rounded-full flex items-center justify-center text-[#bbb] hover:text-red-400 text-[9px] leading-none ${styles.centerY}`}
             title="Remove" onClick={(e) => { e.stopPropagation(); onRemove(); }}>✕</button>
         )}
       </div>
@@ -186,8 +178,8 @@ function MiniCard({ item, onRemove }: { item: ClusterItem; onRemove?: () => void
   return (
     <div
       {...sharedDrag}
-      className="relative group/minicard overflow-hidden cursor-pointer nodrag nowheel"
-      style={{ height: 68, background: bgColor, border: `1px solid ${borderColor}`, borderRadius: 0, boxShadow: shadow, transition: "all 0.15s ease", userSelect: "none" }}
+      className={`relative group/minicard overflow-hidden cursor-pointer nodrag nowheel ${styles.noteCard}`}
+      style={{ background: bgColor, border: `1px solid ${borderColor}`, boxShadow: shadow }}
     >
       {onRemove && (
         <button className="nodrag absolute top-1.5 right-1.5 opacity-0 group-hover/minicard:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 text-[10px] leading-none z-10"
@@ -195,13 +187,13 @@ function MiniCard({ item, onRemove }: { item: ClusterItem; onRemove?: () => void
       )}
       <div className="p-2 flex flex-col gap-0.5 h-full">
         <div className="flex items-center gap-1.5 pr-4">
-          <span className="text-[8px] uppercase tracking-[0.12em] shrink-0" style={{ color: "rgba(0,0,0,0.4)" }}>
+          <span className="text-[8px] uppercase tracking-[0.12em] shrink-0 text-[rgba(0,0,0,0.4)]">
             {TYPE_LABEL_SINGLE[item.card.type]}
           </span>
           {isSelected && <span className="text-[9px] text-black shrink-0">✓</span>}
         </div>
         <p className="text-[10px] text-[#111] leading-tight line-clamp-2 flex-1">{item.card.title}</p>
-        <p className="text-[9px] truncate" style={{ color: "rgba(0,0,0,0.3)" }}>{ACTION_LABEL[item.actionType] ?? item.actionType}</p>
+        <p className="text-[9px] truncate text-[rgba(0,0,0,0.3)]">{ACTION_LABEL[item.actionType] ?? item.actionType}</p>
       </div>
     </div>
   );
@@ -226,12 +218,10 @@ function CollectionNodeComponent({ data }: NodeProps) {
 
   return (
     <div
-      className="overflow-hidden transition-shadow"
+      className={`overflow-hidden transition-shadow ${styles.clusterNode}`}
       style={{
-        width: 320,
         background: isDragOver ? `${color}10` : "#fff",
         border: `1.5px solid ${isDragOver ? color : "rgba(0,0,0,0.18)"}`,
-        borderRadius: 0,
         boxShadow: isDragOver ? `2px 2px 0px ${color}` : "none",
       }}
       onDragOver={onContainerDragOver}
@@ -301,8 +291,8 @@ function CollectionNodeComponent({ data }: NodeProps) {
       <div className="nodrag nowheel p-2.5">
         {items.length === 0 ? (
           <div
-            className="flex items-center justify-center py-5 border border-dashed"
-            style={{ borderColor: `${color}70`, borderRadius: 0 }}
+            className={`flex items-center justify-center py-5 border border-dashed ${styles.sq}`}
+            style={{ borderColor: `${color}70` }}
           >
             <p className="text-[10px] text-[#bbb]">{isDragOver ? "Drop here ↓" : "Drag cards here"}</p>
           </div>
@@ -338,18 +328,18 @@ function TypeGroupNodeComponent({ data }: NodeProps) {
   if (items.length === 0) {
     return (
       <div
-        className="overflow-hidden opacity-35"
-        style={{ width: 320, background: s.clusterBg, border: `1px dashed rgba(0,0,0,0.3)`, borderRadius: 0 }}
+        className={`overflow-hidden opacity-35 ${styles.clusterNode}`}
+        style={{ background: s.clusterBg, border: `1px dashed rgba(0,0,0,0.3)` }}
         onDragOver={onContainerDragOver}
         onDragEnter={(e) => onContainerDragEnter(e, `type::${typeName}`)}
         onDragLeave={onContainerDragLeave}
         onDrop={(e) => onContainerDrop(e, null)}
       >
         <div className="px-3 py-3 flex items-center gap-2 cursor-grab">
-          <span className="text-[9px] uppercase tracking-[0.14em]" style={{ color: "rgba(0,0,0,0.45)" }}>
+          <span className="text-[9px] uppercase tracking-[0.14em] text-[rgba(0,0,0,0.45)]">
             {TYPE_LABEL_PLURAL[typeName]}
           </span>
-          <span className="text-[9px] italic" style={{ color: "rgba(0,0,0,0.3)" }}>none yet</span>
+          <span className="text-[9px] italic text-[rgba(0,0,0,0.3)]">none yet</span>
         </div>
       </div>
     );
@@ -357,12 +347,10 @@ function TypeGroupNodeComponent({ data }: NodeProps) {
 
   return (
     <div
-      className="overflow-hidden transition-shadow"
+      className={`overflow-hidden transition-shadow ${styles.clusterNode}`}
       style={{
-        width: 320,
         background: isDragOver ? "#f5f4f0" : s.clusterBg,
         border: `1px solid ${isDragOver ? "#000" : "rgba(0,0,0,0.18)"}`,
-        borderRadius: 0,
         boxShadow: isDragOver ? "2px 2px 0px rgba(0,0,0,0.4)" : "none",
       }}
       onDragOver={onContainerDragOver}
@@ -371,13 +359,12 @@ function TypeGroupNodeComponent({ data }: NodeProps) {
       onDrop={(e) => onContainerDrop(e, null)}
     >
       <div
-        className="px-3 py-2.5 flex items-center gap-2 cursor-grab"
-        style={{ background: "rgba(0,0,0,0.04)", borderBottom: "1px solid rgba(0,0,0,0.1)" }}
+        className={`px-3 py-2.5 flex items-center gap-2 cursor-grab ${styles.sectionHeader}`}
       >
-        <span className="text-[9px] uppercase tracking-[0.14em]" style={{ color: "rgba(0,0,0,0.5)" }}>
+        <span className="text-[9px] uppercase tracking-[0.14em] text-[rgba(0,0,0,0.5)]">
           {TYPE_LABEL_PLURAL[typeName]}
         </span>
-        <span className="text-[9px] flex-1" style={{ color: "rgba(0,0,0,0.3)" }}>{items.length}</span>
+        <span className="text-[9px] flex-1 text-[rgba(0,0,0,0.3)]">{items.length}</span>
       </div>
       <div className="nodrag nowheel p-2.5">
         <div className="grid grid-cols-2 gap-2">
@@ -616,7 +603,7 @@ export default function ClusterView({
             {/* New collection button */}
             <Panel position="top-right">
               {newColForm.open ? (
-                <div className="bg-white border border-[rgba(0,0,0,0.18)] shadow-lg p-4 w-64 flex flex-col gap-3" style={{ borderRadius: 0 }}>
+                <div className={`bg-white border border-[rgba(0,0,0,0.18)] shadow-lg p-4 w-64 flex flex-col gap-3 ${styles.sq}`}>
                   <p className="text-[11px] uppercase tracking-[0.12em] text-[rgba(0,0,0,0.5)]">New Collection</p>
                   <input
                     autoFocus
@@ -624,25 +611,22 @@ export default function ClusterView({
                     value={newColForm.title}
                     onChange={(e) => setNewColForm((p) => ({ ...p, title: e.target.value }))}
                     onKeyDown={(e) => e.key === "Enter" && createCollection()}
-                    className="text-[11px] border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 outline-none focus:border-black"
-                    style={{ borderRadius: 0 }}
+                    className={`text-[11px] border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 outline-none focus:border-black ${styles.sq}`}
                   />
                   <input
                     placeholder="Description (optional)…"
                     value={newColForm.description}
                     onChange={(e) => setNewColForm((p) => ({ ...p, description: e.target.value }))}
                     onKeyDown={(e) => e.key === "Enter" && createCollection()}
-                    className="text-[11px] border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 outline-none focus:border-black"
-                    style={{ borderRadius: 0 }}
+                    className={`text-[11px] border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 outline-none focus:border-black ${styles.sq}`}
                   />
                   <div className="flex gap-1.5 flex-wrap">
                     {COLLECTION_COLORS.map((color, i) => (
                       <button
                         key={color}
                         onClick={() => setNewColForm((p) => ({ ...p, colorIdx: i }))}
-                        className="w-5 h-5 border-2 transition-transform"
+                        className={`w-5 h-5 border-2 transition-transform ${styles.sq}`}
                         style={{
-                          borderRadius: 0,
                           background: color,
                           borderColor: newColForm.colorIdx === i ? "#333" : "transparent",
                           transform: newColForm.colorIdx === i ? "scale(1.2)" : "scale(1)",
@@ -653,8 +637,7 @@ export default function ClusterView({
                   <div className="flex gap-2">
                     <button
                       onClick={createCollection}
-                      className="text-[11px] text-white bg-black hover:bg-[#333] px-3 py-1 transition-colors"
-                      style={{ borderRadius: 0 }}
+                      className={`text-[11px] text-white bg-black hover:bg-[#333] px-3 py-1 transition-colors ${styles.sq}`}
                     >Create</button>
                     <button
                       onClick={() => setNewColForm((p) => ({ ...p, open: false, title: "", description: "" }))}
@@ -665,8 +648,7 @@ export default function ClusterView({
               ) : (
                 <button
                   onClick={() => setNewColForm((p) => ({ ...p, open: true }))}
-                  className="bg-white border border-[rgba(0,0,0,0.2)] hover:border-black text-[11px] text-[rgba(0,0,0,0.5)] hover:text-black px-4 py-2 transition-colors"
-                  style={{ borderRadius: 0 }}
+                  className={`bg-white border border-[rgba(0,0,0,0.2)] hover:border-black text-[11px] text-[rgba(0,0,0,0.5)] hover:text-black px-4 py-2 transition-colors ${styles.sq}`}
                 >
                   + New Collection
                 </button>
@@ -677,11 +659,10 @@ export default function ClusterView({
 
         {/* ── Detail panel ─────────────────────────────────────────────────── */}
         {selectedItem && (
-          <div style={{ width: panelWidth, flexShrink: 0, position: "relative", display: "flex" }}>
+          <div className="relative flex shrink-0" style={{ width: panelWidth }}>
             <div
               onPointerDown={handlePanelResizeStart}
-              style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4, cursor: "col-resize", zIndex: 10 }}
-              className="hover:bg-blue-300/40 transition-colors"
+              className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize z-10 hover:bg-blue-300/40 transition-colors"
             />
             <ClusterDetailPanel
               item={selectedItem}
@@ -768,7 +749,7 @@ function ClusterDetailPanel({
               <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold mb-2">Sources</p>
               <div className="flex flex-col gap-1.5">
                 {sourceDrafts.map((a) => (
-                  <div key={a.id} className="px-2.5 py-2 rounded-lg flex items-center gap-2" style={{ background: "#f5f5f4", border: "1px solid #ccc" }}>
+                  <div key={a.id} className="px-2.5 py-2 rounded-lg flex items-center gap-2 bg-[#f5f5f4] border border-[#ccc]">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={a.dataUrl} alt={a.fileName} className="w-8 h-8 rounded object-cover shrink-0" />
                     <div>
@@ -778,7 +759,7 @@ function ClusterDetailPanel({
                   </div>
                 ))}
                 {sourceRefs.map((a) => (
-                  <div key={a.id} className="px-2.5 py-2 rounded-lg flex items-center gap-2" style={{ background: "#f0f0ff", border: "1px solid #c5c5e8" }}>
+                  <div key={a.id} className="px-2.5 py-2 rounded-lg flex items-center gap-2 bg-[#f0f0ff] border border-[#c5c5e8]">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={a.dataUrl} alt={a.fileName} className="w-8 h-8 rounded object-cover shrink-0" />
                     <div>
