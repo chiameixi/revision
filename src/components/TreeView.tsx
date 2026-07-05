@@ -70,10 +70,10 @@ const TYPE_STYLE: Record<string, {
   bg: string; border: string; selectedBorder: string;
   badgeBg: string; badgeText: string; line: string;
 }> = {
-  concept: { bg: "#ffffff", border: "#000000", selectedBorder: "#000000", badgeBg: "#000000", badgeText: "#ffffff", line: "rgba(0,0,0,0.45)" },
-  motif:   { bg: "#ffffff", border: "#000000", selectedBorder: "#000000", badgeBg: "#000000", badgeText: "#ffffff", line: "rgba(0,0,0,0.45)" },
-  visual:  { bg: "#ffffff", border: "#000000", selectedBorder: "#000000", badgeBg: "#000000", badgeText: "#ffffff", line: "rgba(0,0,0,0.35)" },
-  note:    { bg: "#ffffff", border: "rgba(0,0,0,0.35)", selectedBorder: "#000000", badgeBg: "rgba(0,0,0,0.5)", badgeText: "#ffffff", line: "rgba(0,0,0,0.25)" },
+  concept: { bg: "#dde1f2", border: "#8b96c8", selectedBorder: "#3c4a8a", badgeBg: "#3c4a8a", badgeText: "#ffffff", line: "rgba(60,74,138,0.45)" },
+  motif:   { bg: "#fdf8ef", border: "#c8a055", selectedBorder: "#8b6410", badgeBg: "#8b6410", badgeText: "#ffffff", line: "rgba(139,100,16,0.45)" },
+  visual:  { bg: "#fdf4f2", border: "#c89088", selectedBorder: "#8b4035", badgeBg: "#8b4035", badgeText: "#ffffff", line: "rgba(139,64,53,0.40)" },
+  note:    { bg: "#f3f8f5", border: "#7aab8a", selectedBorder: "#2e6e45", badgeBg: "#2e6e45", badgeText: "#ffffff", line: "rgba(46,110,69,0.40)" },
 };
 
 const TYPE_LABEL: Record<string, string> = {
@@ -90,15 +90,30 @@ const ACTION_LABEL: Record<string, string> = {
   analyze: "Analyze",
   visual_variations: "Visual Variations",
   conceptual_variations: "Conceptual Vars",
-  generate_concept_visuals: "Concept Visuals",
   user_added: "Your Idea",
 };
 
-const BRANCH_ACTIONS: { id: ActionType; label: string }[] = [
-  { id: "unpack_brief",          label: "Unpack Brief" },
-  { id: "analyze",               label: "Analyze" },
-  { id: "visual_variations",     label: "Visual Variations" },
-  { id: "conceptual_variations", label: "Conceptual Variations" },
+const BRANCH_ACTIONS: { id: ActionType; label: string; title: string }[] = [
+  {
+    id: "unpack_brief",
+    label: "Unpack Brief",
+    title: "Out: 5–8 ConceptCards (title · description · rationale)\nUses: brief text only — no images needed.",
+  },
+  {
+    id: "analyze",
+    label: "Analyze",
+    title: "Out: ConceptCards + MotifCards extracted from your selected images in one pass.\nUses: draft and/or reference images + brief as context.",
+  },
+  {
+    id: "visual_variations",
+    label: "Visual Variations",
+    title: "Out: one VisualCard per Arnheim dimension — a 5×3 variation panel that strengthens that dimension.\nUses: one draft image (primary) + brief as the concept.",
+  },
+  {
+    id: "conceptual_variations",
+    label: "Conceptual Variations",
+    title: "Out: one VisualCard per selected ConceptCard — a 2×2 panel of 4 image interpretations.\nSelect ConceptCards to render; MotifCards constrain the visual language.",
+  },
 ];
 
 const PICKER_COLORS = [
@@ -319,17 +334,61 @@ function TextCardNode(props: NodeProps) {
     : primaryColor ?? s.border;
   const shadow = isMultiSelected ? `0 0 0 2px ${primaryColor ?? "rgba(0,0,0,0.4)"}`
     : isSelected ? "2px 2px 0px #000"
-    : isSourceOfSelected ? `0 0 0 1.5px ${SOURCE_COLOR}`
+    : isSourceOfSelected ? `0 0 0 2px ${SOURCE_COLOR}`
     : isAncestor ? "0 0 0 1px rgba(0,0,0,0.2)"
     : isHovered ? "1px 1px 0px #888"
     : "none";
+  // drop-shadow follows clip-path shape; box-shadow does not
+  const motifFilter = card.type === "motif"
+    ? (isMultiSelected ? `drop-shadow(0 0 3px ${primaryColor ?? "rgba(0,0,0,0.5)"})`
+      : isSelected ? "drop-shadow(2px 2px 0px #000)"
+      : isSourceOfSelected ? `drop-shadow(0 0 0 2px ${SOURCE_COLOR})`
+      : isAncestor ? "drop-shadow(0 0 2px rgba(0,0,0,0.2))"
+      : isHovered ? "drop-shadow(1px 1px 2px rgba(0,0,0,0.3))"
+      : undefined)
+    : undefined;
   const bgColor = isMultiSelected ? "#fafaf8"
-    : isSourceOfSelected ? "rgba(45,79,138,0.06)"
     : isAncestor ? "#f5f4f0"
-    : "#ffffff";
+    : s.bg;
 
   // ── Chip (concept / motif) ──────────────────────────────────────────────────
   if (isChip) {
+    const chipContent = (
+      <>
+        {collectionColors && collectionColors.length > 0 && !isMultiSelected && !isSelected && (
+          <div className="flex gap-0.5 shrink-0">
+            {collectionColors.map((c) => (
+              <div key={c} className="w-1.5 h-1.5 rounded-full" style={{ background: c }} />
+            ))}
+          </div>
+        )}
+        <p className={styles.chipText}>{card.title}</p>
+        {(isMultiSelected || isSelected) && <span className={styles.chipCheck}>✓</span>}
+        {isSaved && !isSelected && !isMultiSelected && <span className={styles.chipStar}>★</span>}
+        <button
+          className={`absolute right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 flex items-center justify-center text-[rgba(0,0,0,0.3)] hover:text-black text-[9px] leading-none ${styles.centerY}`}
+          onClick={(e) => { e.stopPropagation(); onRemove(genId, card.id); }}
+          title="Remove from tree"
+        >✕</button>
+      </>
+    );
+
+    if (card.type === "motif") {
+      // Wrapper provides the octagon border: clip-path + border-color bg + 1px padding
+      return (
+        <>
+          <Handle type="target" position={Position.Left} className={styles.handleDot} style={handleStyle("left")} />
+          <div className={styles.chipMotif} style={{ background: borderColor, filter: motifFilter }}>
+            <div className={`relative group ${styles.chipMotifInner}`} style={{ background: bgColor, paddingLeft: 10 }}>
+              {chipContent}
+            </div>
+          </div>
+          <Handle type="source" position={Position.Right} className={styles.handleDot} style={handleStyle("right")} />
+        </>
+      );
+    }
+
+    // Concept chip — uniform border
     return (
       <>
         <Handle type="target" position={Position.Left} className={styles.handleDot} style={handleStyle("left")} />
@@ -337,48 +396,12 @@ function TextCardNode(props: NodeProps) {
           className={`relative group ${styles.chipNode}`}
           style={{
             background: bgColor,
-            borderLeft: card.type === "concept" ? `1.5px solid ${borderColor}` : "none",
+            border: `1px solid ${borderColor}`,
             boxShadow: shadow,
-            paddingLeft: card.type === "concept" ? 9 : 10,
+            paddingLeft: 9,
           }}
         >
-          {/* Motif: 4 corner L-bracket marks */}
-          {card.type === "motif" && (
-            <>
-              {(["tl","tr","bl","br"] as const).map((pos) => {
-                const mk: React.CSSProperties = {
-                  position: "absolute", width: 8, height: 8,
-                  ...(pos === "tl" ? { top: 0, left: 0, borderTop: `1.5px solid ${borderColor}`, borderLeft: `1.5px solid ${borderColor}` } : {}),
-                  ...(pos === "tr" ? { top: 0, right: 0, borderTop: `1.5px solid ${borderColor}`, borderRight: `1.5px solid ${borderColor}` } : {}),
-                  ...(pos === "bl" ? { bottom: 0, left: 0, borderBottom: `1.5px solid ${borderColor}`, borderLeft: `1.5px solid ${borderColor}` } : {}),
-                  ...(pos === "br" ? { bottom: 0, right: 0, borderBottom: `1.5px solid ${borderColor}`, borderRight: `1.5px solid ${borderColor}` } : {}),
-                };
-                return <span key={pos} style={mk} />;
-              })}
-            </>
-          )}
-          {/* Collection dots */}
-          {collectionColors && collectionColors.length > 0 && !isMultiSelected && !isSelected && (
-            <div className="flex gap-0.5 shrink-0">
-              {collectionColors.map((c) => (
-                <div key={c} className="w-1.5 h-1.5 rounded-full" style={{ background: c }} />
-              ))}
-            </div>
-          )}
-          <p className={styles.chipText}>
-            {card.title}
-          </p>
-          {(isMultiSelected || isSelected) && (
-            <span className={styles.chipCheck}>✓</span>
-          )}
-          {isSaved && !isSelected && !isMultiSelected && (
-            <span className={styles.chipStar}>★</span>
-          )}
-          <button
-            className={`absolute right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 flex items-center justify-center text-[rgba(0,0,0,0.3)] hover:text-black text-[9px] leading-none ${styles.centerY}`}
-            onClick={(e) => { e.stopPropagation(); onRemove(genId, card.id); }}
-            title="Remove from tree"
-          >✕</button>
+          {chipContent}
         </div>
         <Handle type="source" position={Position.Right} className={styles.handleDot} style={handleStyle("right")} />
       </>
@@ -395,6 +418,7 @@ function TextCardNode(props: NodeProps) {
           background: bgColor,
           border: `1px solid ${borderColor}`,
           boxShadow: shadow,
+          ...(card.type === "note" ? { height: "auto" } : {}),
         }}
       >
         {collectionColors && collectionColors.length > 0 && !isMultiSelected && !isSelected && (
@@ -411,7 +435,9 @@ function TextCardNode(props: NodeProps) {
             title="Remove from tree"
           >✕</button>
         )}
-        <div className={`p-2.5 flex flex-col justify-center ${styles.noteBody}`}>
+        <div className={`p-2.5 flex flex-col justify-center ${styles.noteBody}`}
+          style={card.type === "note" ? { height: "auto" } : undefined}
+        >
           {card.type !== "note" && (
             <div className="flex items-center gap-1.5 pr-4">
               <span className="text-[8px] uppercase tracking-[0.14em] shrink-0 text-[rgba(0,0,0,0.45)]">
@@ -421,7 +447,7 @@ function TextCardNode(props: NodeProps) {
               {isSaved && <span className="text-[10px] shrink-0 text-[rgba(0,0,0,0.5)]" title="Saved">★</span>}
             </div>
           )}
-          <p className="text-[11px] text-[#111] leading-tight line-clamp-2 flex-1">
+          <p className={`text-[11px] text-[#111] leading-tight flex-1${card.type === "note" ? "" : " line-clamp-2"}`}>
             {card.title}
           </p>
           {card.type !== "note" && (
@@ -436,10 +462,22 @@ function TextCardNode(props: NodeProps) {
   );
 }
 
-const VISUAL_QUICK_ACTIONS: { id: ActionType; label: string }[] = [
-  { id: "analyze",               label: "Analyze" },
-  { id: "visual_variations",     label: "Variations" },
-  { id: "conceptual_variations", label: "Concepts" },
+const VISUAL_QUICK_ACTIONS: { id: ActionType; label: string; title: string }[] = [
+  {
+    id: "analyze",
+    label: "Analyze",
+    title: "Out: ConceptCards + MotifCards extracted from this image.",
+  },
+  {
+    id: "visual_variations",
+    label: "Variations",
+    title: "Out: 5×3 variation panel per Arnheim dimension, using this image as the draft.",
+  },
+  {
+    id: "conceptual_variations",
+    label: "Concepts",
+    title: "Out: 2×2 image panel per selected ConceptCard, using this image as a style reference.",
+  },
 ];
 
 function VisualCardNode(props: NodeProps) {
@@ -462,7 +500,7 @@ function VisualCardNode(props: NodeProps) {
     : primaryColor ?? s.border;
   const shadow = isMultiSelected ? `0 0 0 2px ${primaryColor ?? "rgba(0,0,0,0.4)"}`
     : isSelected ? "2px 2px 0px #000"
-    : isSourceOfSelected ? `0 0 0 1.5px ${SOURCE_COLOR}`
+    : isSourceOfSelected ? `0 0 0 2px ${SOURCE_COLOR}`
     : isAncestor ? "0 0 0 1px rgba(0,0,0,0.2)"
     : isHovered ? "1px 1px 0px #888"
     : "none";
@@ -516,6 +554,7 @@ function VisualCardNode(props: NodeProps) {
                 <button
                   key={a.id}
                   onClick={(e) => { e.stopPropagation(); onQuickBranch(a.id); }}
+                  title={a.title}
                   className="text-[7px] bg-white/20 hover:bg-white/45 text-white px-1.5 py-0.5 rounded transition-colors whitespace-nowrap"
                 >
                   {a.label}
@@ -782,6 +821,21 @@ function CollectionHalos({ collections }: { collections: Collection[] }) {
   );
 }
 
+// Walk parentCardIds recursively to collect all ancestor IDs (BFS)
+function getAllAncestorIds(startId: string, nodes: LayoutNode[], cardIds: Set<string>): Set<string> {
+  const result = new Set<string>();
+  const queue = [...(nodes.find((n) => n.card.id === startId)?.parentCardIds ?? [])];
+  while (queue.length > 0) {
+    const pid = queue.shift()!;
+    if (cardIds.has(pid) && !result.has(pid)) {
+      result.add(pid);
+      const pNode = nodes.find((n) => n.card.id === pid);
+      if (pNode) queue.push(...pNode.parentCardIds);
+    }
+  }
+  return result;
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 interface Props {
   generations: Generation[];
@@ -916,14 +970,12 @@ export default function TreeView({
 
   const hoveredAncestorIds = useMemo(() => {
     if (!hoveredId) return new Set<string>();
-    const hNode = nodes.find((n) => n.card.id === hoveredId);
-    return new Set((hNode?.parentCardIds ?? []).filter((pid) => cardIds.has(pid)));
+    return getAllAncestorIds(hoveredId, nodes, cardIds);
   }, [hoveredId, nodes, cardIds]);
 
   const selectedAncestorIds = useMemo(() => {
     if (!selectedId) return new Set<string>();
-    const selNode = nodes.find((n) => n.card.id === selectedId);
-    return new Set((selNode?.parentCardIds ?? []).filter((pid) => cardIds.has(pid)));
+    return getAllAncestorIds(selectedId, nodes, cardIds);
   }, [selectedId, nodes, cardIds]);
 
   const rfInstanceRef = useRef<ReactFlowInstance | null>(null);
@@ -1079,7 +1131,10 @@ export default function TreeView({
   const rfEdges = useMemo((): RFEdge[] =>
     edges.map((edge): RFEdge => {
       const s = TYPE_STYLE[edge.toType] ?? TYPE_STYLE.concept;
-      const isSourceEdge = !!selectedId && edge.toId === selectedId;
+      const isSourceEdge = !!selectedId && (
+        edge.toId === selectedId ||
+        (selectedAncestorIds.has(edge.toId) && selectedAncestorIds.has(edge.fromId))
+      );
       const isActive = hoveredId === edge.toId || hoveredId === edge.fromId
         || hoveredSourceIds.has(edge.fromId);
       const color = isSourceEdge ? SOURCE_EDGE_COLOR
@@ -1356,7 +1411,7 @@ export default function TreeView({
                   }`}
                 >
                   <span className="text-[12px] leading-none">◉</span>
-                  Colors
+                  Collections
                 </button>
               )}
               <button
@@ -1422,6 +1477,7 @@ export default function TreeView({
                   <button
                     key={a.id}
                     onClick={() => handleMultiAction(a.id)}
+                    title={a.title}
                     className="px-2.5 py-1 rounded-md bg-[#111] text-white hover:bg-[#333] transition-colors whitespace-nowrap"
                   >
                     {a.label} →
@@ -1539,29 +1595,26 @@ export default function TreeView({
           <Panel position="bottom-left">
             <div className={`mb-2 ml-2 bg-white border border-[rgba(0,0,0,0.12)] px-3 py-2.5 flex flex-col gap-2 ${styles.sq}`}>
               <p className="text-[8px] uppercase tracking-[0.16em] text-[rgba(0,0,0,0.35)] mb-0.5">Node types</p>
-              {/* Concept */}
+              {/* Concept — indigo rectangle, uniform border */}
               <div className="flex items-center gap-2">
-                <div className="w-[18px] h-[14px] shrink-0 border-l-[1.5px] border-l-black" />
+                <div className="w-[18px] h-[14px] shrink-0 bg-[#dde1f2]" style={{ border: "1px solid #8b96c8" }} />
                 <span className="text-[10px] text-[rgba(0,0,0,0.6)]">Concept</span>
               </div>
-              {/* Motif */}
+              {/* Motif — amber chamfered octagon */}
               <div className="flex items-center gap-2">
-                <div className="relative shrink-0 w-[18px] h-[14px]">
-                  <span className="absolute top-0 left-0 w-1.5 h-1.5 border-t-[1.5px] border-l-[1.5px] border-black" />
-                  <span className="absolute top-0 right-0 w-1.5 h-1.5 border-t-[1.5px] border-r-[1.5px] border-black" />
-                  <span className="absolute bottom-0 left-0 w-1.5 h-1.5 border-b-[1.5px] border-l-[1.5px] border-black" />
-                  <span className="absolute bottom-0 right-0 w-1.5 h-1.5 border-b-[1.5px] border-r-[1.5px] border-black" />
+                <div className="shrink-0" style={{ background: "#c8a055", padding: 1, clipPath: "polygon(5px 0%, calc(100% - 5px) 0%, 100% 5px, 100% calc(100% - 5px), calc(100% - 5px) 100%, 5px 100%, 0% calc(100% - 5px), 0% 5px)" }}>
+                  <div style={{ width: 18, height: 14, background: "#fdf8ef", clipPath: "polygon(4.5px 0%, calc(100% - 4.5px) 0%, 100% 4.5px, 100% calc(100% - 4.5px), calc(100% - 4.5px) 100%, 4.5px 100%, 0% calc(100% - 4.5px), 0% 4.5px)" }} />
                 </div>
                 <span className="text-[10px] text-[rgba(0,0,0,0.6)]">Motif</span>
               </div>
-              {/* Note */}
+              {/* Note — sage rounded rectangle */}
               <div className="flex items-center gap-2">
-                <div className="w-[18px] h-[14px] shrink-0 border border-[rgba(0,0,0,0.25)]" />
+                <div className="w-[18px] h-[14px] shrink-0 rounded-[4px] bg-[#f3f8f5]" style={{ border: "1px solid #7aab8a" }} />
                 <span className="text-[10px] text-[rgba(0,0,0,0.6)]">Note</span>
               </div>
-              {/* Visual */}
+              {/* Visual — terracotta rectangle */}
               <div className="flex items-center gap-2">
-                <div className="w-[18px] h-[14px] shrink-0 border border-[rgba(0,0,0,0.25)] bg-[rgba(0,0,0,0.06)]" />
+                <div className="w-[18px] h-[14px] shrink-0 bg-[#fdf4f2]" style={{ border: "1px solid #c89088" }} />
                 <span className="text-[10px] text-[rgba(0,0,0,0.6)]">Visual</span>
               </div>
             </div>
@@ -1617,6 +1670,7 @@ export default function TreeView({
               onClose={() => setSelectedId(null)}
               onAddAsReference={onAddAsReference}
               onAddChild={() => setAddNodeState({ parentIds: [selectedNode.card.id] })}
+              onAddChildNode={(card) => onAddUserNode(card, [selectedNode.card.id])}
             />
           ) : selectedInputIsBrief ? (
             <InputDetailPanel
@@ -1972,6 +2026,7 @@ function DetailPanel({
   onClose,
   onAddAsReference,
   onAddChild,
+  onAddChildNode,
 }: {
   node: LayoutNode;
   siblings: LayoutNode[];
@@ -1984,6 +2039,7 @@ function DetailPanel({
   onClose: () => void;
   onAddAsReference: (dataUrl: string, label: string) => void;
   onAddChild: () => void;
+  onAddChildNode: (card: ResultCard) => void;
 }) {
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [showCrop, setShowCrop] = useState(false);
@@ -2158,7 +2214,7 @@ function DetailPanel({
               )}
             </div>
             {(isVisual ? VISUAL_QUICK_ACTIONS : BRANCH_ACTIONS).map((a) => (
-              <button key={a.id} onClick={() => onBranch(a.id)} className="w-full text-left text-[11px] px-3 py-1.5 rounded-lg hover:bg-blue-50 hover:text-[#2563eb] text-[#555] transition-colors">
+              <button key={a.id} onClick={() => onBranch(a.id)} title={a.title} className="w-full text-left text-[11px] px-3 py-1.5 rounded-lg hover:bg-blue-50 hover:text-[#2563eb] text-[#555] transition-colors">
                 {a.label} →
               </button>
             ))}
@@ -2174,7 +2230,7 @@ function DetailPanel({
                 onClick={() => setShowCrop(true)}
                 className="text-sm text-white/70 hover:text-white border border-white/30 hover:border-white/70 px-3 py-1 rounded transition-colors"
               >
-                ✂ Crop & Edit
+                ⊙ Focus
               </button>
               <button onClick={() => setLightboxSrc(null)} className="text-white/60 hover:text-white text-sm transition-colors">✕ Close</button>
             </div>
@@ -2188,7 +2244,17 @@ function DetailPanel({
         <CropModal
           src={lightboxSrc}
           onSave={(croppedDataUrl) => {
-            onUpdateCard({ ...card, imageDataUrl: croppedDataUrl } as VisualCard);
+            const sourceCard = card as VisualCard;
+            onAddChildNode({
+              id: crypto.randomUUID(),
+              type: "visual",
+              title: sourceCard.title,
+              dimensionLabel: sourceCard.dimensionLabel,
+              analysisText: sourceCard.analysisText,
+              imageDataUrl: croppedDataUrl,
+              imageMimeType: "image/png",
+              createdAt: new Date().toISOString(),
+            } as VisualCard);
             setShowCrop(false);
             setLightboxSrc(null);
           }}
@@ -2279,9 +2345,9 @@ function CropModal({ src, onSave, onClose }: { src: string; onSave: (dataUrl: st
   return (
     <div className="fixed inset-0 z-[60] bg-black/92 flex flex-col items-center justify-center gap-5 p-8">
       <div className="flex items-center gap-4">
-        <p className="text-white/60 text-sm">Drag corners to crop</p>
+        <p className="text-white/60 text-sm">Drag to select a focus area</p>
         <button onClick={handleApply} className="bg-white text-[#111] text-sm px-4 py-1.5 rounded-sm hover:bg-white/90 transition-colors font-medium">
-          Save crop
+          Save as focus
         </button>
         <button onClick={onClose} className="text-white/50 hover:text-white text-sm transition-colors">Cancel</button>
       </div>

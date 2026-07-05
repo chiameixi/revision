@@ -19,8 +19,6 @@ export type ActionType =
   | "analyze"
   | "visual_variations"
   | "conceptual_variations"
-  | "generate_concept_visuals"
-  // | "synthesize"   // reserved – not yet wired up in the toolbar
   | "user_added";
 
 export type CardType =
@@ -122,12 +120,26 @@ export interface ProjectState {
   manualEdges: ManualEdge[];
 }
 
-// Concept card reference passed to generate_concept_visuals
+// Concept card reference passed to conceptual_variations to specify which concepts to render
 export interface ConceptCardRef {
   id: string;
   title: string;
   description: string;
   rationale: string;
+}
+
+// Typed context passed to every action, organized by card type.
+// Each card type is injected into a distinct prompt section so the model
+// understands the semantic role of each piece of context.
+export interface TypedContext {
+  concepts: string[];  // formatted ConceptCard summaries ("direction to build on")
+  motifs: string[];    // formatted MotifCard summaries ("visual language to maintain")
+  visuals: Array<{     // VisualCards — text analysis + optional image to pass to model
+    text: string;
+    imageDataUrl?: string;
+    imageMimeType?: string;
+  }>;
+  notes: string[];     // NoteCard bodies
 }
 
 // API types
@@ -137,9 +149,9 @@ export interface GenerateRequest {
   userInstructions: string;
   draftDataUrls: string[];
   referenceDataUrls: string[];
-  highlightSummaries: string[];
+  typedContext: TypedContext;
   dimensionIds: string[];
-  conceptCards?: ConceptCardRef[];
+  conceptCards?: ConceptCardRef[];  // for conceptual_variations: the concepts to render (one image batch each)
 }
 
 export interface GenerateResponse {
@@ -157,5 +169,4 @@ export interface ComposerState {
   selectedCardIds: string[];
   userInstructions: string;
   selectedDimensionIds: string[];
-  conceptCards?: ConceptCardRef[];
 }

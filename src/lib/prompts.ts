@@ -25,8 +25,7 @@ type PromptKey =
   | "VISUAL_VARIATIONS"
   | "CONCEPTUAL_VARIATIONS"
   | "UNPACK_BRIEF"
-  | "GENERATE_CONCEPT_VISUALS"
-  | "SYNTHESIZE";
+  | "ANALYZE";
 
 let cache: Record<string, string> | null = null;
 

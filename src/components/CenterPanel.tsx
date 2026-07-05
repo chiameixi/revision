@@ -45,12 +45,11 @@ interface Props {
 }
 
 const ACTION_LABELS: Record<ActionType, string> = {
-  unpack_brief:             "Unpack Brief",
-  analyze:                  "Analyze",
-  visual_variations:        "Visual Variations",
-  conceptual_variations:    "Conceptual Variations",
-  generate_concept_visuals: "Generate Concept Visuals",
-  user_added:               "Your Idea",
+  unpack_brief:          "Unpack Brief",
+  analyze:               "Analyze",
+  visual_variations:     "Visual Variations",
+  conceptual_variations: "Conceptual Variations",
+  user_added:            "Your Idea",
 };
 
 export default function CenterPanel({
@@ -224,7 +223,7 @@ function GenerationBlock({
 }) {
   const label = ACTION_LABELS[gen.actionType] ?? gen.actionType;
   const time = new Date(gen.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const isImageGrid = gen.actionType === "visual_variations" || gen.actionType === "generate_concept_visuals";
+  const isImageGrid = gen.actionType === "visual_variations" || gen.actionType === "conceptual_variations";
 
   const sourceDrafts = (gen.includedDraftIds ?? [])
     .map((id) => assets.find((a) => a.id === id))

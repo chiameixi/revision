@@ -10,15 +10,13 @@ const ACTION_LABELS: Record<string, string> = {
   analyze: "Analyze",
   visual_variations: "Generate Visual Variations",
   conceptual_variations: "Generate Conceptual Variations",
-  generate_concept_visuals: "Generate Concept Visuals",
 };
 
 const ACTION_DESCRIPTIONS: Record<string, string> = {
   unpack_brief: "Unpack your brief into goals, constraints, tensions, and idea directions.",
-  analyze: "Analyze your drafts and references for strengths, blind spots, patterns, and next directions.",
+  analyze: "Analyze your drafts and references — extracts both concept directions and visual motifs.",
   visual_variations: "Generate per-Arnheim-dimension visual variations with images (one call per selected dimension).",
-  conceptual_variations: "Generate deeper conceptual alternatives grounded in your materials.",
-  generate_concept_visuals: "Generate a 2×2 panel of 4 visuals for each selected conceptual variation.",
+  conceptual_variations: "Generate a 2×2 image panel for each selected concept, grounded in your motifs and style refs.",
 };
 
 const CARD_TYPE_LABEL: Record<string, string> = {
@@ -87,11 +85,10 @@ export default function CallComposerModal({
   }
 
   const selectedDimCount = state.selectedDimensionIds.length;
-  const showDrafts = ["analyze", "visual_variations", "conceptual_variations", "generate_concept_visuals"].includes(action);
-  const showRefs = ["analyze", "conceptual_variations"].includes(action);
+  const showDrafts = ["analyze", "visual_variations", "conceptual_variations"].includes(action);
+  const showRefs = ["analyze", "visual_variations", "conceptual_variations"].includes(action);
   const showDimensions = action === "visual_variations";
-  const showConceptCards = action === "generate_concept_visuals" && (state.conceptCards ?? []).length > 0;
-  const showSelectedCards = selectedCards.length > 0 && action !== "generate_concept_visuals";
+  const showSelectedCards = selectedCards.length > 0;
 
   return (
     <div
@@ -154,25 +151,9 @@ export default function CallComposerModal({
           )}
 
           {/* No canvas selection hint */}
-          {!showSelectedCards && action !== "generate_concept_visuals" && (
+          {!showSelectedCards && (
             <div className={`text-[12px] italic text-[rgba(0,0,0,0.35)] bg-[#f5f4f0] border border-[rgba(0,0,0,0.1)] px-3 py-2.5 ${styles.sq}`}>
               No canvas nodes selected — select nodes on the canvas before running an action to include them as context.
-            </div>
-          )}
-
-          {/* Selected conceptual variation cards */}
-          {showConceptCards && (
-            <div>
-              <p className="text-[9px] uppercase tracking-[0.16em] text-[rgba(0,0,0,0.4)] mb-2">Generating visuals for</p>
-              <div className="flex flex-col gap-1.5">
-                {(state.conceptCards ?? []).map((card) => (
-                  <div key={card.id} className={`bg-[#f5f4f0] border border-black px-3 py-2 ${styles.sq}`}>
-                    <p className="text-[13px] text-black">{card.title}</p>
-                    <p className="text-[12px] italic text-[rgba(0,0,0,0.5)] mt-0.5 leading-snug">{card.description}</p>
-                  </div>
-                ))}
-              </div>
-              <p className="text-[11px] italic text-[rgba(0,0,0,0.35)] mt-1.5">A 2×2 panel of 4 visuals will be generated for each variation above.</p>
             </div>
           )}
 
@@ -180,7 +161,7 @@ export default function CallComposerModal({
           {showDrafts && drafts.length > 0 && (
             <div>
               <p className="text-[9px] uppercase tracking-[0.16em] text-[rgba(0,0,0,0.4)] mb-2">
-                Draft Images {action === "generate_concept_visuals" && <span className="normal-case tracking-normal italic text-[rgba(0,0,0,0.3)]">— optional style reference</span>}
+                Draft Images {action === "conceptual_variations" && <span className="normal-case tracking-normal italic text-[rgba(0,0,0,0.3)]">— optional style reference</span>}
               </p>
               <div className="flex flex-wrap gap-2">
                 {drafts.map((a) => {

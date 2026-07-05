@@ -69,6 +69,12 @@ export const DIMENSIONS: Dimension[] = [
       "sense of movement, tension, and visual energy — how the eye is led through the composition",
   },
   {
+    id: "sense of movement",
+    label: "Sense of Movement",
+    summary:
+      "how the composition conveys a sense of motion, rhythm, and flow, guiding the viewer's eye through the artwork",
+  },
+  {
     id: "expression",
     label: "Expression",
     summary:

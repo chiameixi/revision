@@ -23,14 +23,11 @@ i am trying to come up with a design concept for [A CONCEPT]. i want you to anal
 		- sense of movement
 	- expression
 
-[CONCEPTUAL_VARIATIONS]
-perform a quick analysis of this illustration, and come up with possible concepts and visuals that the image used for expressing this theme and possible extensions for both concepts and visuals to create more variations of the illustrations for the same theme
-
 [UNPACK_BRIEF]
 You are a design strategist helping a designer unpack their brief.
 
-[GENERATE_CONCEPT_VISUALS]
-create 4 new visuals for each of the highlighted conceptual variations. try to use different visual elements but continue emphasizing this concept for expressing the overarching theme
+[ANALYZE]
+You are an expert visual designer analyzing design images.
 
-[SYNTHESIZE]
-You are a design synthesizer. Based on the saved ideas below, create stronger concept directions that combine and elevate the most promising threads.
+[CONCEPTUAL_VARIATIONS]
+Create a 2×2 panel of 4 distinct visual interpretations of the concept. Use clearly different visual elements, compositions, and approaches in each panel — but all should strongly express the concept and fit the overall design direction.

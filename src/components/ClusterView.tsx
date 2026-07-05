@@ -22,10 +22,10 @@ const TYPE_STYLE: Record<string, {
   bg: string; border: string; selectedBorder: string;
   badgeBg: string; badgeText: string; line: string; clusterBg: string;
 }> = {
-  concept: { bg: "#ffffff", border: "#000000", selectedBorder: "#000000", badgeBg: "#000000", badgeText: "#ffffff", line: "rgba(0,0,0,0.4)", clusterBg: "#fafaf8" },
-  motif:   { bg: "#ffffff", border: "#000000", selectedBorder: "#000000", badgeBg: "#000000", badgeText: "#ffffff", line: "rgba(0,0,0,0.4)", clusterBg: "#fafaf8" },
-  visual:  { bg: "#ffffff", border: "#000000", selectedBorder: "#000000", badgeBg: "#000000", badgeText: "#ffffff", line: "rgba(0,0,0,0.3)", clusterBg: "#fafaf8" },
-  note:    { bg: "#ffffff", border: "rgba(0,0,0,0.35)", selectedBorder: "#000000", badgeBg: "rgba(0,0,0,0.5)", badgeText: "#ffffff", line: "rgba(0,0,0,0.2)", clusterBg: "#fafaf8" },
+  concept: { bg: "#dde1f2", border: "#8b96c8", selectedBorder: "#3c4a8a", badgeBg: "#3c4a8a", badgeText: "#ffffff", line: "rgba(60,74,138,0.45)",  clusterBg: "#e8eaf8" },
+  motif:   { bg: "#fdf8ef", border: "#c8a055", selectedBorder: "#8b6410", badgeBg: "#8b6410", badgeText: "#ffffff", line: "rgba(139,100,16,0.45)", clusterBg: "#faf6ea" },
+  visual:  { bg: "#fdf4f2", border: "#c89088", selectedBorder: "#8b4035", badgeBg: "#8b4035", badgeText: "#ffffff", line: "rgba(139,64,53,0.40)",  clusterBg: "#f8efee" },
+  note:    { bg: "#f3f8f5", border: "#7aab8a", selectedBorder: "#2e6e45", badgeBg: "#2e6e45", badgeText: "#ffffff", line: "rgba(46,110,69,0.40)",  clusterBg: "#eff6f2" },
 };
 
 const TYPE_LABEL_PLURAL: Record<string, string> = {
@@ -38,15 +38,31 @@ const TYPE_LABEL_SINGLE: Record<string, string> = {
 
 const ACTION_LABEL: Record<string, string> = {
   unpack_brief: "Unpack Brief", analyze: "Analyze", visuals: "Visual Variations",
-  conceptual_variations: "Conceptual Vars", generate_concept_visuals: "Concept Visuals",
+  conceptual_variations: "Conceptual Vars",
   user_added: "Your Idea",
 };
 
-const BRANCH_ACTIONS: { id: ActionType; label: string }[] = [
-  { id: "unpack_brief", label: "Unpack Brief" },
-  { id: "analyze", label: "Analyze" },
-  { id: "visual_variations", label: "Visual Variations" },
-  { id: "conceptual_variations", label: "Conceptual Variations" },
+const BRANCH_ACTIONS: { id: ActionType; label: string; title: string }[] = [
+  {
+    id: "unpack_brief",
+    label: "Unpack Brief",
+    title: "Out: 5–8 ConceptCards (title · description · rationale)\nUses: brief text only — no images needed.",
+  },
+  {
+    id: "analyze",
+    label: "Analyze",
+    title: "Out: ConceptCards + MotifCards extracted from your selected images in one pass.\nUses: draft and/or reference images + brief as context.",
+  },
+  {
+    id: "visual_variations",
+    label: "Visual Variations",
+    title: "Out: one VisualCard per Arnheim dimension — a 5×3 variation panel that strengthens that dimension.\nUses: one draft image (primary) + brief as the concept.",
+  },
+  {
+    id: "conceptual_variations",
+    label: "Conceptual Variations",
+    title: "Out: one VisualCard per selected ConceptCard — a 2×2 panel of 4 image interpretations.\nSelect ConceptCards to render; MotifCards constrain the visual language.",
+  },
 ];
 
 export const COLLECTION_COLORS = [
@@ -107,9 +123,12 @@ function MiniCard({ item, onRemove }: { item: ClusterItem; onRemove?: () => void
   const isChip = item.card.type === "concept" || item.card.type === "motif";
   const imgSrc = isVisual ? (item.card as VisualCard).imageDataUrl : undefined;
 
-  const borderColor = isSelected ? "#000" : ts.border;
-  const shadow = isSelected ? "2px 2px 0px #000" : "none";
-  const bgColor = isSelected ? "#f5f4f0" : "#ffffff";
+  const borderColor = isSelected ? ts.selectedBorder : ts.border;
+  const shadow = isSelected ? "2px 2px 0px rgba(0,0,0,0.5)" : "none";
+  const motifFilter = item.card.type === "motif"
+    ? (isSelected ? "drop-shadow(2px 2px 0px rgba(0,0,0,0.5))" : undefined)
+    : undefined;
+  const bgColor = isSelected ? "#f5f4f0" : ts.bg;
 
   const sharedDrag = {
     draggable: true,
@@ -144,32 +163,48 @@ function MiniCard({ item, onRemove }: { item: ClusterItem; onRemove?: () => void
 
   // ── Concept / motif chip ────────────────────────────────────────────────────
   if (isChip) {
-    return (
-      <div
-        {...sharedDrag}
-        className={`relative group/minicard cursor-pointer nodrag nowheel ${styles.chipNode}`}
-        style={{
-          background: bgColor,
-          borderLeft: item.card.type === "concept" ? `1.5px solid ${borderColor}` : "none",
-          boxShadow: shadow,
-          paddingLeft: item.card.type === "concept" ? 7 : 8,
-          paddingRight: onRemove ? 22 : 8,
-        }}
-      >
-        {item.card.type === "motif" && (
-          <>
-            <span className={`${styles.chipCorner} ${styles.chipCornerTL}`} />
-            <span className={`${styles.chipCorner} ${styles.chipCornerTR}`} />
-            <span className={`${styles.chipCorner} ${styles.chipCornerBL}`} />
-            <span className={`${styles.chipCorner} ${styles.chipCornerBR}`} />
-          </>
-        )}
+    const chipContent = (
+      <>
         <p className={styles.chipText}>{item.card.title}</p>
         {isSelected && <span className={styles.chipCheck}>✓</span>}
         {onRemove && (
           <button className={`nodrag absolute right-1.5 opacity-0 group-hover/minicard:opacity-100 transition-opacity w-4 h-4 rounded-full flex items-center justify-center text-[#bbb] hover:text-red-400 text-[9px] leading-none ${styles.centerY}`}
             title="Remove" onClick={(e) => { e.stopPropagation(); onRemove(); }}>✕</button>
         )}
+      </>
+    );
+
+    if (item.card.type === "motif") {
+      return (
+        <div
+          {...sharedDrag}
+          className={styles.chipMotif}
+          style={{ background: borderColor, filter: motifFilter }}
+        >
+          <div
+            className={`relative group/minicard cursor-pointer nodrag nowheel ${styles.chipMotifInner}`}
+            style={{ background: bgColor, paddingLeft: 8, paddingRight: onRemove ? 22 : 8 }}
+          >
+            {chipContent}
+          </div>
+        </div>
+      );
+    }
+
+    // Concept chip
+    return (
+      <div
+        {...sharedDrag}
+        className={`relative group/minicard cursor-pointer nodrag nowheel ${styles.chipNode}`}
+        style={{
+          background: bgColor,
+          border: `1px solid ${borderColor}`,
+          boxShadow: shadow,
+          paddingLeft: 7,
+          paddingRight: onRemove ? 22 : 8,
+        }}
+      >
+        {chipContent}
       </div>
     );
   }
@@ -581,7 +616,7 @@ export default function ClusterView({
     <ClusterCtx.Provider value={ctxValue}>
       <div className="flex h-full w-full overflow-hidden">
         {/* ── RF Canvas ────────────────────────────────────────────────────── */}
-        <div className="flex-1 h-full overflow-hidden">
+        <div className="flex-1 h-full overflow-hidden bg-[#f7f6f3]">
           <ReactFlow
             nodes={rfNodes}
             edges={[]}
@@ -835,7 +870,7 @@ function ClusterDetailPanel({
           <div className="p-3 flex flex-col gap-1">
             <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold px-1 pt-1 pb-0.5">Branch from here</p>
             {BRANCH_ACTIONS.map((a) => (
-              <button key={a.id} onClick={() => onBranch(a.id)} className="w-full text-left text-[11px] px-3 py-1.5 rounded-lg hover:bg-blue-50 hover:text-[#2563eb] text-[#555] transition-colors">
+              <button key={a.id} onClick={() => onBranch(a.id)} title={a.title} className="w-full text-left text-[11px] px-3 py-1.5 rounded-lg hover:bg-blue-50 hover:text-[#2563eb] text-[#555] transition-colors">
                 {a.label} →
               </button>
             ))}

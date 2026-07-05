@@ -1,5 +1,5 @@
 .canvas {
-  background: #f0eeeb;
+  background: #f7f6f3;
 }
 
 .sq {
@@ -35,6 +35,40 @@
   padding-bottom: 6px;
   position: relative;
 }
+.chipMotif {
+  clip-path: polygon(
+    12px 0%, calc(100% - 12px) 0%,
+    100% 12px, 100% calc(100% - 12px),
+    calc(100% - 12px) 100%, 12px 100%,
+    0% calc(100% - 12px), 0% 12px
+  );
+  padding: 1px;
+  display: inline-flex;
+}
+/* Inner chip fill inside the octagon wrapper */
+.chipMotifInner {
+  width: 160px;
+  min-height: 32px;
+  border: none;
+  border-radius: 0;
+  clip-path: polygon(
+    11.5px 0%, calc(100% - 11.5px) 0%,
+    100% 11.5px, 100% calc(100% - 11.5px),
+    calc(100% - 11.5px) 100%, 11.5px 100%,
+    0% calc(100% - 11.5px), 0% 11.5px
+  );
+  transition: all 0.15s ease;
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-right: 22px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  position: relative;
+}
 .chipText {
   font-size: 10px;
   font-weight: 500;
@@ -58,7 +92,7 @@
 .noteNode {
   width: 140px;
   height: 44px;
-  border-radius: 0;
+  border-radius: 10px;
   transition: all 0.15s ease;
   overflow: hidden;
   cursor: pointer;

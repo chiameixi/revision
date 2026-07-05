@@ -10,10 +10,12 @@ import type {
   Asset,
   ComposerState,
   ConceptCard,
+  ConceptCardRef,
   Generation,
   GenerateRequest,
   GenerateResponse,
   ResultCard,
+  TypedContext,
   VisualCard,
 } from "@/types";
 
@@ -27,21 +29,59 @@ const DEFAULT_COMPOSER: ComposerState = {
   selectedDimensionIds: DIMENSIONS.map((d) => d.id),
 };
 
-function formatCardForContext(card: ResultCard): string {
-  const lines: string[] = [`[${card.type}] ${card.title}`];
-  if (card.type === "concept") {
-    lines.push(`Description: ${card.description}`);
-    if (card.rationale) lines.push(`Rationale: ${card.rationale}`);
-  } else if (card.type === "motif") {
-    lines.push(`Visual quality: ${card.visualQuality}`);
-    lines.push(`How it conveys the idea: ${card.howItConveysIdea}`);
-  } else if (card.type === "visual") {
-    lines.push(`Dimension: ${card.dimensionLabel}`);
-    if (card.analysisText) lines.push(`Analysis: ${card.analysisText}`);
-  } else if (card.type === "note") {
-    if (card.body) lines.push(`Note: ${card.body}`);
-  }
+// Format a single card as a text summary for its section in typedContext
+function formatConceptForContext(card: ConceptCard): string {
+  const lines = [`[concept] ${card.title}`, `Description: ${card.description}`];
+  if (card.rationale) lines.push(`Rationale: ${card.rationale}`);
   return lines.join("\n");
+}
+
+function formatMotifForContext(card: ResultCard & { type: "motif" }): string {
+  return [
+    `[motif] ${card.title}`,
+    `Visual quality: ${card.visualQuality}`,
+    `How it conveys the idea: ${card.howItConveysIdea}`,
+  ].join("\n");
+}
+
+function formatVisualForContext(card: ResultCard & { type: "visual" }): string {
+  const lines = [`[visual] ${card.title}`, `Dimension: ${card.dimensionLabel}`];
+  if (card.analysisText) lines.push(`Analysis: ${card.analysisText}`);
+  return lines.join("\n");
+}
+
+// Build TypedContext from selected cards, splitting by card type.
+// For conceptual_variations: ConceptCards go into conceptCards (to render, one image batch each).
+// For all other actions: ConceptCards go into typedContext.concepts as context.
+function buildTypedContext(
+  cards: ResultCard[],
+  action: ActionType
+): { typedContext: TypedContext; conceptCards: ConceptCardRef[] } {
+  const typedContext: TypedContext = { concepts: [], motifs: [], visuals: [], notes: [] };
+  const conceptCards: ConceptCardRef[] = [];
+
+  for (const card of cards) {
+    if (card.type === "concept") {
+      if (action === "conceptual_variations") {
+        conceptCards.push({ id: card.id, title: card.title, description: card.description, rationale: card.rationale });
+      } else {
+        typedContext.concepts.push(formatConceptForContext(card));
+      }
+    } else if (card.type === "motif") {
+      typedContext.motifs.push(formatMotifForContext(card));
+    } else if (card.type === "visual") {
+      typedContext.visuals.push({
+        text: formatVisualForContext(card),
+        imageDataUrl: card.imageDataUrl,
+        imageMimeType: card.imageMimeType,
+      });
+    } else if (card.type === "note") {
+      const parts = [card.title, card.body].filter(Boolean).join(": ");
+      if (parts) typedContext.notes.push(parts);
+    }
+  }
+
+  return { typedContext, conceptCards };
 }
 
 export default function WorkspacePage() {
@@ -65,7 +105,7 @@ export default function WorkspacePage() {
     });
   }
 
-const handleSend = useCallback(
+  const handleSend = useCallback(
     async (cfg: ComposerState) => {
       if (!cfg.action) return;
       setComposer((c) => ({ ...c, open: false }));
@@ -82,7 +122,7 @@ const handleSend = useCallback(
 
       const allCards = state.generations.flatMap((g) => g.cards);
       const selectedCards = allCards.filter((c) => cfg.selectedCardIds.includes(c.id));
-      const cardSummaries = selectedCards.map(formatCardForContext);
+      const { typedContext, conceptCards } = buildTypedContext(selectedCards, cfg.action);
 
       const body: GenerateRequest = {
         action: cfg.action,
@@ -90,9 +130,9 @@ const handleSend = useCallback(
         userInstructions: cfg.userInstructions,
         draftDataUrls,
         referenceDataUrls,
-        highlightSummaries: cardSummaries,
+        typedContext,
         dimensionIds: cfg.selectedDimensionIds,
-        conceptCards: cfg.conceptCards,
+        conceptCards: conceptCards.length ? conceptCards : undefined,
       };
 
       try {
@@ -132,24 +172,20 @@ const handleSend = useCallback(
     [state, actions]
   );
 
+  // Opens the conceptual_variations modal with the given ConceptCard pre-selected
+  // (it will be extracted as a conceptCard to render in handleSend).
   const handleGenerateVisuals = useCallback(
     (card: ConceptCard) => {
       const drafts = state.assets.filter((a) => a.type === "draft");
       setComposerCards([card]);
       setComposer({
         open: true,
-        action: "generate_concept_visuals",
+        action: "conceptual_variations",
         includedDraftIds: drafts.map((a) => a.id),
         includedReferenceIds: [],
         selectedCardIds: [card.id],
         userInstructions: "",
         selectedDimensionIds: [],
-        conceptCards: [{
-          id: card.id,
-          title: card.title,
-          description: card.description,
-          rationale: card.rationale,
-        }],
       });
     },
     [state.assets]

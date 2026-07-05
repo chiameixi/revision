@@ -1,18 +1,17 @@
 /**
  * app/api/generate/route.ts
  *
- * Responsibility: Single POST endpoint for all six generation actions.
+ * Responsibility: Single POST endpoint for all generation actions.
  *
  * Request: `GenerateRequest` (action, brief, userInstructions, draftDataUrls,
- * referenceDataUrls, highlightSummaries, dimensionIds, conceptCards?)
+ * referenceDataUrls, typedContext, dimensionIds, conceptCards?)
  * Response: `GenerateResponse` ({ cards, error? })
  *
  * Each action is handled by a dedicated async function:
- *   unpack_brief          → `handleUnpackBrief`  → ConceptCard[]
- *   analyze               → `handleAnalyze`       → MotifCard[]
- *   visual_variations     → `handleVisualVariations` → VisualCard[]  (parallel)
- *   conceptual_variations → `handleConceptualVariations` → VisualCard[]  (phase 1: JSON concepts; phase 2: parallel image)
- *   generate_concept_visuals → `handleGenerateConceptVisuals` → VisualCard[] (parallel)
+ *   unpack_brief          → `handleUnpackBrief`       → ConceptCard[]
+ *   analyze               → `handleAnalyze`            → ConceptCard[] + MotifCard[]
+ *   visual_variations     → `handleVisualVariations`   → VisualCard[]  (parallel per dimension)
+ *   conceptual_variations → `handleConceptualVariations` → VisualCard[] (parallel per concept)
  *   user_added            → no-op (returns [])
  *
  * Two Gemini call patterns are used:
@@ -24,8 +23,13 @@
  * 2. Image output (`generateImageOutput`): uses a direct REST fetch because
  *    the `@google/genai` SDK does not cleanly expose `responseModalities`.
  *    Requests both TEXT and IMAGE modalities.  Model: `gemini-2.5-flash-image`.
- *    Visual variations and concept-visual generation both use this pattern with
- *    `Promise.allSettled` so one failing dimension does not abort the batch.
+ *    Visual variations and conceptual variations use this pattern with
+ *    `Promise.allSettled` so one failing item does not abort the batch.
+ *
+ * Context: typed context (typedContext) replaces the old flat `highlightSummaries`
+ * array. Cards are split by type so each section in the prompt carries semantic
+ * meaning: concepts = direction to build on, motifs = visual language to maintain,
+ * visuals = territory already explored (with optional image data).
  *
  * Logging: every call writes JSON artefacts to `logs/<timestamp>/<action>/`
  * via `BatchLogger`.  Image bytes are also saved to disk for inspection.
@@ -48,6 +52,7 @@ import type {
   GenerateRequest,
   GenerateResponse,
   MotifCard,
+  TypedContext,
   VisualCard,
   ResultCard,
 } from "@/types";
@@ -64,9 +69,26 @@ function parseDataUrl(dataUrl: string): { data: string; mimeType: string } {
   return { data, mimeType };
 }
 
-function buildHighlightContext(summaries: string[]): string {
-  if (!summaries.length) return "";
-  return `\nSaved ideas to consider:\n${summaries.map((s, i) => `${i + 1}. ${s}`).join("\n")}\n`;
+// Builds distinct labeled prompt sections from typed context.
+// Each card type gets its own section so the model understands the semantic
+// role of each piece of context.
+function buildTypedContext(ctx: TypedContext): string {
+  const parts: string[] = [];
+
+  if (ctx.concepts.length) {
+    parts.push(`Conceptual directions to build on:\n${ctx.concepts.map((s, i) => `${i + 1}. ${s}`).join("\n")}`);
+  }
+  if (ctx.motifs.length) {
+    parts.push(`Visual language / motifs to maintain:\n${ctx.motifs.map((s, i) => `${i + 1}. ${s}`).join("\n")}`);
+  }
+  if (ctx.visuals.length) {
+    parts.push(`Visuals already explored:\n${ctx.visuals.map((v, i) => `${i + 1}. ${v.text}`).join("\n")}`);
+  }
+  if (ctx.notes.length) {
+    parts.push(`User notes:\n${ctx.notes.map((s, i) => `${i + 1}. ${s}`).join("\n")}`);
+  }
+
+  return parts.length ? `\n${parts.join("\n\n")}\n` : "";
 }
 
 function buildUserInstructions(instructions: string): string {
@@ -87,7 +109,7 @@ function logPrompt(label: string, model: string, prompt: string, imageCount = 0)
 
 // ─── JSON mode generator ─────────────────────────────────────────────────────
 
-const JSON_MODEL = "gemini-2.5-flash";
+const JSON_MODEL = "gemini-3.5-flash";
 
 async function generateJson<T>(
   promptText: string,
@@ -122,7 +144,7 @@ async function generateJson<T>(
 // Uses direct REST rather than the SDK because `@google/genai` does not expose
 // `responseModalities` in its typed config surface.
 
-const IMAGE_MODEL = "gemini-2.5-flash-image";
+const IMAGE_MODEL = "gemini-3-pro-image";
 
 type ImageOutputResult = {
   text: string | null;
@@ -134,15 +156,15 @@ type ImageOutputResult = {
 
 async function generateImageOutput(
   promptText: string,
-  imageDataUrl?: string
+  imageDataUrls: string[] = []
 ): Promise<ImageOutputResult> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set.");
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const parts: any[] = [{ text: promptText }];
-  if (imageDataUrl) {
-    const { data, mimeType } = parseDataUrl(imageDataUrl);
+  for (const url of imageDataUrls) {
+    const { data, mimeType } = parseDataUrl(url);
     parts.push({ inlineData: { mimeType, data } });
   }
 
@@ -183,11 +205,8 @@ async function generateImageOutput(
   };
 }
 
-const generateWithImageOutput = (prompt: string, url: string) => generateImageOutput(prompt, url);
-
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
-// Shared by unpack_brief and conceptual_variations
 const conceptSchema = {
   type: Type.OBJECT,
   required: ["concepts"],
@@ -207,7 +226,6 @@ const conceptSchema = {
   },
 };
 
-// Used by analyze
 const motifSchema = {
   type: Type.OBJECT,
   required: ["motifs"],
@@ -228,14 +246,26 @@ const motifSchema = {
   },
 };
 
+// Dual-output schema used by analyze: returns both concepts and motifs in one call.
+const analyzeSchema = {
+  type: Type.OBJECT,
+  required: ["concepts", "motifs"],
+  properties: {
+    concepts: conceptSchema.properties.concepts,
+    motifs: motifSchema.properties.motifs,
+  },
+};
+
 // ─── Action handlers ─────────────────────────────────────────────────────────
 
 async function handleUnpackBrief(req: GenerateRequest, log: BatchLogger): Promise<ConceptCard[]> {
+  const context = buildTypedContext(req.typedContext);
+
   const prompt = `${getPrompt("UNPACK_BRIEF")}
 
 Design Brief:
 ${req.brief || "(none provided)"}
-${buildHighlightContext(req.highlightSummaries)}${buildUserInstructions(req.userInstructions)}
+${context}${buildUserInstructions(req.userInstructions)}
 Return a JSON object with a "concepts" array. Each concept has:
 - title (3–6 words)
 - description (1–2 sentences: what this concept means for the design, its core approach)
@@ -262,7 +292,7 @@ Generate 5–8 distinct concept directions covering: core design goals, key tens
   return cards;
 }
 
-async function handleAnalyze(req: GenerateRequest, log: BatchLogger): Promise<MotifCard[]> {
+async function handleAnalyze(req: GenerateRequest, log: BatchLogger): Promise<ResultCard[]> {
   const allImages = [...req.draftDataUrls, ...req.referenceDataUrls];
   if (!allImages.length) throw new Error("No images provided for analysis.");
 
@@ -275,40 +305,53 @@ async function handleAnalyze(req: GenerateRequest, log: BatchLogger): Promise<Mo
     ? `You are looking at ${req.draftDataUrls.length} draft image(s).`
     : `You are looking at ${req.referenceDataUrls.length} reference image(s).`;
 
-  // If highlights are present, ground the analysis in them; otherwise use the brief
-  // so the model has at least some design context.
-  const conceptContext = req.highlightSummaries.length
-    ? `\nDesign concepts to consider:\n${req.highlightSummaries.join("\n")}\n`
-    : `\nDesign context: ${req.brief || "(none provided)"}\n`;
+  const context = buildTypedContext(req.typedContext);
 
-  const prompt = `You are an expert visual designer analyzing design images to extract visual motifs.
+  const prompt = `${getPrompt("ANALYZE")} Examine the provided images to extract both concept-level interpretations and visual motifs.
 
 ${contextNote}
-${conceptContext}${buildUserInstructions(req.userInstructions)}
-Examine all provided images. For each significant visual element, pattern, or quality you observe, extract it as a motif. A motif is a distinctive visual characteristic that could be reused or adapted in new designs to convey specific ideas.
+Design brief: ${req.brief || "(none provided)"}
+${context}${buildUserInstructions(req.userInstructions)}
+Return a JSON object with two arrays:
 
-Return a JSON object with a "motifs" array. Each motif has:
-- title (2–5 words, the name of this motif)
-- visualQuality (1–2 sentences: what it looks like, how it manifests visually in the image)
-- howItConveysIdea (1–2 sentences: what concept, feeling, or meaning this visual quality communicates)
+"concepts": concept directions you see expressed or implied in these images. Each concept has:
+- title (3–6 words)
+- description (1–2 sentences: what this concept direction is, its core design approach)
+- rationale (1–2 sentences: why this direction is interesting or worth exploring)
+Generate 3–5 distinct concepts.
+
+"motifs": reusable visual elements or qualities you observe. Each motif has:
+- title (2–5 words)
+- visualQuality (1–2 sentences: what it looks like, how it manifests visually)
+- howItConveysIdea (1–2 sentences: what concept, feeling, or meaning this quality communicates)
 - category (one of: color, texture, form, composition, subject, style, typography)
-
-Generate 5–9 distinct motifs covering different visual dimensions of the images.`;
+Generate 4–7 distinct motifs covering different visual dimensions.`;
 
   log.write("request.json", { model: JSON_MODEL, imageCount: allImages.length, prompt });
   logPrompt("analyze", JSON_MODEL, prompt, allImages.length);
   const startedAt = nowIso();
   const { result: data, rawText } = await generateJson<{
+    concepts: Omit<ConceptCard, "id" | "type" | "createdAt">[];
     motifs: Omit<MotifCard, "id" | "type" | "createdAt">[];
-  }>(prompt, motifSchema, allImages);
+  }>(prompt, analyzeSchema, allImages);
   const endedAt = nowIso();
   log.write("response.json", { rawText });
-  const cards = (data.motifs ?? []).map((item) => ({
+
+  const conceptCards: ConceptCard[] = (data.concepts ?? []).map((item) => ({
+    id: crypto.randomUUID(),
+    type: "concept" as const,
+    createdAt: new Date().toISOString(),
+    ...item,
+  }));
+
+  const motifCards: MotifCard[] = (data.motifs ?? []).map((item) => ({
     id: crypto.randomUUID(),
     type: "motif" as const,
     createdAt: new Date().toISOString(),
     ...item,
   }));
+
+  const cards: ResultCard[] = [...conceptCards, ...motifCards];
   log.write("result.json", cards);
   log.write("timing.json", { startedAt, endedAt, durationSeconds: msDiff(startedAt, endedAt) });
   return cards;
@@ -318,16 +361,21 @@ async function handleVisualVariations(req: GenerateRequest, log: BatchLogger): P
   if (!req.draftDataUrls.length) throw new Error("No draft image provided for visual variations.");
 
   const basePrompt = getPrompt("VISUAL_VARIATIONS").replace("[A CONCEPT]", req.brief || "this design");
-  const imageDataUrl = req.draftDataUrls[0];
+
+  // All user-selected draft images; the first is the primary analysis target.
+  // Additional drafts and refs are passed as supporting context images.
+  const [primaryDraft, ...extraDrafts] = req.draftDataUrls;
+  const styleRefImages = [...extraDrafts, ...req.referenceDataUrls];
 
   const dimensionIds = req.dimensionIds.length > 0 ? req.dimensionIds : DIMENSIONS.map((d) => d.id);
   const targetDimensions = dimensionIds.map((id) => DIMENSION_MAP[id]).filter(Boolean);
-  const extraContext = `${buildHighlightContext(req.highlightSummaries)}${buildUserInstructions(req.userInstructions)}`;
+  const context = buildTypedContext(req.typedContext);
+  const extraContext = `${context}${buildUserInstructions(req.userInstructions)}`;
 
   log.write("batch.json", {
     model: IMAGE_MODEL,
     dimensionIds,
-    imageCount: 1,
+    imageCount: 1 + styleRefImages.length,
     startedAt: nowIso(),
   });
 
@@ -339,11 +387,15 @@ async function handleVisualVariations(req: GenerateRequest, log: BatchLogger): P
     targetDimensions.map(async (dim) => {
       const dimDir = log.subdir(dim.id);
 
+      const styleRefNote = styleRefImages.length
+        ? `\n(Additional images provided as style references.)\n`
+        : "";
+
       const prompt = `${basePrompt}
 
 ---
 
-Focus specifically on the **${dim.label}** dimension: ${dim.summary}.${extraContext}
+Focus specifically on the **${dim.label}** dimension: ${dim.summary}.${extraContext}${styleRefNote}
 Analyze the attached design image on this specific Arnheim dimension. Then generate a 5x3 panel of visual variations that deliberately strengthens the ${dim.label} dimension. The improvement should be immediately apparent when comparing to the original.
 
 Provide your analysis first (2–3 sentences), then the variation panel image.`;
@@ -354,14 +406,14 @@ Provide your analysis first (2–3 sentences), then the variation panel image.`;
         model: IMAGE_MODEL,
         prompt,
       });
-      logPrompt(`visual_variations [${dim.label}]`, IMAGE_MODEL, prompt, 1);
+      logPrompt(`visual_variations [${dim.label}]`, IMAGE_MODEL, prompt, 1 + styleRefImages.length);
 
       const startedAt = nowIso();
       let rawResponse: unknown = null;
-      let genResult: Awaited<ReturnType<typeof generateWithImageOutput>> | null = null;
+      let genResult: Awaited<ReturnType<typeof generateImageOutput>> | null = null;
 
       try {
-        genResult = await generateWithImageOutput(prompt, imageDataUrl);
+        genResult = await generateImageOutput(prompt, [primaryDraft, ...styleRefImages]);
         rawResponse = genResult.rawResponse;
       } catch (err) {
         const endedAt = nowIso();
@@ -438,66 +490,70 @@ Provide your analysis first (2–3 sentences), then the variation panel image.`;
   return cards;
 }
 
+// Generates a 2×2 image panel for each selected ConceptCard.
+// Context: MotifCards constrain visual language; VisualCards (with images) show
+// territory already explored; draftDataUrls / referenceDataUrls provide style refs.
 async function handleConceptualVariations(req: GenerateRequest, log: BatchLogger): Promise<VisualCard[]> {
+  const concepts: ConceptCardRef[] = req.conceptCards ?? [];
+  if (!concepts.length) throw new Error("No concept cards selected for conceptual variations.");
+
   const basePrompt = getPrompt("CONCEPTUAL_VARIATIONS");
-  const inputImages = [...req.draftDataUrls, ...req.referenceDataUrls].slice(0, 4);
-  const referenceImage = req.draftDataUrls[0] ?? req.referenceDataUrls[0];
 
-  // ── Phase 1: generate concept directions (fast JSON call) ─────────────────
-  const conceptPrompt = `${basePrompt}
+  // Style reference images: user-selected drafts + refs + any VisualCard images from context
+  const visualContextImages = req.typedContext.visuals
+    .filter((v) => v.imageDataUrl)
+    .map((v) => v.imageDataUrl!);
+  const styleImages = [...req.draftDataUrls, ...req.referenceDataUrls, ...visualContextImages];
 
-Design context: ${req.brief || "(none provided)"}
-${buildHighlightContext(req.highlightSummaries)}${buildUserInstructions(req.userInstructions)}
-Return a JSON object with a "concepts" array. Each concept has:
-- title (3–6 words)
-- description (1–2 sentences: what this concept direction means, its core approach)
-- rationale (1–2 sentences: why this direction is worth pursuing, what makes it promising)
+  // Text-only context from motifs, notes, and visual analysis text
+  const motifContext = req.typedContext.motifs.length
+    ? `\nVisual language / motifs to maintain:\n${req.typedContext.motifs.map((s, i) => `${i + 1}. ${s}`).join("\n")}\n`
+    : "";
+  const visualTextContext = req.typedContext.visuals.length
+    ? `\nVisuals already explored:\n${req.typedContext.visuals.map((v, i) => `${i + 1}. ${v.text}`).join("\n")}\n`
+    : "";
+  const noteContext = req.typedContext.notes.length
+    ? `\nUser notes:\n${req.typedContext.notes.map((s, i) => `${i + 1}. ${s}`).join("\n")}\n`
+    : "";
 
-Generate 4–6 genuinely distinct concept directions — not just surface rewrites of the same idea.`;
-
-  log.write("concepts_request.json", { model: JSON_MODEL, imageCount: inputImages.length, prompt: conceptPrompt });
-  logPrompt("conceptual_variations [phase 1: concepts]", JSON_MODEL, conceptPrompt, inputImages.length);
-  const conceptStart = nowIso();
-  const { result: conceptData, rawText } = await generateJson<{
-    concepts: Omit<ConceptCard, "id" | "type" | "createdAt">[];
-  }>(conceptPrompt, conceptSchema, inputImages);
-  const conceptEnd = nowIso();
-  log.write("concepts_response.json", { rawText });
-  log.write("concepts_timing.json", { startedAt: conceptStart, endedAt: conceptEnd, durationSeconds: msDiff(conceptStart, conceptEnd) });
-
-  const concepts = conceptData.concepts ?? [];
-
-  // ── Phase 2: generate a visual panel for each concept in parallel ─────────
   const batchStart = nowIso();
-  log.write("visuals_batch.json", { model: IMAGE_MODEL, conceptCount: concepts.length, startedAt: batchStart });
+  log.write("batch.json", {
+    model: IMAGE_MODEL,
+    conceptCount: concepts.length,
+    styleImageCount: styleImages.length,
+    startedAt: batchStart,
+  });
 
   const results = await Promise.allSettled(
     concepts.map(async (concept, i) => {
       const safeLabel = concept.title.slice(0, 30).replace(/\W+/g, "_");
       const cardDir = log.subdir(`concept_${i}_${safeLabel}`);
 
-      const visualPrompt = `${getPrompt("GENERATE_CONCEPT_VISUALS")}
+      const styleRefNote = styleImages.length
+        ? `\n(${styleImages.length} style reference image(s) provided — maintain the overall visual style and medium.)\n`
+        : "";
+
+      const prompt = `${basePrompt}
 
 Concept: "${concept.title}"
 Description: ${concept.description}
 Rationale: ${concept.rationale}
 
-Overall design context: ${req.brief || "(none provided)"}
-${buildUserInstructions(req.userInstructions)}
-Generate a 2×2 panel of 4 distinct visuals. Each visual should use clearly different visual elements, but all should strongly express the concept above.`;
+Overall design brief: ${req.brief || "(none provided)"}
+${motifContext}${visualTextContext}${noteContext}${styleRefNote}${buildUserInstructions(req.userInstructions)}`;
 
       writeJsonRelative(cardDir, "request.json", {
         conceptTitle: concept.title,
         model: IMAGE_MODEL,
-        hasReferenceImage: !!referenceImage,
-        prompt: visualPrompt,
+        styleImageCount: styleImages.length,
+        prompt,
       });
-      logPrompt(`conceptual_variations [phase 2: "${concept.title}"]`, IMAGE_MODEL, visualPrompt, referenceImage ? 1 : 0);
+      logPrompt(`conceptual_variations ["${concept.title}"]`, IMAGE_MODEL, prompt, styleImages.length);
 
       const dimStart = nowIso();
       let genResult: ImageOutputResult;
       try {
-        genResult = await generateImageOutput(visualPrompt, referenceImage);
+        genResult = await generateImageOutput(prompt, styleImages);
       } catch (err) {
         const dimEnd = nowIso();
         writeJsonRelative(cardDir, "error.json", { error: String(err) });
@@ -543,7 +599,7 @@ Generate a 2×2 panel of 4 distinct visuals. Each visual should use clearly diff
     };
   });
 
-  log.write("visuals_batch_summary.json", {
+  log.write("batch_summary.json", {
     startedAt: batchStart,
     finishedAt: batchEnd,
     totalDurationSeconds: msDiff(batchStart, batchEnd),
@@ -555,7 +611,7 @@ Generate a 2×2 panel of 4 distinct visuals. Each visual should use clearly diff
   return cards;
 }
 
-// ─── utilities used inside visual variation subdirs ──────────────────────────
+// ─── utilities used inside subdirs ──────────────────────────────────────────
 
 import fs from "fs";
 import path from "path";
@@ -572,121 +628,6 @@ function msDiff(a: string, b: string): number {
   return Math.round((new Date(b).getTime() - new Date(a).getTime()) / 10) / 100;
 }
 
-async function handleGenerateConceptVisuals(req: GenerateRequest, log: BatchLogger): Promise<VisualCard[]> {
-  const cards: ConceptCardRef[] = req.conceptCards ?? [];
-  if (!cards.length) throw new Error("No concept cards selected.");
-
-  const imageDataUrl = req.draftDataUrls[0];
-  const extraContext = buildUserInstructions(req.userInstructions);
-  const batchStart = nowIso();
-
-  log.write("batch.json", {
-    model: IMAGE_MODEL,
-    cardCount: cards.length,
-    hasReferenceImage: !!imageDataUrl,
-    startedAt: batchStart,
-  });
-
-  const results = await Promise.allSettled(
-    cards.map(async (card) => {
-      const safeName = card.title.slice(0, 30).replace(/\W+/g, "_");
-      const cardDir = log.subdir(safeName);
-
-      const prompt = `${getPrompt("GENERATE_CONCEPT_VISUALS")}
-
-Concept: "${card.title}"
-Description: ${card.description}
-Rationale: ${card.rationale}
-
-Overall design context: ${req.brief || "(none provided)"}
-${extraContext}
-Generate a 2×2 panel of 4 distinct visuals. Each visual should use clearly different visual elements, but all should strongly express the concept above.`;
-
-      writeJsonRelative(cardDir, "request.json", {
-        cardId: card.id,
-        cardTitle: card.title,
-        model: IMAGE_MODEL,
-        hasReferenceImage: !!imageDataUrl,
-        prompt,
-      });
-      logPrompt(`generate_concept_visuals ["${card.title}"]`, IMAGE_MODEL, prompt, imageDataUrl ? 1 : 0);
-
-      const startedAt = nowIso();
-      let genResult: ImageOutputResult;
-
-      try {
-        genResult = await generateImageOutput(prompt, imageDataUrl);
-      } catch (err) {
-        const endedAt = nowIso();
-        writeJsonRelative(cardDir, "error.json", { error: String(err) });
-        writeJsonRelative(cardDir, "timing.json", {
-          startedAt, endedAt,
-          durationSeconds: msDiff(startedAt, endedAt),
-          status: "error",
-        });
-        throw err;
-      }
-
-      const endedAt = nowIso();
-      writeJsonRelative(cardDir, "response_raw.json", scrubBase64(genResult.rawResponse));
-
-      if (genResult.imageData) {
-        const ext = genResult.imageMimeType.includes("png") ? ".png" : ".jpg";
-        writeImageRelative(cardDir, `output${ext}`, genResult.imageData);
-      }
-
-      writeJsonRelative(cardDir, "result.json", {
-        cardTitle: card.title,
-        hasImage: !!genResult.imageData,
-        analysisText: genResult.text,
-      });
-      writeJsonRelative(cardDir, "timing.json", {
-        startedAt, endedAt,
-        durationSeconds: msDiff(startedAt, endedAt),
-        status: "ok",
-      });
-
-      return {
-        id: crypto.randomUUID(),
-        type: "visual" as const,
-        title: `${card.title} — Visuals`,
-        dimensionLabel: card.title,
-        analysisText: genResult.text ?? card.description,
-        imageDataUrl: genResult.imageData
-          ? `data:${genResult.imageMimeType};base64,${genResult.imageData}`
-          : undefined,
-        imageMimeType: genResult.imageMimeType,
-        createdAt: new Date().toISOString(),
-      } satisfies VisualCard;
-    })
-  );
-
-  const batchEnd = nowIso();
-  const output: VisualCard[] = results.map((r, i) => {
-    if (r.status === "fulfilled") return r.value;
-    const card = cards[i];
-    return {
-      id: crypto.randomUUID(),
-      type: "visual" as const,
-      title: `${card.title} — Visuals`,
-      dimensionLabel: card.title,
-      analysisText: "",
-      error: r.reason instanceof Error ? r.reason.message : String(r.reason),
-      createdAt: new Date().toISOString(),
-    };
-  });
-
-  log.write("batch_summary.json", {
-    startedAt: batchStart,
-    finishedAt: batchEnd,
-    totalDurationSeconds: msDiff(batchStart, batchEnd),
-    succeeded: results.filter((r) => r.status === "fulfilled").length,
-    failed: results.filter((r) => r.status === "rejected").length,
-  });
-
-  return output;
-}
-
 // ─── Route handler ────────────────────────────────────────────────────────────
 
 const handlers: Record<ActionType, (req: GenerateRequest, log: BatchLogger) => Promise<ResultCard[]>> = {
@@ -694,7 +635,6 @@ const handlers: Record<ActionType, (req: GenerateRequest, log: BatchLogger) => P
   analyze: handleAnalyze,
   visual_variations: handleVisualVariations,
   conceptual_variations: handleConceptualVariations,
-  generate_concept_visuals: handleGenerateConceptVisuals,
   user_added: async () => [],
 };
 

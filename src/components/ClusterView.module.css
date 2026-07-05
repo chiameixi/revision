@@ -37,34 +37,35 @@
   padding-bottom: 4px;
   position: relative;
 }
-.chipCorner {
-  position: absolute;
-  width: 7px;
-  height: 7px;
+.chipMotif {
+  clip-path: polygon(
+    12px 0%, calc(100% - 12px) 0%,
+    100% 12px, 100% calc(100% - 12px),
+    calc(100% - 12px) 100%, 12px 100%,
+    0% calc(100% - 12px), 0% 12px
+  );
+  padding: 1px;
+  display: inline-flex;
 }
-.chipCornerTL {
-  top: 0;
-  left: 0;
-  border-top: 1.5px solid #000;
-  border-left: 1.5px solid #000;
-}
-.chipCornerTR {
-  top: 0;
-  right: 0;
-  border-top: 1.5px solid #000;
-  border-right: 1.5px solid #000;
-}
-.chipCornerBL {
-  bottom: 0;
-  left: 0;
-  border-bottom: 1.5px solid #000;
-  border-left: 1.5px solid #000;
-}
-.chipCornerBR {
-  bottom: 0;
-  right: 0;
-  border-bottom: 1.5px solid #000;
-  border-right: 1.5px solid #000;
+.chipMotifInner {
+  flex: 1;
+  border: none;
+  border-radius: 0;
+  clip-path: polygon(
+    11.5px 0%, calc(100% - 11.5px) 0%,
+    100% 11.5px, 100% calc(100% - 11.5px),
+    calc(100% - 11.5px) 100%, 11.5px 100%,
+    0% calc(100% - 11.5px), 0% 11.5px
+  );
+  transition: all 0.15s ease;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  position: relative;
 }
 .chipText {
   font-size: 10px;
@@ -82,7 +83,7 @@
 
 .noteCard {
   height: 68px;
-  border-radius: 0;
+  border-radius: 10px;
   transition: all 0.15s ease;
   user-select: none;
 }
