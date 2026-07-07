@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toPng } from "html-to-image";
 import type { ReactFlowInstance } from "@xyflow/react";
 import {
   ReactFlow,
@@ -18,6 +19,9 @@ import {
   applyEdgeChanges,
   useNodes,
   useViewport,
+  getNodesBounds,
+  getViewportForBounds,
+  SelectionMode,
   type Node,
   type Edge as RFEdge,
   type EdgeTypes,
@@ -29,7 +33,7 @@ import {
   type EdgeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import type { Asset, Collection, Generation, ManualEdge, ResultCard, ActionType, VisualCard } from "@/types";
+import type { Asset, Collection, Generation, ManualEdge, ResultCard, ActionType, VisualCard, ConceptCard, MotifCard, NoteCard } from "@/types";
 import styles from "./TreeView.module.css";
 
 // ── Layout constants ──────────────────────────────────────────────────────────
@@ -44,6 +48,11 @@ function chipHeight(title: string): number {
 // Note cards: standard rectangle
 const NODE_W = 140;
 const NODE_H = 44;
+function noteHeight(title: string): number {
+  // ~17 chars per line at 11px in 140px card (20px h-padding = p-2.5 × 2)
+  const lines = Math.max(1, Math.ceil(title.length / 17));
+  return Math.max(NODE_H, lines * 14 + 20);
+}
 // Visual image cards
 const VISUAL_NODE_W = 320;
 const VISUAL_NODE_H = 200;
@@ -62,7 +71,7 @@ const INPUT_X_OFFSET = INPUT_NODE_W + COL_GAP;
 function nodeDims(card: ResultCard): { w: number; h: number } {
   if (card.type === "visual" && (card as VisualCard).imageDataUrl) return { w: VISUAL_NODE_W, h: VISUAL_NODE_H };
   if (card.type === "concept" || card.type === "motif") return { w: CHIP_W, h: chipHeight(card.title) };
-  return { w: NODE_W, h: NODE_H };
+  return { w: NODE_W, h: noteHeight(card.title) };
 }
 
 // ── Styling maps ──────────────────────────────────────────────────────────────
@@ -356,9 +365,9 @@ function TextCardNode(props: NodeProps) {
     const chipContent = (
       <>
         {collectionColors && collectionColors.length > 0 && !isMultiSelected && !isSelected && (
-          <div className="flex gap-0.5 shrink-0">
+          <div className="flex gap-[1px] shrink-0">
             {collectionColors.map((c) => (
-              <div key={c} className="w-1.5 h-1.5 rounded-full" style={{ background: c }} />
+              <div key={c} className="w-[3px] h-[3px] rounded-full" style={{ background: c }} />
             ))}
           </div>
         )}
@@ -418,13 +427,13 @@ function TextCardNode(props: NodeProps) {
           background: bgColor,
           border: `1px solid ${borderColor}`,
           boxShadow: shadow,
-          ...(card.type === "note" ? { height: "auto" } : {}),
+          height: noteHeight(card.title),
         }}
       >
         {collectionColors && collectionColors.length > 0 && !isMultiSelected && !isSelected && (
-          <div className="absolute top-1.5 left-1.5 flex gap-0.5">
+          <div className="absolute top-1.5 left-1.5 flex gap-[1px]">
             {collectionColors.map((c) => (
-              <div key={c} className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: c }} />
+              <div key={c} className="w-[3px] h-[3px] rounded-full shrink-0" style={{ background: c }} />
             ))}
           </div>
         )}
@@ -436,7 +445,7 @@ function TextCardNode(props: NodeProps) {
           >✕</button>
         )}
         <div className={`p-2.5 flex flex-col justify-center ${styles.noteBody}`}
-          style={card.type === "note" ? { height: "auto" } : undefined}
+          style={{ height: noteHeight(card.title) }}
         >
           {card.type !== "note" && (
             <div className="flex items-center gap-1.5 pr-4">
@@ -527,13 +536,6 @@ function VisualCardNode(props: NodeProps) {
           </span>
           {(isMultiSelected || isSelected) && <span className="text-[9px] text-white shrink-0">✓</span>}
           {isSaved && <span className="text-[9px] text-white/80 shrink-0">★</span>}
-          {collectionColors && collectionColors.length > 0 && !isMultiSelected && !isSelected && (
-            <div className="flex gap-0.5">
-              {collectionColors.map((c) => (
-                <div key={c} className="w-2 h-2 rounded-full ring-1 ring-white/50 shrink-0" style={{ background: c }} />
-              ))}
-            </div>
-          )}
         </div>
 
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -543,6 +545,9 @@ function VisualCardNode(props: NodeProps) {
           className="w-full h-full object-cover"
         />
 
+        {collectionColors && collectionColors.length > 0 && !isMultiSelected && !isSelected && (
+          <div className="absolute inset-y-0 left-0 w-[3px] z-20" style={{ background: primaryColor }} />
+        )}
         <div className="absolute bottom-0 left-0 right-0 px-2 py-1.5 bg-gradient-to-t from-black/80 via-black/50 to-transparent z-10 transition-all duration-150">
           <p className="text-[9px] text-white leading-tight truncate font-medium mb-1">
             {card.title}
@@ -655,6 +660,7 @@ function AssetNode(props: NodeProps) {
   if (isDraft) {
     return (
       <>
+        <Handle type="target" position={Position.Left} className={styles.handleDot} style={handleStyle} />
         <div
           className={`group ${styles.assetDraftNode}`}
           style={{
@@ -684,26 +690,27 @@ function AssetNode(props: NodeProps) {
 
   return (
     <>
+      <Handle type="target" position={Position.Left} className={styles.handleDot} style={handleStyle} />
       <div
         className={`group ${styles.assetRefNode}`}
         style={{
-          border: `1px solid ${isSelected ? "#000" : "rgba(0,0,0,0.2)"}`,
+          border: `1px solid ${isSelected ? "#000" : "rgba(0,0,0,0.3)"}`,
           boxShadow: isSelected ? "2px 2px 0px #000" : "none",
         }}
       >
         <button
-          className="nodrag nopan absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 text-[10px] leading-none z-10"
+          className="nodrag nopan absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 text-[10px] leading-none z-20"
           onClick={(e) => { e.stopPropagation(); onRemove(asset.id); }}
           title="Remove"
         >✕</button>
+        <div className="absolute top-0 left-0 right-0 p-2 flex items-center gap-1.5 z-10 bg-gradient-to-b from-black/30 to-transparent">
+          <span className={styles.draftBadge}>◈ Reference</span>
+          {isSelected && <span className={styles.draftCheckBadge}>✓</span>}
+        </div>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={asset.dataUrl} alt={asset.fileName} className="w-[68px] h-[68px] object-cover rounded-md shrink-0" />
-        <div className="flex-1 min-w-0">
-          <div className={styles.refRow}>
-            <p className={styles.refMetaLabel}>◈ Reference</p>
-            {isSelected && <span className={styles.briefCheck}>✓</span>}
-          </div>
-          <p className={styles.refFileName}>{asset.fileName}</p>
+        <img src={asset.dataUrl} alt={asset.fileName} className="w-full h-full object-cover" />
+        <div className="absolute bottom-0 left-0 right-0 px-2 py-1.5 bg-gradient-to-t from-black/70 via-black/40 to-transparent z-10">
+          <p className="text-[9px] text-white truncate m-0">{asset.fileName}</p>
         </div>
       </div>
       <Handle type="source" position={Position.Right} className={styles.handleDot} style={handleStyle} />
@@ -885,6 +892,7 @@ export default function TreeView({
   const [selectedInputId, setSelectedInputId] = useState<string | null>(null);
   const [multiSelectedIds, setMultiSelectedIds] = useState<Set<string>>(new Set());
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [lassoMode, setLassoMode] = useState(false);
   const [addNodeState, setAddNodeState] = useState<{ parentIds: string[] } | null>(null);
   const [confirmingClear, setConfirmingClear] = useState(false);
   const [positionOverrides, setPositionOverrides] = useState<Record<string, { x: number; y: number }>>(() => {
@@ -979,6 +987,55 @@ export default function TreeView({
   }, [selectedId, nodes, cardIds]);
 
   const rfInstanceRef = useRef<ReactFlowInstance | null>(null);
+  const canvasRef = useRef<HTMLDivElement | null>(null); // kept for future use
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportWithColors, setExportWithColors] = useState(false);
+  const [exportColorsActive, setExportColorsActive] = useState(false);
+  const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
+
+  const exportPng = useCallback(async () => {
+    if (!rfInstanceRef.current) return;
+    setIsExporting(true);
+
+    const needColorFlash = exportWithColors && !showCollectionColors;
+    if (needColorFlash) {
+      setExportColorsActive(true);
+      // Two frames: one to flush React state, one for the browser to paint
+      await new Promise<void>((res) => requestAnimationFrame(() => requestAnimationFrame(() => res())));
+    }
+
+    try {
+      const rfNodes = rfInstanceRef.current.getNodes();
+      if (!rfNodes.length) return;
+
+      const bounds = getNodesBounds(rfNodes);
+      const IMG_W = 3200;
+      const IMG_H = Math.round(IMG_W * (bounds.height / bounds.width)) || 2000;
+      const { x, y, zoom } = getViewportForBounds(bounds, IMG_W, IMG_H, 0.05, 4, 0.08);
+
+      const viewport = document.querySelector(".react-flow__viewport") as HTMLElement | null;
+      if (!viewport) return;
+
+      const dataUrl = await toPng(viewport, {
+        backgroundColor: "#f7f6f3",
+        width: IMG_W,
+        height: IMG_H,
+        style: {
+          width: `${IMG_W}px`,
+          height: `${IMG_H}px`,
+          transform: `translate(${x}px, ${y}px) scale(${zoom})`,
+        },
+      });
+
+      const a = document.createElement("a");
+      a.href = dataUrl;
+      a.download = `revision-canvas-${Date.now()}.png`;
+      a.click();
+    } finally {
+      if (needColorFlash) setExportColorsActive(false);
+      setIsExporting(false);
+    }
+  }, [exportWithColors, showCollectionColors]);
 
   const [panelWidth, setPanelWidth] = useState(272);
   const handlePanelResizeStart = useCallback((e: React.PointerEvent) => {
@@ -1012,8 +1069,25 @@ export default function TreeView({
     onBranchFrom(card, action);
   }, [onAddAsReference, onBranchFrom]);
 
-  const handleNodeDragStop = useCallback((_evt: MouseEvent | TouchEvent, node: Node) => {
-    setPositionOverrides((prev) => ({ ...prev, [node.id]: node.position }));
+  const handleNodeDragStop = useCallback((_evt: MouseEvent | TouchEvent, node: Node, draggedNodes: Node[]) => {
+    // Save positions for ALL nodes moved together (multi-drag)
+    setPositionOverrides((prev) => {
+      const next = { ...prev };
+      for (const n of draggedNodes) next[n.id] = n.position;
+      return next;
+    });
+  }, []);
+
+  // When lasso selects nodes, sync ReactFlow's selection → multiSelectedIds
+  const handleSelectionChange = useCallback(({ nodes: rfSelected }: { nodes: Node[] }) => {
+    const incoming = rfSelected.map((n) => n.id).filter((id) => !id.startsWith("__"));
+    if (incoming.length >= 2) {
+      setMultiSelectedIds((prev) => {
+        if (prev.size === incoming.length && incoming.every((id) => prev.has(id))) return prev;
+        return new Set(incoming);
+      });
+      setSelectedId(null);
+    }
   }, []);
 
   const handleMultiAction = useCallback((action: ActionType) => {
@@ -1113,7 +1187,7 @@ export default function TreeView({
           isSourceOfSelected: selectedAncestorIds.has(node.card.id),
           isSaved: false,
           isMultiSelected: multiSelectedIds.has(node.card.id),
-          collectionColors: showCollectionColors ? cardCollectionsMap.get(node.card.id) : undefined,
+          collectionColors: (showCollectionColors || exportColorsActive) ? cardCollectionsMap.get(node.card.id) : undefined,
           connectMode,
           onRemove: handleRemove,
           onQuickBranch: (action) => handleQuickBranch(node.card, action),
@@ -1122,7 +1196,7 @@ export default function TreeView({
         height: h,
       };
     }),
-    [nodes, cardIds, positionOverrides, selectedId, multiSelectedIds, hoveredId, hoveredAncestorIds, selectedAncestorIds, hoveredSourceIds, handleRemove, handleQuickBranch, showCollectionColors, cardCollectionsMap, connectMode]
+    [nodes, cardIds, positionOverrides, selectedId, multiSelectedIds, hoveredId, hoveredAncestorIds, selectedAncestorIds, hoveredSourceIds, handleRemove, handleQuickBranch, showCollectionColors, exportColorsActive, cardCollectionsMap, connectMode]
   );
 
   // ── Generation edges ──────────────────────────────────────────────────────
@@ -1206,7 +1280,7 @@ export default function TreeView({
     }
 
     return result;
-  }, [nodes, cardIds, assets, onRemoveProvenanceEdge]);
+  }, [nodes, assets, onRemoveProvenanceEdge]);
 
   const allRfNodes = useMemo(() => [...inputRfNodes, ...rfNodes], [inputRfNodes, rfNodes]);
 
@@ -1240,6 +1314,10 @@ export default function TreeView({
   // the dragged position, triggering ReactFlow error #015.
   const [displayNodes, setDisplayNodes] = useState<Node[]>(allRfNodes);
   const [displayEdges, setDisplayEdges] = useState<RFEdge[]>(allRfEdges);
+  // Ref kept in sync with displayEdges so onEdgesChange can read edge data
+  // without adding displayEdges to its dependency array (which would cause
+  // unnecessary re-registrations with ReactFlow on every edge change).
+  const displayEdgesRef = useRef<RFEdge[]>(allRfEdges);
 
   useEffect(() => {
     setDisplayNodes((current) => {
@@ -1260,7 +1338,10 @@ export default function TreeView({
     });
   }, [allRfNodes]);
 
-  useEffect(() => { setDisplayEdges(allRfEdges); }, [allRfEdges]);
+  useEffect(() => {
+    setDisplayEdges(allRfEdges);
+    displayEdgesRef.current = allRfEdges;
+  }, [allRfEdges]);
 
   const onNodesChange = useCallback((changes: NodeChange<Node>[]) => {
     setDisplayNodes((nds) => applyNodeChanges(changes, nds));
@@ -1268,11 +1349,23 @@ export default function TreeView({
 
   const onEdgesChange = useCallback((changes: EdgeChange<RFEdge>[]) => {
     for (const change of changes) {
-      if (change.type === "remove" && change.id.startsWith("manual_")) {
-        onRemoveManualEdge(change.id.slice("manual_".length));
+      if (change.type === "remove") {
+        if (change.id.startsWith("manual_")) {
+          onRemoveManualEdge(change.id.slice("manual_".length));
+        } else {
+          // Provenance edge deleted via Delete/Backspace key — call its onDelete
+          // handler so the state update persists (otherwise the edge reappears).
+          const edge = displayEdgesRef.current.find((e) => e.id === change.id);
+          const edgeData = edge?.data as { onDelete?: () => void } | undefined;
+          edgeData?.onDelete?.();
+        }
       }
     }
-    setDisplayEdges((eds) => applyEdgeChanges(changes, eds));
+    setDisplayEdges((eds) => {
+      const next = applyEdgeChanges(changes, eds);
+      displayEdgesRef.current = next;
+      return next;
+    });
   }, [onRemoveManualEdge]);
 
   // ── Event handlers ────────────────────────────────────────────────────────
@@ -1333,7 +1426,7 @@ export default function TreeView({
   return (
     <div className="flex h-full w-full overflow-hidden">
       {/* ── React Flow canvas ────────────────────────────────────────────── */}
-      <div className={`flex-1 h-full ${styles.canvas}`}>
+      <div ref={canvasRef} className={`flex-1 h-full ${styles.canvas}`}>
         <ReactFlow
           nodes={displayNodes}
           edges={displayEdges}
@@ -1344,7 +1437,7 @@ export default function TreeView({
           onNodeClick={handleNodeClick}
           onNodeMouseEnter={handleNodeMouseEnter}
           onNodeMouseLeave={handleNodeMouseLeave}
-          onPaneClick={() => { setSelectedId(null); setSelectedInputId(null); setMultiSelectedIds(new Set()); setCollectionPickerOpen(false); }}
+          onPaneClick={() => { setSelectedId(null); setSelectedInputId(null); setMultiSelectedIds(new Set()); setCollectionPickerOpen(false); setDisplayNodes((p) => p.map((n) => ({ ...n, selected: false }))); }}
           onInit={(instance) => {
             rfInstanceRef.current = instance;
             instance.fitView({ padding: 0.15 });
@@ -1360,6 +1453,10 @@ export default function TreeView({
           nodesConnectable={connectMode}
           onConnect={handleConnect}
           deleteKeyCode={["Delete", "Backspace"]}
+          selectionOnDrag={lassoMode}
+          panOnDrag={lassoMode ? [1, 2] : true}
+          selectionMode={SelectionMode.Partial}
+          onSelectionChange={handleSelectionChange}
         >
           {showCollectionColors && <CollectionHalos collections={collections} />}
 
@@ -1383,8 +1480,52 @@ export default function TreeView({
           {/* Top-right: Color toggle + Connect mode + Add node + Clear all */}
           <Panel position="top-right">
             <div className="flex items-center gap-1.5 mr-2 mt-2">
+              <div
+                className="relative"
+                onMouseEnter={() => setExportDropdownOpen(true)}
+                onMouseLeave={() => setExportDropdownOpen(false)}
+              >
+                <button
+                  onClick={exportPng}
+                  disabled={isExporting}
+                  title="Export canvas as PNG"
+                  className={`bg-white border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 text-[11px] flex items-center gap-1 transition-colors ${styles.sq} ${
+                    isExporting
+                      ? "text-[rgba(0,0,0,0.3)] cursor-wait"
+                      : "text-[rgba(0,0,0,0.45)] hover:text-black hover:border-black"
+                  }`}
+                >
+                  <span className="text-[12px] leading-none">↓</span>
+                  {isExporting ? "Exporting…" : "Export PNG"}
+                </button>
+                {exportDropdownOpen && (
+                  <div className={`absolute top-full left-0 bg-white border border-[rgba(0,0,0,0.18)] px-2.5 py-1.5 z-50 ${styles.sq}`}>
+                    <label className="flex items-center gap-1.5 cursor-pointer whitespace-nowrap text-[10px] text-[rgba(0,0,0,0.55)] hover:text-black select-none">
+                      <input
+                        type="checkbox"
+                        checked={exportWithColors}
+                        onChange={(e) => setExportWithColors(e.target.checked)}
+                        className="w-2.5 h-2.5 accent-black"
+                      />
+                      Include collection colors
+                    </label>
+                  </div>
+                )}
+              </div>
               <button
-                onClick={() => setConnectMode((p) => !p)}
+                onClick={() => { setLassoMode((p) => !p); setConnectMode(false); }}
+                title={lassoMode ? "Exit lasso mode (drag pans again)" : "Lasso mode: drag to select multiple nodes"}
+                className={`border px-2.5 py-1.5 text-[11px] transition-colors flex items-center gap-1 ${styles.sq} ${
+                  lassoMode
+                    ? "bg-black border-black text-white"
+                    : "bg-white border-[rgba(0,0,0,0.2)] text-[rgba(0,0,0,0.45)] hover:text-black hover:border-black"
+                }`}
+              >
+                <span className="text-[11px] leading-none">⬚</span>
+                {lassoMode ? "Lasso on" : "Lasso"}
+              </button>
+              <button
+                onClick={() => { setConnectMode((p) => !p); setLassoMode(false); }}
                 title={connectMode ? "Exit connect mode (Drag handles to connect nodes)" : "Enter connect mode to draw connections between nodes"}
                 className={`border px-2.5 py-1.5 text-[11px] transition-colors flex items-center gap-1 ${styles.sq} ${
                   connectMode
@@ -1395,6 +1536,11 @@ export default function TreeView({
                 <span className="text-[12px] leading-none">⌥</span>
                 {connectMode ? "Connecting…" : "Connect"}
               </button>
+              {lassoMode && (
+                <span className={`text-[10px] italic text-[rgba(0,0,0,0.4)] bg-white border border-[rgba(0,0,0,0.15)] px-2 py-1 ${styles.sq}`}>
+                  Drag to select · Shift+click to add · Middle-click to pan
+                </span>
+              )}
               {connectMode && (
                 <span className={`text-[10px] italic text-[rgba(0,0,0,0.4)] bg-white border border-[rgba(0,0,0,0.15)] px-2 py-1 ${styles.sq}`}>
                   Drag handle → node · Delete to remove
@@ -1723,7 +1869,15 @@ function AddNodeModal({
   const [cardType, setCardType] = useState<UserNodeType | null>(null);
   const [parentIds, setParentIds] = useState<Set<string>>(new Set(initialParentIds));
   const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!imageFile) { setImagePreviewUrl(null); return; }
+    const url = URL.createObjectURL(imageFile);
+    setImagePreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [imageFile]);
 
   const isAssetType = cardType === "draft" || cardType === "reference";
   const effectiveType = cardType ?? "note";
@@ -1821,11 +1975,11 @@ function AddNodeModal({
               className="hidden"
               onChange={(e) => setImageFile(e.target.files?.[0] ?? null)}
             />
-            {imageFile ? (
+            {imageFile && imagePreviewUrl ? (
               <div className="flex items-center gap-3 border border-[#e4e3e0] rounded-lg px-3 py-2.5 mb-3">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src={URL.createObjectURL(imageFile)}
+                  src={imagePreviewUrl}
                   alt={imageFile.name}
                   className="w-12 h-12 object-cover rounded shrink-0"
                 />
@@ -2013,6 +2167,25 @@ function InputDetailPanel(props: InputDetailPanelProps) {
   );
 }
 
+// ── Reclassify helper ─────────────────────────────────────────────────────────
+function reclassifyCard(card: ResultCard, newType: "concept" | "motif" | "note"): ResultCard {
+  if (card.type === newType) return card;
+  const base = { id: card.id, title: card.title, createdAt: card.createdAt };
+  const body =
+    card.type === "note" ? (card as NoteCard).body
+    : card.type === "concept" ? (card as ConceptCard).description
+    : card.type === "motif" ? (card as MotifCard).visualQuality
+    : "";
+  const secondary =
+    card.type === "concept" ? (card as ConceptCard).rationale
+    : card.type === "motif" ? (card as MotifCard).howItConveysIdea
+    : "";
+  if (newType === "note") return { ...base, type: "note", body };
+  if (newType === "concept") return { ...base, type: "concept", description: body, rationale: secondary };
+  if (newType === "motif") return { ...base, type: "motif", visualQuality: body, howItConveysIdea: secondary, category: "" };
+  return card;
+}
+
 // ── Detail panel ──────────────────────────────────────────────────────────────
 function DetailPanel({
   node,
@@ -2067,9 +2240,30 @@ function DetailPanel({
       <aside className="w-full h-full border-l border-[#e4e3e0] bg-white flex flex-col overflow-hidden">
         <div className="px-4 py-3 border-b border-[#f0efec] shrink-0">
           <div className="flex items-start justify-between gap-2 mb-2">
-            <span className={`text-[9px] uppercase tracking-[0.14em] px-1.5 py-0.5 ${styles.sq}`} style={{ background: s.badgeBg, color: s.badgeText }}>
-              {TYPE_LABEL[card.type]}
-            </span>
+            {node.actionType === "user_added" && card.type !== "visual" ? (
+              <div className="flex items-center gap-1" title="Reclassify this card">
+                {(["note", "concept", "motif"] as const).map((t) => {
+                  const ts = TYPE_STYLE[t] ?? TYPE_STYLE.concept;
+                  const active = card.type === t;
+                  return (
+                    <button
+                      key={t}
+                      onClick={() => onUpdateCard(reclassifyCard(card, t))}
+                      className={`text-[9px] uppercase tracking-[0.12em] px-1.5 py-0.5 transition-colors ${styles.sq}`}
+                      style={active
+                        ? { background: ts.badgeBg, color: ts.badgeText }
+                        : { background: "rgba(0,0,0,0.06)", color: "rgba(0,0,0,0.35)" }}
+                    >
+                      {t}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <span className={`text-[9px] uppercase tracking-[0.14em] px-1.5 py-0.5 ${styles.sq}`} style={{ background: s.badgeBg, color: s.badgeText }}>
+                {TYPE_LABEL[card.type]}
+              </span>
+            )}
             <div className="flex items-center gap-1.5 shrink-0 -mt-0.5">
               <button onClick={onRemove} className="text-[11px] text-[#ccc] hover:text-red-400 transition-colors">✕ Remove</button>
               <span className="text-[#e4e3e0]">|</span>

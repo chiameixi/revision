@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { useProject } from "@/lib/store";
 import { DIMENSIONS } from "@/lib/dimensions";
 import CenterPanel from "@/components/CenterPanel";
@@ -85,13 +85,18 @@ function buildTypedContext(
 }
 
 export default function WorkspacePage() {
-  const { state, actions, ready } = useProject();
+  const { state, actions, ready, restoredFromBackup } = useProject();
   const [composer, setComposer] = useState<ComposerState>(DEFAULT_COMPOSER);
   const [composerCards, setComposerCards] = useState<ResultCard[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingAction, setGeneratingAction] = useState<ActionType | null>(null);
   const [hoveredSourceIds, setHoveredSourceIds] = useState<Set<string>>(new Set());
   const [dismissed, setDismissed] = useState<Record<string, Set<string>>>({});
+  const [backupBanner, setBackupBanner] = useState(false);
+
+  useEffect(() => {
+    if (restoredFromBackup) setBackupBanner(true);
+  }, [restoredFromBackup]);
 
   const handleHoverSources = useCallback((cardIds: Set<string>, _assetIds: Set<string>) => {
     setHoveredSourceIds(cardIds);
@@ -123,6 +128,20 @@ export default function WorkspacePage() {
       const allCards = state.generations.flatMap((g) => g.cards);
       const selectedCards = allCards.filter((c) => cfg.selectedCardIds.includes(c.id));
       const { typedContext, conceptCards } = buildTypedContext(selectedCards, cfg.action);
+
+      // Guard: conceptual_variations requires at least one ConceptCard selected.
+      if (cfg.action === "conceptual_variations" && conceptCards.length === 0) {
+        actions.addGeneration({
+          id: crypto.randomUUID(),
+          actionType: cfg.action,
+          cards: [],
+          createdAt: new Date().toISOString(),
+          error: "No concept cards selected. Select one or more concept cards on the canvas before running Conceptual Variations.",
+        });
+        setIsGenerating(false);
+        setGeneratingAction(null);
+        return;
+      }
 
       const body: GenerateRequest = {
         action: cfg.action,
@@ -353,6 +372,12 @@ export default function WorkspacePage() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#f0eeea]">
+      {backupBanner && (
+        <div className="fixed top-0 left-0 right-0 z-[9999] flex items-center justify-between gap-4 px-4 py-2 bg-amber-50 border-b border-amber-300 text-[12px] text-amber-900">
+          <span>Primary save was corrupted — restored from backup (some recent changes may be missing).</span>
+          <button onClick={() => setBackupBanner(false)} className="shrink-0 underline hover:no-underline">Dismiss</button>
+        </div>
+      )}
       <CenterPanel
         generations={visibleGenerations}
         allGenerations={state.generations}

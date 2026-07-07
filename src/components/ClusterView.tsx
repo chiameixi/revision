@@ -7,10 +7,13 @@ import {
   ReactFlow,
   Background,
   useNodesState,
+  getNodesBounds,
+  getViewportForBounds,
   type Node,
   type NodeProps,
   Panel,
 } from "@xyflow/react";
+import { toPng } from "html-to-image";
 import "@xyflow/react/dist/style.css";
 import type {
   Asset, Collection, Generation, ResultCard, ActionType, VisualCard,
@@ -500,6 +503,36 @@ export default function ClusterView({
     buildRfNodes(collections, new Map())
   );
 
+  const [isExporting, setIsExporting] = useState(false);
+  const exportPng = useCallback(async () => {
+    if (!rfNodes.length) return;
+    setIsExporting(true);
+    try {
+      const bounds = getNodesBounds(rfNodes);
+      const IMG_W = 3200;
+      const IMG_H = Math.round(IMG_W * (bounds.height / bounds.width)) || 2000;
+      const { x, y, zoom } = getViewportForBounds(bounds, IMG_W, IMG_H, 0.05, 4, 0.08);
+      const viewport = document.querySelector(".react-flow__viewport") as HTMLElement | null;
+      if (!viewport) return;
+      const dataUrl = await toPng(viewport, {
+        backgroundColor: "#f7f6f3",
+        width: IMG_W,
+        height: IMG_H,
+        style: {
+          width: `${IMG_W}px`,
+          height: `${IMG_H}px`,
+          transform: `translate(${x}px, ${y}px) scale(${zoom})`,
+        },
+      });
+      const a = document.createElement("a");
+      a.href = dataUrl;
+      a.download = `revision-collections-${Date.now()}.png`;
+      a.click();
+    } finally {
+      setIsExporting(false);
+    }
+  }, [rfNodes]);
+
   // Sync RF node list when collections are added / removed (positions preserved)
   useEffect(() => {
     setRfNodes((prev) => {
@@ -635,8 +668,25 @@ export default function ClusterView({
           >
             <Background color="#bbb" gap={24} size={1} />
 
-            {/* New collection button */}
+            {/* Top-right controls */}
             <Panel position="top-right">
+              {!newColForm.open && (
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <button
+                    onClick={exportPng}
+                    disabled={isExporting}
+                    title="Export canvas as PNG"
+                    className={`bg-white border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 text-[11px] flex items-center gap-1 transition-colors ${styles.sq} ${
+                      isExporting
+                        ? "text-[rgba(0,0,0,0.3)] cursor-wait"
+                        : "text-[rgba(0,0,0,0.45)] hover:text-black hover:border-black"
+                    }`}
+                  >
+                    <span className="text-[12px] leading-none">↓</span>
+                    {isExporting ? "Exporting…" : "Export PNG"}
+                  </button>
+                </div>
+              )}
               {newColForm.open ? (
                 <div className={`bg-white border border-[rgba(0,0,0,0.18)] shadow-lg p-4 w-64 flex flex-col gap-3 ${styles.sq}`}>
                   <p className="text-[11px] uppercase tracking-[0.12em] text-[rgba(0,0,0,0.5)]">New Collection</p>

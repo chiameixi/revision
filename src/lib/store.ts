@@ -25,7 +25,7 @@
  *   matching `highlights` so an in-place edit propagates everywhere.
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type {
   ProjectState,
   Asset,
@@ -37,6 +37,8 @@ import type {
 } from "@/types";
 
 const STORAGE_KEY = "design_workspace_v0";
+const BACKUP_KEY = "design_workspace_v0_backup";
+const BACKUP_INTERVAL_MS = 30_000;
 
 const DEFAULT_STATE: ProjectState = {
   title: "Untitled Project",
@@ -48,37 +50,79 @@ const DEFAULT_STATE: ProjectState = {
   manualEdges: [],
 };
 
-function loadFromStorage(): ProjectState {
-  if (typeof window === "undefined") return DEFAULT_STATE;
+function tryParse(raw: string | null): ProjectState | null {
+  if (!raw) return null;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULT_STATE;
     return { ...DEFAULT_STATE, ...JSON.parse(raw) };
   } catch {
-    return DEFAULT_STATE;
+    return null;
   }
 }
 
-function saveToStorage(state: ProjectState): void {
+function loadFromStorage(): { state: ProjectState; usedBackup: boolean } {
+  if (typeof window === "undefined") return { state: DEFAULT_STATE, usedBackup: false };
+  const primary = tryParse(localStorage.getItem(STORAGE_KEY));
+  if (primary) return { state: primary, usedBackup: false };
+  const backup = tryParse(localStorage.getItem(BACKUP_KEY));
+  if (backup) return { state: backup, usedBackup: true };
+  return { state: DEFAULT_STATE, usedBackup: false };
+}
+
+function stripImagesFromState(state: ProjectState): ProjectState {
+  return {
+    ...state,
+    generations: state.generations.map((gen) => ({
+      ...gen,
+      cards: gen.cards.map((card) =>
+        card.type === "visual" ? { ...card, imageDataUrl: "" } : card
+      ),
+    })),
+    highlights: state.highlights.map((h) =>
+      h.card.type === "visual"
+        ? { ...h, card: { ...h.card, imageDataUrl: "" } }
+        : h
+    ),
+  };
+}
+
+function saveToStorage(state: ProjectState, key = STORAGE_KEY): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    localStorage.setItem(key, JSON.stringify(stripImagesFromState(state)));
   } catch {
-    // Storage full — silently degrade
+    // Storage still full after stripping images — silently degrade
   }
 }
 
 export function useProject() {
   const [state, setState] = useState<ProjectState>(DEFAULT_STATE);
   const [ready, setReady] = useState(false);
+  const [restoredFromBackup, setRestoredFromBackup] = useState(false);
+  // Prevents the save that fires immediately after hydration from overwriting
+  // localStorage with DEFAULT_STATE when the initial JSON.parse fails.
+  const skipNextSaveRef = useRef(true);
 
-  // Hydrate once on mount; setting ready=true allows subsequent saves to fire.
   useEffect(() => {
-    setState(loadFromStorage());
+    const { state: loaded, usedBackup } = loadFromStorage();
+    setState(loaded);
+    if (usedBackup) setRestoredFromBackup(true);
     setReady(true);
   }, []);
 
+  // Primary save on every state change
   useEffect(() => {
-    if (ready) saveToStorage(state);
+    if (!ready) return;
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return;
+    }
+    saveToStorage(state);
+  }, [state, ready]);
+
+  // Periodic backup every 30s — independent of the primary save
+  useEffect(() => {
+    if (!ready) return;
+    const id = setInterval(() => saveToStorage(state, BACKUP_KEY), BACKUP_INTERVAL_MS);
+    return () => clearInterval(id);
   }, [state, ready]);
 
   const update = useCallback(
@@ -262,5 +306,5 @@ export function useProject() {
       })),
   };
 
-  return { state, actions, ready };
+  return { state, actions, ready, restoredFromBackup };
 }

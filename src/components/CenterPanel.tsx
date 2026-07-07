@@ -88,14 +88,15 @@ export default function CenterPanel({
   onAddManualEdge,
   onRemoveManualEdge,
 }: Props) {
-  const [view, setView] = useState<"feed" | "tree" | "clusters">("feed");
+  const [view, setView] = useState<"feed" | "tree" | "clusters">("tree");
 
   return (
     <main className="flex-1 min-w-0 h-screen flex flex-col overflow-hidden">
       {/* View toggle */}
       <div className={`px-5 pt-2.5 pb-2.5 bg-white ${styles.toolbar}`}>
         <div className="flex items-center gap-1">
-          {(["feed", "tree", "clusters"] as const).map((v) => (
+          {/* {(["feed", "tree", "clusters"] as const).map((v) => ( */}
+          {(["tree", "clusters"] as const).map((v) => (
             <button
               key={v}
               onClick={() => setView(v)}
@@ -105,7 +106,7 @@ export default function CenterPanel({
                   : "text-[rgba(0,0,0,0.35)] hover:text-black"
               }`}
             >
-              {v}
+              {v === "clusters" ? "Collections" : v}
             </button>
           ))}
         </div>

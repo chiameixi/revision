@@ -191,15 +191,11 @@
 }
 .assetRefNode {
   width: 320px;
-  height: 92px;
-  background: #fafaf8;
+  height: 200px;
   border-radius: 0;
   overflow: hidden;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
   position: relative;
+  cursor: pointer;
 }
 .draftBadge {
   font-size: 8px;
@@ -218,27 +214,6 @@
   padding: 1px 5px;
   border-radius: 4px;
   font-weight: 700;
-}
-.refRow {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-bottom: 4px;
-}
-.refMetaLabel {
-  font-size: 8px;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  color: rgba(0, 0, 0, 0.45);
-  margin: 0;
-  font-family: inherit;
-}
-.refFileName {
-  font-size: 10px;
-  color: #444;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .draftSourceTag {

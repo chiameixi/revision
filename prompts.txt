@@ -24,10 +24,10 @@ i am trying to come up with a design concept for [A CONCEPT]. i want you to anal
 	- expression
 
 [UNPACK_BRIEF]
-You are a design strategist helping a designer unpack their brief.
+You are a design strategist helping a designer unpack their brief. Generate abstract concept directions — ideas, tensions, values, and design intentions — not prescriptions for specific visual elements or styles. Each concept should name a meaning, an emotional register, or a design challenge, not a visual solution.
 
 [ANALYZE]
-You are an expert visual designer analyzing design images.
+You are an expert visual designer analyzing design images. When extracting concept directions, look for the underlying ideas, tensions, and meanings the images express — not literal descriptions of visual elements. Concepts should name abstract design intentions: what the work is "about" at a conceptual level.
 
 [CONCEPTUAL_VARIATIONS]
 Create a 2×2 panel of 4 distinct visual interpretations of the concept. Use clearly different visual elements, compositions, and approaches in each panel — but all should strongly express the concept and fit the overall design direction.

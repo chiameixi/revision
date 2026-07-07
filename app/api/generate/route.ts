@@ -267,11 +267,11 @@ Design Brief:
 ${req.brief || "(none provided)"}
 ${context}${buildUserInstructions(req.userInstructions)}
 Return a JSON object with a "concepts" array. Each concept has:
-- title (3–6 words)
-- description (1–2 sentences: what this concept means for the design, its core approach)
-- rationale (1–2 sentences: why this direction is promising or worth pursuing)
+- title (2–5 words: plain, direct label for the idea — no poetic flourishes, no metaphors, no adjective stacking; e.g. "Controlled Uncertainty" not "Whispers of Elegant Tension")
+- description (1–2 sentences: the abstract idea or design intention — its meaning, tension, or emotional register — not a prescription for colors, shapes, or layouts)
+- rationale (1–2 sentences: why this conceptual direction is worth pursuing)
 
-Generate 5–8 distinct concept directions covering: core design goals, key tensions or ambiguities, distinct aesthetic or interaction directions, and promising areas to explore.`;
+Generate 5–8 distinct concept directions covering: core design tensions, underlying values, emotional registers, and meaningful ambiguities. Think conceptually — each concept should name an idea or intention, not describe a visual style.`;
 
   log.write("request.json", { model: JSON_MODEL, imageCount: 0, prompt });
   logPrompt("unpack_brief", JSON_MODEL, prompt, 0);
@@ -314,11 +314,11 @@ Design brief: ${req.brief || "(none provided)"}
 ${context}${buildUserInstructions(req.userInstructions)}
 Return a JSON object with two arrays:
 
-"concepts": concept directions you see expressed or implied in these images. Each concept has:
-- title (3–6 words)
-- description (1–2 sentences: what this concept direction is, its core design approach)
-- rationale (1–2 sentences: why this direction is interesting or worth exploring)
-Generate 3–5 distinct concepts.
+"concepts": abstract concept directions expressed or implied by these images — not descriptions of what you see visually, but the underlying ideas, tensions, and meanings. Each concept has:
+- title (2–5 words: plain, direct label for the idea — no poetic flourishes, no metaphors, no adjective stacking; e.g. "Earned Vulnerability" not "Delicate Whispers of Fragile Grace")
+- description (1–2 sentences: the abstract design intention — the meaning, tension, or emotional register the work conveys — not a literal visual description)
+- rationale (1–2 sentences: why this conceptual direction is interesting or worth exploring)
+Generate 3–5 distinct concepts that name ideas, not visual recipes.
 
 "motifs": reusable visual elements or qualities you observe. Each motif has:
 - title (2–5 words)
