@@ -192,6 +192,8 @@ MotifCards in selection constrain the visual language ("maintain these motifs").
 VisualCards in selection (with images) show territory already explored.
 Draft + ref images set the visual style / medium.
 
+**Client-side guard:** If no ConceptCards are selected when the user sends the composer, `page.tsx` creates a local error generation without calling `/api/generate`. The error message reads: *"No concept cards selected. Select one or more concept cards on the canvas before running Conceptual Variations."*
+
 **How to trigger from a ConceptCard:** Click "Generate Visuals" on any ConceptCard —
 this pre-selects that card and opens the Conceptual Variations modal.
 

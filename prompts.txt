@@ -20,7 +20,7 @@ i am trying to come up with a design concept for [A CONCEPT]. i want you to anal
 	- color
 		- symbolic meaning, distinguish shapes
 	- dynamics
-		- sense of movement
+	- sense of movement
 	- expression
 
 [UNPACK_BRIEF]

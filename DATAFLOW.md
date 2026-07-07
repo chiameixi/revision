@@ -10,16 +10,14 @@ The workspace is a single Next.js page (`app/page.tsx`) with one panel:
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│  Action toolbar                                      │
-│  (Unpack Brief · Analyze · Variations…)              │
+│  ReVision wordmark  │  Tree · Collections view tabs  │
 ├──────────────────────────────────────────────────────┤
 │                                                      │
 │  CenterPanel                                         │
-│  View toggle → Feed | Tree | Clusters                │
+│  View toggle → Tree | Collections                    │
 │                                                      │
-│  Feed:     reverse-chron generation blocks           │
-│  Tree:     ReactFlow canvas (inputs + result nodes)  │
-│  Clusters: cards grouped by collection               │
+│  Tree:        ReactFlow canvas (inputs + result nodes)│
+│  Collections: cards grouped by collection (Clusters) │
 │                                                      │
 │  [Detail panel slides in on right when node selected]│
 │                                                      │
@@ -39,14 +37,15 @@ page.tsx
 │
 ├─ state.title / state.brief                → TreeView (BriefNode data)
 ├─ state.assets                             → TreeView (AssetNode data)
-├─ state.generations (filtered by dismissed)→ CenterPanel → Feed/Tree/Clusters
+├─ state.generations (filtered by dismissed)→ CenterPanel → Tree/Collections
 ├─ state.collections                        → TreeView (color halos, picker)
 ├─ state.manualEdges                        → TreeView (dashed manual connections)
 │
 ├─ isGenerating / generatingAction          → CenterPanel (spinner)
 ├─ dismissed: Record<genId, Set<cardId>>    → visibleGenerations memo
 ├─ composer: ComposerState                  → CallComposerModal
-└─ hoveredSourceIds: Set<cardId>            → TreeView (ancestor highlight)
+├─ hoveredSourceIds: Set<cardId>            → TreeView (ancestor highlight)
+└─ backupBanner: boolean                    → amber banner when restored from backup
 ```
 
 No state flows upward through props; children call callback props (`onActionClick`, `onAddAsset`, `onAddManualEdge`, etc.) which update the store through the `actions` object returned by `useProject()`.
@@ -104,11 +103,11 @@ ManualEdge {
 
 | Field | Description |
 |---|---|
-| `title` | Short direction name |
-| `description` | What this concept means for the design |
+| `title` | 2–5 word plain label — no poetic flourishes |
+| `description` | Abstract intention or meaning, not a visual prescription |
 | `rationale` | Why it is promising |
 
-Produced by: `unpack_brief`, `conceptual_variations`.
+Produced by: `unpack_brief`, `analyze` (concept sub-array).
 
 ### MotifCard (`type: "motif"`)
 
@@ -119,7 +118,7 @@ Produced by: `unpack_brief`, `conceptual_variations`.
 | `howItConveysIdea` | Why it works for the concept |
 | `category` | color / texture / form / composition / subject / style / typography |
 
-Produced by: `analyze`.
+Produced by: `analyze` (motif sub-array).
 
 ### VisualCard (`type: "visual"`)
 
@@ -127,10 +126,11 @@ Produced by: `analyze`.
 |---|---|
 | `dimensionLabel` | Arnheim dimension name or concept title |
 | `analysisText` | Short model analysis |
-| `imageDataUrl` | Base64 data URL of generated image (may be absent on failure) |
+| `imageDataUrl` | Base64 data URL of generated image — **stripped before localStorage write** |
+| `imageMimeType` | MIME type |
 | `error` | Per-card error string if generation failed |
 
-Produced by: `visual_variations`, `generate_concept_visuals`.
+Produced by: `visual_variations`, `conceptual_variations`.
 
 ### NoteCard (`type: "note"`)
 
@@ -141,20 +141,23 @@ Produced by: `visual_variations`, `generate_concept_visuals`.
 
 Produced by: `user_added` (manual node creation and duplicates).
 
+**Reclassify:** User-added cards (any type) can be reclassified between `concept`, `motif`, and `note` from the detail panel. Field mapping: `body ↔ description ↔ visualQuality`, `rationale ↔ howItConveysIdea`.
+
 ---
 
 ## 5. Action types
 
-| Action ID | Toolbar label | Model | Output | Images |
-|---|---|---|---|---|
-| `unpack_brief` | Unpack Brief | gemini-2.5-flash (JSON) | ConceptCard[] 5–8 | No |
-| `analyze` | Analyze | gemini-2.5-flash (JSON + images) | MotifCard[] 5–9 | Draft + Reference |
-| `visual_variations` | Visual Variations | gemini-2.5-flash-image (REST, parallel) | VisualCard[] one per dimension | Draft (optional) |
-| `conceptual_variations` | Conceptual Variations | gemini-2.5-flash (JSON + images) | ConceptCard[] 4–6 | Draft + Reference (optional) |
-| `generate_concept_visuals` | Generate Concept Visuals | gemini-2.5-flash-image (REST, parallel) | VisualCard[] one per concept | Draft as style ref (optional) |
-| `user_added` | — (programmatic) | — | NoteCard | No |
+| Action ID | Toolbar label | Model | Output |
+|---|---|---|---|
+| `unpack_brief` | Unpack Brief | gemini-2.5-flash (JSON) | ConceptCard[] 5–8 |
+| `analyze` | Analyze | gemini-2.5-flash (JSON + images) | ConceptCard[] + MotifCard[] |
+| `visual_variations` | Visual Variations | gemini-2.5-flash-image (REST, parallel) | VisualCard[] one per dimension |
+| `conceptual_variations` | Conceptual Variations | gemini-2.5-flash-image (REST, parallel) | VisualCard[] one per concept |
+| `user_added` | — (programmatic) | — | NoteCard |
 
-`visual_variations` and `generate_concept_visuals` use `Promise.allSettled` — one REST call per dimension/concept runs in parallel; a failed call produces an error VisualCard without crashing the batch.
+`visual_variations` and `conceptual_variations` use `Promise.allSettled` — one REST call per dimension/concept runs in parallel; a failed call produces an error VisualCard without crashing the batch.
+
+**Client-side guard:** `conceptual_variations` requires at least one ConceptCard selected. `page.tsx` checks this before sending the request and creates a local error generation rather than hitting the API.
 
 ---
 
@@ -176,17 +179,17 @@ CallComposerModal renders
   • Draft image toggles (for relevant actions)
   • Reference image toggles (for relevant actions)
   • Arnheim dimension pills (visual_variations only)
-  • Concept cards preview (generate_concept_visuals only)
+  • Concept cards preview (conceptual_variations only)
   • Free-text "Additional Instructions" textarea
     │
 User clicks "Send →"
     │
     ▼
 handleSend(composerState)  [page.tsx]
+  • Client-side guard: conceptual_variations with no conceptCards → local error gen, return
   • Closes modal, sets isGenerating=true
   • Resolves asset data URLs from includedDraftIds / includedReferenceIds
-  • Formats selectedCards → plain-text summaries (formatCardForContext)
-    → injected into request as highlightSummaries (model prompt field)
+  • Builds typedContext (formatConceptForContext, formatMotifForContext, formatVisualForContext)
   • Builds GenerateRequest, POST /api/generate
     │
     ▼
@@ -210,28 +213,27 @@ Back in page.tsx handleSend
     │
     ▼
 CenterPanel re-renders
-  • Feed: new generation block appears at top
   • Tree: new nodes added at depth = max(parent depths) + 1
-  • Clusters: new cards appear under their collection (if any)
+  • Collections: new cards appear under their collection (if any)
 ```
 
 ---
 
 ## 7. Canvas node selection as context
 
-Selecting canvas nodes before running an action is the primary mechanism for steering the model toward a specific direction.
+Nodes are selected via **lasso drag** (always on — drag on empty canvas area draws a selection box) or **Shift-click** to add individual nodes. **Space + drag** pans instead of selecting.
 
 ```
-User shift-clicks nodes on canvas
+User lasso-drags or shift-clicks nodes on canvas
     │
     ▼
-multiSelectedIds: Set<string>  [TreeView local state]
+onSelectionChange({ nodes })  →  setMultiSelectedIds  [TreeView local state]
+    │ (idempotency guard: no-op when IDs unchanged)
+    ▼
+multiSelectedIds: Set<string>  used in multi-select action bar + collection picker
     │
     ▼
-onSelectionChange(ids)  →  selectedCardIds  [CenterPanel local state]
-    │ shown as "N nodes selected as context" hint in toolbar
-    ▼
-handleActionClick(action, selectedCardIds)  [page.tsx]
+handleActionClick(action, [...multiSelectedIds])  [page.tsx]
     │
     ▼
 ComposerState.selectedCardIds = selectedCardIds
@@ -242,12 +244,11 @@ User can uncheck any before sending
     │
     ▼
 On Send:
-  selectedCards.map(formatCardForContext)
-  → plain-text summaries sent to API as highlightSummaries
+  selectedCards split by type → typedContext / conceptCards
   → stored on generation as sourceCardIds (provenance)
 ```
 
-`formatCardForContext` serialises each card to a compact text block (`[type] title\nfield: value\n…`) which is injected under "Relevant context from canvas:" in the model prompt.
+Multi-node drag: all `selected: true` nodes in ReactFlow move together. `onNodeDragStop(evt, node, draggedNodes)` receives all dragged nodes in the third argument; positions are saved to `positionOverrides` for all of them.
 
 ---
 
@@ -278,6 +279,7 @@ Duplicate:
 Add node manually:
   User fills in title + body in the "Add node" modal
   Generation.sourceCardIds = parentIds (selected nodes at time of add, or [])
+  Card type = "note"; can be reclassified to concept/motif from detail panel
 ```
 
 ---
@@ -287,7 +289,9 @@ Add node manually:
 ```
 User enters connect mode (Connect button, top-right of canvas)
   nodesConnectable=true on ReactFlow
-  Handles become visible on all nodes (including brief/asset nodes)
+  Handles become visible on all nodes
+  All nodes have both target (left) and source (right) handles,
+  including Brief, Draft, and Reference input nodes.
     │
 User drags source handle → target handle
     │
@@ -318,7 +322,7 @@ Rendered as dashed slate line with ✕ button on hover
 ## 11. Collections
 
 ```
-User shift-clicks nodes → Collection → [pick or create]
+User lasso/shift-clicks nodes → Collection → [pick or create]
     │
     ▼
 onAddCardsToCollection(collectionId, [...multiSelectedIds])
@@ -327,17 +331,22 @@ onAddCardsToCollection(collectionId, [...multiSelectedIds])
 actions.addCardsToCollection adds card IDs to collection.cardIds (deduped)
     │
     ▼
-cardCollectionsMap useMemo: cardId → Collection[]  [TreeView]
+cardCollectionsMap useMemo: cardId → string[] (hex colors)  [TreeView]
   Used to assign collectionColors to rfNodes data
     │
     ▼
-If Colors toggle is on:
-  SVG halo overlay renders one <g> per collection
-  Each member card gets a blurred circle in the collection color
-  Multiple collections on one node → overlapping halos (mix-blend-mode: multiply)
+Visual indicators when ◉ Collections toggle is on:
+  Text/chip/note nodes:
+    border color = primaryColor (first collection)
+    tiny dot cluster (w-[3px] h-[3px], gap-[1px]) in top-left / inline
+  Visual (image) nodes:
+    3px solid left-border stripe in primaryColor
+  SVG halo overlay: one <g> per collection, blurred circle per member
+  Export PNG: "Include collection colors" checkbox in hover dropdown
+    forces colors into DOM, waits 2 rAF frames, captures, restores
     │
     ▼
-Cluster view: one column per collection, cards listed inside
+Collections view: one column per collection, cards listed inside
 ```
 
 ---
@@ -359,19 +368,23 @@ Cluster view: one column per collection, cards listed inside
 3. Group by depth → columns.
 
 4. Column height = sum of node heights + row gaps
-   • Text node:   NODE_W=168   NODE_H=76
-   • Visual node: VISUAL_NODE_W=224  VISUAL_NODE_H=132
+   • Chip node (concept/motif): CHIP_W=160   chipHeight(title) — estimated from title length
+   • Note node:                 NODE_W=140   noteHeight(title) — estimated from title length
+   • Visual node:               VISUAL_NODE_W=320  VISUAL_NODE_H=200
+   • Asset (draft) node:        INPUT_NODE_W=320   VISUAL_NODE_H=200
+   • Asset (ref) node:          INPUT_NODE_W=320   ASSET_NODE_H=200  (same visual format)
 
 5. Vertical centering: each column is centred relative to the tallest column.
 
 6. Horizontal position: x = PAD + INPUT_X_OFFSET + depth × COL_STRIDE
-   COL_STRIDE = VISUAL_NODE_W + COL_GAP = 224 + 96 = 320 px
-   Using the wider visual node as stride prevents column overlap.
+   COL_STRIDE = VISUAL_NODE_W + COL_GAP = 320 + 96 = 416 px
 
 7. Edge list: one provenance edge per parent card ID that exists in the layout.
    Off-tree parents and asset-to-card edges are drawn separately from the
    inputRfEdges memo.
 ```
+
+`chipHeight` and `noteHeight` estimate rendered height from title character count to keep ReactFlow's dimension hints in sync with actual DOM height. Mismatches cause handle centering bugs (the "wonky connection points" issue).
 
 ---
 
@@ -405,19 +418,21 @@ Positions are persisted to `positionOverrides: Record<nodeId, {x,y}>` local stat
 ## 14. localStorage persistence
 
 ```
-Key:   "design_workspace_v0"
-Value: JSON.stringify(ProjectState)
+Primary key:  "design_workspace_v0"
+Backup key:   "design_workspace_v0_backup"
 ```
+
+**Write strategy:**
+
+- `imageDataUrl` is stripped from all VisualCards before serialisation (`stripImagesFromState`), keeping the localStorage footprint small and preventing quota exhaustion.
+- Primary key is written on every state change.
+- Backup key is written every 30 seconds via `setInterval`.
 
 **Lifecycle:**
 
-1. On mount, `useEffect` reads storage and calls `setState`. `ready` is set to `true` after hydration to prevent a flash of empty state.
-2. A second `useEffect` on `[state, ready]` writes the full state on every change.
-3. New fields added to `ProjectState` must also be added to `DEFAULT_STATE`. `loadFromStorage` does `{ ...DEFAULT_STATE, ...JSON.parse(raw) }`, so existing stored state picks up new fields automatically (migration safety).
-4. Writes are wrapped in try/catch — a full quota silently degrades rather than crashing.
+1. On mount, `useEffect` tries the **primary** key. If `JSON.parse` fails, falls back to the **backup** key. If both fail, returns `DEFAULT_STATE`.
+2. `restoredFromBackup: boolean` is exposed from `useProject()` — `page.tsx` shows an amber banner when true.
+3. A `skipNextSaveRef` flag prevents the save effect from firing immediately after hydration, which would overwrite a still-corrupt primary key with `DEFAULT_STATE`.
+4. After the first skip, subsequent state changes write normally.
 
-**Caveats:**
-
-- Base64 images are large. Several visual variation batches can easily exceed the 5–10 MB browser limit, causing silent write failures.
-- All state is one key; updating `title` re-serialises every image byte.
-- There is no version migration beyond the DEFAULT_STATE spread.
+**Adding new fields:** Add to `DEFAULT_STATE`. `loadFromStorage` does `{ ...DEFAULT_STATE, ...JSON.parse(raw) }`, so existing stored state picks up new fields automatically.
