@@ -205,6 +205,26 @@ async function generateImageOutput(
   };
 }
 
+// Retries generateImageOutput up to maxAttempts times if the model returns
+// text only (no inlineData). The model non-deterministically skips image
+// generation even when responseModalities includes IMAGE — retrying fixes most
+// cases without any prompt change.
+async function generateImageOutputWithRetry(
+  promptText: string,
+  imageDataUrls: string[] = [],
+  maxAttempts = 3
+): Promise<ImageOutputResult> {
+  let lastResult: ImageOutputResult | null = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    lastResult = await generateImageOutput(promptText, imageDataUrls);
+    if (lastResult.imageData) return lastResult;
+    if (attempt < maxAttempts) {
+      console.warn(`[image-output] no image on attempt ${attempt}/${maxAttempts}, retrying…`);
+    }
+  }
+  return lastResult!;
+}
+
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
 const conceptSchema = {
@@ -396,9 +416,7 @@ async function handleVisualVariations(req: GenerateRequest, log: BatchLogger): P
 ---
 
 Focus specifically on the **${dim.label}** dimension: ${dim.summary}.${extraContext}${styleRefNote}
-Analyze the attached design image on this specific Arnheim dimension. Then generate a 5x3 panel of visual variations that deliberately strengthens the ${dim.label} dimension. The improvement should be immediately apparent when comparing to the original.
-
-Provide your analysis first (2–3 sentences), then the variation panel image.`;
+Generate a 5×3 image panel of visual variations that deliberately strengthen the **${dim.label}** dimension — the improvement should be immediately apparent compared to the original. You MUST output an image panel; it is required. Then provide a brief analysis (2–3 sentences) of how the ${dim.label} dimension was improved.`;
 
       writeJsonRelative(dimDir, "request.json", {
         dimensionId: dim.id,
@@ -413,7 +431,7 @@ Provide your analysis first (2–3 sentences), then the variation panel image.`;
       let genResult: Awaited<ReturnType<typeof generateImageOutput>> | null = null;
 
       try {
-        genResult = await generateImageOutput(prompt, [primaryDraft, ...styleRefImages]);
+        genResult = await generateImageOutputWithRetry(prompt, [primaryDraft, ...styleRefImages]);
         rawResponse = genResult.rawResponse;
       } catch (err) {
         const endedAt = nowIso();
@@ -540,7 +558,8 @@ Description: ${concept.description}
 Rationale: ${concept.rationale}
 
 Overall design brief: ${req.brief || "(none provided)"}
-${motifContext}${visualTextContext}${noteContext}${styleRefNote}${buildUserInstructions(req.userInstructions)}`;
+${motifContext}${visualTextContext}${noteContext}${styleRefNote}${buildUserInstructions(req.userInstructions)}
+You MUST output the 2×2 image panel — generating the image is required, not optional.`;
 
       writeJsonRelative(cardDir, "request.json", {
         conceptTitle: concept.title,
@@ -553,7 +572,7 @@ ${motifContext}${visualTextContext}${noteContext}${styleRefNote}${buildUserInstr
       const dimStart = nowIso();
       let genResult: ImageOutputResult;
       try {
-        genResult = await generateImageOutput(prompt, styleImages);
+        genResult = await generateImageOutputWithRetry(prompt, styleImages);
       } catch (err) {
         const dimEnd = nowIso();
         writeJsonRelative(cardDir, "error.json", { error: String(err) });
