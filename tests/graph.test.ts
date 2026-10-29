@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ancestors, resolveSelection, treeEdges, visibleLinks, visibleNodes, visibleParents } from "@/domain/graph";
+import { ancestors, resolveSelection, summarize, treeEdges, visibleLinks, visibleNodes, visibleParents } from "@/domain/graph";
 import { edge, node, project } from "./helpers";
 
 describe("visibility", () => {
@@ -76,5 +76,29 @@ describe("resolveSelection", () => {
     const { nodes, edges } = resolveSelection(p, ["A", "C", "ghost", link.id]);
     expect(nodes.map((n) => n.id)).toEqual(["A"]);
     expect(edges.map((e) => e.id)).toEqual([link.id]);
+  });
+});
+
+describe("summarize", () => {
+  it("counts visible nodes and images and picks the newest image as cover", () => {
+    const p = project();
+    p.brief = "  A poster\n about   tides ";
+    const a = node(p, "A");
+    a.image = { imageId: "old", mimeType: "image/png" };
+    a.createdAt = "2026-01-01T00:00:00.000Z";
+    const b = node(p, "B");
+    b.image = { imageId: "new", mimeType: "image/png" };
+    b.createdAt = "2026-02-01T00:00:00.000Z";
+    const c = node(p, "C", { hidden: true });
+    c.image = { imageId: "hidden", mimeType: "image/png" };
+    c.createdAt = "2026-03-01T00:00:00.000Z";
+    node(p, "D");
+    expect(summarize(p)).toMatchObject({ briefExcerpt: "A poster about tides", nodeCount: 3, imageCount: 2, coverImageId: "new" });
+  });
+
+  it("shortens long briefs", () => {
+    const p = project();
+    p.brief = "x".repeat(300);
+    expect(summarize(p).briefExcerpt).toHaveLength(140);
   });
 });

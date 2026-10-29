@@ -68,6 +68,7 @@ export interface ProjectStore {
   openProject(id: ProjectId): Promise<void>;
   closeProject(): Promise<void>;
   deleteProject(id: ProjectId): Promise<void>;
+  renameProject(id: ProjectId, title: string): Promise<void>;
   flush(): Promise<void>;
   setTitle(title: string): void;
   setBrief(brief: string): void;
@@ -212,7 +213,9 @@ export function createProjectStore(
 
       // ── Projects ──────────────────────────────────────────────────────────
 
+      // Saves pending edits first, so the list never shows stale titles or counts.
       async loadProjects() {
+        await flush();
         set({ projects: await getRepo().listProjects() });
       },
 
@@ -227,6 +230,7 @@ export function createProjectStore(
       },
 
       async openProject(id) {
+        if (get().project?.id === id && get().status === "ready") return;
         await flush();
         set({ status: "loading", selection: [] });
         const p = await getRepo().loadProject(id);
@@ -247,6 +251,17 @@ export function createProjectStore(
           set({ project: null, status: "idle", selection: [] });
         }
         await getRepo().deleteProject(id);
+        await get().loadProjects();
+      },
+
+      // Renames any project, open or not (the grid renames without opening).
+      async renameProject(id, title) {
+        if (get().project?.id === id) {
+          get().setTitle(title);
+        } else {
+          await applyTo(id, (p) => u.setTitle(p, title));
+          log("project.renamed", { title }, { projectId: id });
+        }
         await get().loadProjects();
       },
 

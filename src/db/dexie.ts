@@ -8,6 +8,7 @@
 import Dexie, { type Table } from "dexie";
 import type { AppEvent, ImageId, ImageRecord, ProjectId, ProjectState, ProjectSummary } from "@/domain/types";
 import { newId, now } from "@/domain/ids";
+import { summarize } from "@/domain/graph";
 import type { NewEvent, NewImage, Repository } from "./index";
 
 class WorkspaceDB extends Dexie {
@@ -37,7 +38,7 @@ export class DexieRepository implements Repository {
 
   async listProjects(): Promise<ProjectSummary[]> {
     const all = await this.db.projects.orderBy("updatedAt").reverse().toArray();
-    return all.map(({ id, title, createdAt, updatedAt }) => ({ id, title, createdAt, updatedAt }));
+    return all.map(summarize);
   }
 
   loadProject(id: ProjectId) {

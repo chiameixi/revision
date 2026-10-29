@@ -294,3 +294,43 @@ describe("runs", () => {
     expect(context.map((c) => c.split("\n")[0])).toEqual(["[concept] Ebb", "[motif] Waves"]);
   });
 });
+
+describe("projects grid", () => {
+  it("lists summaries with counts", async () => {
+    s().addNode({ role: "concept", title: "A" });
+    await s().flush();
+    await s().loadProjects();
+    expect(s().projects[0]).toMatchObject({ title: "Poster", nodeCount: 1, imageCount: 0 });
+  });
+
+  it("renames a project that isn't open", async () => {
+    const first = p().id;
+    await s().createProject("Second");
+    await s().renameProject(first, "Renamed");
+    expect((await repo.loadProject(first))?.title).toBe("Renamed");
+    expect(p().title).toBe("Second");
+    expect(s().projects.map((x) => x.title).sort()).toEqual(["Renamed", "Second"]);
+  });
+
+  it("renames the open project through the normal edit path", async () => {
+    await s().renameProject(p().id, "Tides");
+    expect(p().title).toBe("Tides");
+  });
+
+  it("lists fresh data even while a save is still pending", async () => {
+    store = createProjectStore(() => repo, { saveDelayMs: 400 });
+    await s().createProject("Old title");
+    await s().renameProject(p().id, "New title");
+    expect(s().projects.find((x) => x.id === p().id)?.title).toBe("New title");
+    s().addNode({ role: "concept", title: "A" });
+    await s().loadProjects();
+    expect(s().projects.find((x) => x.id === p().id)?.nodeCount).toBe(1);
+  });
+
+  it("doesn't reload a project that's already open", async () => {
+    s().addNode({ role: "concept", title: "unsaved" });  // not flushed yet
+    const before = p();
+    await s().openProject(before.id);
+    expect(p()).toBe(before);
+  });
+});

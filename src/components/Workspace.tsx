@@ -5,6 +5,7 @@
 // read the same project and the same selection from the store.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useProjectStore } from "@/store/projectStore";
 import type { ActionType, NodeId } from "@/domain/types";
 import TreeView from "./TreeView";
@@ -166,6 +167,8 @@ export default function Workspace() {
   return (
     <main className="flex-1 min-w-0 h-screen flex flex-col overflow-hidden">
       <div className={`px-5 pt-2.5 pb-2.5 bg-white flex items-center gap-4 ${styles.toolbar}`}>
+        <Link href="/" className="text-[12px] text-[rgba(0,0,0,0.45)] hover:text-black transition-colors whitespace-nowrap">← Projects</Link>
+        <span className="text-[#ddd]">/</span>
         <p className="text-[13px] font-semibold text-[#111] truncate max-w-[30ch]" title={project.title}>{project.title}</p>
         <div className="flex items-center gap-1">
           {(["tree", "collections"] as const).map((v) => (

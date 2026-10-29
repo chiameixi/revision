@@ -113,8 +113,13 @@ export interface ProjectState {
   };
 }
 
-// What the projects grid needs without loading every project.
-export type ProjectSummary = Pick<ProjectState, "id" | "title" | "updatedAt" | "createdAt">;
+// What a card in the projects grid shows. Derived from the project (see summarize()).
+export interface ProjectSummary extends Pick<ProjectState, "id" | "title" | "updatedAt" | "createdAt"> {
+  briefExcerpt: string;
+  nodeCount: number;          // visible nodes only
+  imageCount: number;
+  coverImageId?: ImageId;     // most recent visible image, for the thumbnail
+}
 
 // ── Stored outside project state ──────────────────────────────────────────────
 

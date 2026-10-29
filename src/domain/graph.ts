@@ -1,7 +1,7 @@
 // Pure helpers over ProjectState. No React, no IO.
 // Everything here is derived on demand and never stored.
 
-import type { Edge, EdgeId, IdeaNode, NodeId, ProjectId, ProjectState } from "./types";
+import type { Edge, EdgeId, IdeaNode, NodeId, ProjectId, ProjectState, ProjectSummary } from "./types";
 
 export function emptyProject(id: ProjectId, title: string, at: string): ProjectState {
   return {
@@ -14,6 +14,22 @@ export function emptyProject(id: ProjectId, title: string, at: string): ProjectS
     edges: {},
     collections: {},
     views: { tree: { positions: {} }, cluster: { positions: {} } },
+  };
+}
+
+export function summarize(p: ProjectState): ProjectSummary {
+  const nodes = visibleNodes(p);
+  const withImage = nodes.filter((n) => n.image).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const brief = p.brief.trim().replace(/\s+/g, " ");
+  return {
+    id: p.id,
+    title: p.title,
+    createdAt: p.createdAt,
+    updatedAt: p.updatedAt,
+    briefExcerpt: brief.length > 140 ? `${brief.slice(0, 139)}…` : brief,
+    nodeCount: nodes.length,
+    imageCount: withImage.length,
+    coverImageId: withImage[0]?.image?.imageId,
   };
 }
 
