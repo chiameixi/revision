@@ -1,7 +1,7 @@
 import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DexieRepository } from "@/db/dexie";
-import { createProjectStore } from "@/store/projectStore";
+import { createProjectStore, type GenerateFn } from "@/store/projectStore";
 import { treeEdges, visibleLinks, visibleNodes } from "@/domain/graph";
 
 let repo: DexieRepository;
@@ -184,5 +184,113 @@ describe("clear tree", () => {
     await new Promise((r) => setTimeout(r, 5));
     const cleared = (await repo.listEvents(id)).filter((e) => e.type === "project.cleared");
     expect(cleared.map((e) => e.payload)).toEqual([{ count: 2 }]);
+  });
+});
+
+describe("runs", () => {
+  const PNG = "data:image/png;base64,iVBORw0KGgo=";
+
+  function runStore(generate: GenerateFn) {
+    return createProjectStore(() => repo, { saveDelayMs: 0, generate });
+  }
+
+  it("adds outputs with provenance from the selection and logs start and finish", async () => {
+    const calls: unknown[] = [];
+    store = runStore(async (body) => {
+      calls.push(body);
+      return { cards: [{ id: "x", type: "concept", title: "Undertow", description: "d", rationale: "r", createdAt: "t" }] };
+    });
+    await s().createProject("Run");
+    const a = s().addNode({ role: "concept", title: "Ebb" })!;
+    s().setSelection([a]);
+    const runId = await s().runAction("expand");
+    expect(runId).toBeTruthy();
+    expect(calls).toHaveLength(1);
+    const out = visibleNodes(p()).find((n) => n.title === "Undertow")!;
+    expect(out.origin).toMatchObject({ kind: "generated", action: "expand", runId });
+    expect(treeEdges(p())).toContainEqual({ from: a, to: out.id, bridged: false });
+    expect(s().runs).toEqual({});
+    await new Promise((r) => setTimeout(r, 5));
+    const events = await repo.listEvents(p().id);
+    expect(events.map((e) => [e.type, e.actor])).toContainEqual(["run.done", "model"]);
+  });
+
+  it("sends selected images and saves returned ones", async () => {
+    let sent: string[] = [];
+    store = runStore(async (body) => {
+      sent = body.draftDataUrls;
+      return { cards: [{ id: "v", type: "visual", title: "Balance", dimensionLabel: "Balance", analysisText: "", imageDataUrl: PNG, createdAt: "t" }] };
+    });
+    await s().createProject("Images");
+    const draft = (await s().addImageNode({ blob: new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }), mimeType: "image/png" }, { role: "visual", title: "draft" }))!;
+    s().setSelection([draft]);
+    await s().runAction("visual_variations", { dimensionIds: ["balance"] });
+    expect(sent).toEqual(["data:image/png;base64,AQID"]);
+    const out = visibleNodes(p()).find((n) => n.title === "Balance")!;
+    expect((await repo.getImage(out.image!.imageId))?.blob.size).toBeGreaterThan(0);
+  });
+
+  it("explains why a selection doesn't suit the action, without calling the server", async () => {
+    let called = false;
+    store = runStore(async () => { called = true; return { cards: [] }; });
+    await s().createProject("Empty");
+    expect(await s().runAction("visual_variations")).toBeNull();
+    expect(called).toBe(false);
+    expect(s().notices).toHaveLength(1);
+    s().dismissNotice(s().notices[0].id);
+    expect(s().notices).toEqual([]);
+  });
+
+  it("turns a server error into a notice and a run.failed event", async () => {
+    store = runStore(async () => ({ cards: [], error: "Quota exceeded" }));
+    await s().createProject("Fail");
+    s().setBrief("Tides");
+    await s().runAction("expand");
+    expect(s().notices.map((n) => n.message)).toEqual(["Quota exceeded"]);
+    expect(s().runs).toEqual({});
+    await new Promise((r) => setTimeout(r, 5));
+    expect((await repo.listEvents(p().id)).map((e) => e.type)).toContain("run.failed");
+  });
+
+  it("shows the run while it's in progress", async () => {
+    let release!: () => void;
+    store = runStore(() => new Promise((res) => { release = () => res({ cards: [] }); }));
+    await s().createProject("Slow");
+    s().setBrief("Tides");
+    const pending = s().runAction("expand");
+    await new Promise((r) => setTimeout(r, 5));
+    expect(Object.values(s().runs).map((r) => r.action)).toEqual(["expand"]);
+    release();
+    await pending;
+    expect(s().runs).toEqual({});
+  });
+
+  it("saves outputs into the right project if the user switched away mid-run", async () => {
+    let release!: () => void;
+    store = runStore(() => new Promise((res) => {
+      release = () => res({ cards: [{ id: "x", type: "concept", title: "Late", description: "", rationale: "", createdAt: "t" }] });
+    }));
+    const first = await s().createProject("First");
+    s().setBrief("Tides");
+    const pending = s().runAction("expand");
+    await new Promise((r) => setTimeout(r, 5));
+    await s().createProject("Second");
+    release();
+    await pending;
+    expect(Object.values(p().nodes)).toEqual([]);
+    const saved = await repo.loadProject(first);
+    expect(Object.values(saved!.nodes).map((n) => n.title)).toEqual(["Late"]);
+  });
+
+  it("counts a selected link as its two end nodes", async () => {
+    let context: string[] = [];
+    store = runStore(async (body) => { context = [...body.typedContext.concepts, ...body.typedContext.motifs]; return { cards: [] }; });
+    await s().createProject("Link");
+    const a = s().addNode({ role: "concept", title: "Ebb" })!;
+    const b = s().addNode({ role: "motif", title: "Waves" })!;
+    const link = s().addLink(a, b)!;
+    s().setSelection([link]);
+    await s().runAction("expand");
+    expect(context.map((c) => c.split("\n")[0])).toEqual(["[concept] Ebb", "[motif] Waves"]);
   });
 });

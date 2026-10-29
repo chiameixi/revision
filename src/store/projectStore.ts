@@ -21,24 +21,37 @@
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { useStore } from "zustand";
 import type {
+  ActionType,
   CollectionId,
   EdgeId,
+  IdeaNode,
+  ImageId,
   NodeId,
   ProjectId,
   ProjectState,
   ProjectSummary,
   Region,
   Role,
+  RunId,
+  RunInProgress,
   XY,
 } from "@/domain/types";
-import { emptyProject } from "@/domain/graph";
+import type { GenerateRequest, GenerateResponse } from "@/types";
+import { emptyProject, resolveSelection } from "@/domain/graph";
 import { newId, now } from "@/domain/ids";
 import { makeCollection, makeEdge, makeNode, type NewNodeInput } from "@/domain/builders";
 import * as u from "@/domain/updates";
 import { repo as defaultRepo, type NewImage, type Repository } from "@/db";
+import { blobToDataUrl, dataUrlToImage } from "@/services/images";
+import { buildLegacyRequest, legacyCardsToOutputs, readableError, type LegacyOptions } from "@/services/legacyGenerate";
 
 type View = "tree" | "cluster";
 type Ref = NodeId | EdgeId;
+
+export interface Notice {
+  id: string;
+  message: string;
+}
 
 export interface ProjectStore {
   projects: ProjectSummary[];
@@ -46,6 +59,8 @@ export interface ProjectStore {
   status: "idle" | "loading" | "ready" | "missing";
   saveError: string | null;
   selection: Ref[];
+  runs: Record<RunId, RunInProgress>;   // memory only
+  notices: Notice[];                     // errors to show the user
 
   // Projects
   loadProjects(): Promise<void>;
@@ -89,15 +104,32 @@ export interface ProjectStore {
   setSelection(ids: Ref[]): void;
   toggleSelected(id: Ref): void;
   clearSelection(): void;
+
+  // Runs: generate from the current selection. Returns the run ID, or null if
+  // the selection doesn't suit the action (a notice explains why).
+  runAction(action: ActionType, opts?: LegacyOptions): Promise<RunId | null>;
+  dismissNotice(id: string): void;
+}
+
+export type GenerateFn = (body: GenerateRequest) => Promise<GenerateResponse>;
+
+async function fetchGenerate(body: GenerateRequest): Promise<GenerateResponse> {
+  const res = await fetch("/api/generate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return res.json();
 }
 
 export interface StoreOptions {
   saveDelayMs?: number;
+  generate?: GenerateFn;   // tests pass a fake
 }
 
 export function createProjectStore(
   getRepo: () => Repository = defaultRepo,
-  { saveDelayMs = 400 }: StoreOptions = {},
+  { saveDelayMs = 400, generate = fetchGenerate }: StoreOptions = {},
 ): StoreApi<ProjectStore> {
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -119,11 +151,29 @@ export function createProjectStore(
       saveTimer = setTimeout(save, saveDelayMs);
     }
 
-    function log(type: string, payload: Record<string, unknown> = {}) {
-      const p = get().project;
-      if (!p) return;
+    function log(
+      type: string,
+      payload: Record<string, unknown> = {},
+      { actor = "user", projectId = get().project?.id }: { actor?: "user" | "model"; projectId?: ProjectId } = {},
+    ) {
+      if (!projectId) return;
       // Logging must never break an edit.
-      getRepo().logEvent({ projectId: p.id, actor: "user", type, payload }).catch(() => {});
+      getRepo().logEvent({ projectId, actor, type, payload }).catch(() => {});
+    }
+
+    function notify(message: string) {
+      set({ notices: [...get().notices, { id: newId("event"), message }] });
+    }
+
+    // Applies a change to a project that may no longer be open (a run that
+    // finished after the user switched projects).
+    async function applyTo(projectId: ProjectId, fn: (p: ProjectState) => ProjectState) {
+      if (get().project?.id === projectId) {
+        commit(fn, null);
+        return;
+      }
+      const stored = await getRepo().loadProject(projectId);
+      if (stored) await getRepo().saveProject({ ...fn(stored), updatedAt: now() });
     }
 
     // The single path for changing the open project.
@@ -157,6 +207,8 @@ export function createProjectStore(
       status: "idle",
       saveError: null,
       selection: [],
+      runs: {},
+      notices: [],
 
       // ── Projects ──────────────────────────────────────────────────────────
 
@@ -367,6 +419,65 @@ export function createProjectStore(
 
       clearSelection() {
         set({ selection: [] });
+      },
+
+      // ── Runs ──────────────────────────────────────────────────────────────
+
+      async runAction(action, opts = {}) {
+        const p = get().project;
+        if (!p) return null;
+
+        // Selected links count as their two end nodes.
+        const sel = resolveSelection(p, get().selection);
+        const inputs: IdeaNode[] = [];
+        for (const n of [...sel.nodes, ...sel.edges.flatMap((e) => [p.nodes[e.from], p.nodes[e.to]])]) {
+          if (n && !inputs.includes(n)) inputs.push(n);
+        }
+
+        const images: Record<ImageId, string> = {};
+        for (const n of inputs) {
+          if (!n.image) continue;
+          const rec = await getRepo().getImage(n.image.imageId);
+          if (rec) images[n.image.imageId] = await blobToDataUrl(rec.blob, rec.mimeType);
+        }
+
+        const built = buildLegacyRequest(action, inputs, p.brief, images, opts);
+        if (!built.ok) {
+          notify(built.error);
+          return null;
+        }
+
+        const runId = newId("run");
+        const inputIds = inputs.map((n) => n.id);
+        const total = action === "visual_variations" ? built.body.dimensionIds.length
+          : action === "conceptual_variations" ? built.body.conceptCards?.length ?? 1
+          : 1;
+        set({ runs: { ...get().runs, [runId]: { runId, action, inputs: inputIds, total, done: 0, failed: 0, startedAt: now() } } });
+        log("run.started", { runId, action, inputIds, dimensionIds: opts.dimensionIds, hasInstructions: !!opts.instructions });
+
+        try {
+          const res = await generate(built.body);
+          if (res.error && !res.cards?.length) throw new Error(res.error);
+          const out = legacyCardsToOutputs(res.cards ?? [], action, runId, inputs);
+          for (const img of out.images) await getRepo().saveImage(dataUrlToImage(img.dataUrl), img.imageId);
+          await applyTo(p.id, (s) => u.addNodesAndEdges(s, out.nodes, out.edges));
+          log("run.done", { runId, outputIds: out.nodes.map((n) => n.id), failed: out.failed.length }, { actor: "model", projectId: p.id });
+          if (out.failed.length === 1) notify(`1 output failed: ${out.failed[0]}`);
+          else if (out.failed.length > 1) notify(`${out.failed.length} outputs failed.`);
+          if (res.error) notify(readableError(res.error));
+        } catch (err) {
+          const message = readableError(err instanceof Error ? err.message : "The request failed.");
+          notify(message);
+          log("run.failed", { runId, message }, { actor: "model", projectId: p.id });
+        } finally {
+          const { [runId]: _done, ...rest } = get().runs;
+          set({ runs: rest });
+        }
+        return runId;
+      },
+
+      dismissNotice(id) {
+        set({ notices: get().notices.filter((n) => n.id !== id) });
       },
     };
   });
