@@ -13,15 +13,16 @@ import type { NewEvent, NewImage, Repository } from "./index";
 class WorkspaceDB extends Dexie {
   projects!: Table<ProjectState, ProjectId>;
   images!: Table<ImageRecord, ImageId>;
-  events!: Table<AppEvent, string>;
+  events!: Table<AppEvent, number>;
 
   constructor(name: string) {
     super(name);
     // Only indexed fields are listed; documents can hold any other fields.
+    // Events are keyed by an auto-incrementing seq so order survives same-millisecond writes.
     this.version(1).stores({
       projects: "id, updatedAt",
       images: "id",
-      events: "id, projectId, at",
+      events: "++seq, id, projectId",
     });
   }
 }
@@ -69,6 +70,6 @@ export class DexieRepository implements Repository {
   }
 
   listEvents(projectId: ProjectId) {
-    return this.db.events.where("projectId").equals(projectId).sortBy("at");
+    return this.db.events.where("projectId").equals(projectId).sortBy("seq");
   }
 }

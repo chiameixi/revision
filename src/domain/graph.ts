@@ -35,12 +35,12 @@ export function visibleLinks(p: ProjectState): Edge[] {
 
 // ── Provenance ────────────────────────────────────────────────────────────────
 
-// Parents via derived_from edges, including hidden nodes and hidden edges.
-// Hidden edges still count: hiding is a display decision, the derivation still happened.
+// Parents via derived_from edges, including hidden nodes (so the tree can bridge
+// over them) but not hidden edges: an edge is hidden only when the user removed it.
 function rawParents(p: ProjectState, id: NodeId): NodeId[] {
   const out: NodeId[] = [];
   for (const e of Object.values(p.edges)) {
-    if (e.kind === "derived_from" && e.to === id && p.nodes[e.from]) out.push(e.from);
+    if (e.kind === "derived_from" && !e.hidden && e.to === id && p.nodes[e.from]) out.push(e.from);
   }
   return out;
 }

@@ -21,7 +21,7 @@ export interface NewImage {
   height?: number;
 }
 
-export type NewEvent = Omit<AppEvent, "id" | "at">;
+export type NewEvent = Omit<AppEvent, "id" | "at" | "seq">;
 
 export interface Repository {
   listProjects(): Promise<ProjectSummary[]>;   // newest first

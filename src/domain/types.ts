@@ -131,6 +131,7 @@ export interface ImageRecord {
 // One entry in the append-only study log. The app writes these and never reads them back.
 export interface AppEvent {
   id: string;
+  seq?: number;                       // assigned by storage; the true order of events
   projectId: ProjectId;
   at: string;
   actor: "user" | "model";
