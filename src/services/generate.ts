@@ -221,7 +221,8 @@ export function outputsFor(job: Job, res: ActionResponse, runId: RunId): Outputs
       origin({ dimensionId: req.dimensionId })));
   } else {
     const req = job.req as ActionRequest<"conceptual_variations">;
-    const title = req.idea ? req.idea.title : `${req.link!.from.title} through ${req.link!.to.title}`;
+    // Named so it can't be mistaken for the idea it renders.
+    const title = req.idea ? `${req.idea.title}, visualized` : `${req.link!.from.title} through ${req.link!.to.title}`;
     add(makeNode({ role: "visual", title, body: r.text || undefined, image }, origin()));
   }
   return out;

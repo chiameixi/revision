@@ -1,4 +1,6 @@
-// Shared labels and colours for nodes, actions and collections, used by both views.
+// Shared labels and colours for nodes, actions and collections, used by every view.
+// Role colours are the data palette; the interface's own colours are tokens in
+// app/globals.css.
 
 import type { ActionType, IdeaNode, Role } from "@/domain/types";
 import { DIMENSIONS } from "@/lib/dimensions";
@@ -6,13 +8,16 @@ import { DIMENSIONS } from "@/lib/dimensions";
 export const ROLES: Role[] = ["concept", "motif", "visual", "note"];
 
 export const ROLE_STYLE: Record<Role, {
-  bg: string; border: string; selectedBorder: string;
-  badgeBg: string; badgeText: string; line: string; clusterBg: string;
+  fill: string;       // node background
+  border: string;     // node outline, edge colour
+  ink: string;        // role-coloured text
+  badgeBg: string;
+  group: string;      // background of the role group in the collections view
 }> = {
-  concept: { bg: "#dde1f2", border: "#8b96c8", selectedBorder: "#3c4a8a", badgeBg: "#3c4a8a", badgeText: "#ffffff", line: "rgba(60,74,138,0.45)",  clusterBg: "#e8eaf8" },
-  motif:   { bg: "#fdf8ef", border: "#c8a055", selectedBorder: "#8b6410", badgeBg: "#8b6410", badgeText: "#ffffff", line: "rgba(139,100,16,0.45)", clusterBg: "#faf6ea" },
-  visual:  { bg: "#fdf4f2", border: "#c89088", selectedBorder: "#8b4035", badgeBg: "#8b4035", badgeText: "#ffffff", line: "rgba(139,64,53,0.40)",  clusterBg: "#f8efee" },
-  note:    { bg: "#f3f8f5", border: "#7aab8a", selectedBorder: "#2e6e45", badgeBg: "#2e6e45", badgeText: "#ffffff", line: "rgba(46,110,69,0.40)",  clusterBg: "#eff6f2" },
+  concept: { fill: "#eef0fb", border: "#a3acdf", ink: "#2d3a8c", badgeBg: "#dfe3f8", group: "#f3f4fc" },
+  motif:   { fill: "#fdf6e7", border: "#d8b56f", ink: "#6b4a06", badgeBg: "#f5e6c3", group: "#fcf8ee" },
+  visual:  { fill: "#fbefec", border: "#d6a197", ink: "#7d3326", badgeBg: "#f5dcd6", group: "#fbf3f1" },
+  note:    { fill: "#eef6f1", border: "#98c4a9", ink: "#245c3b", badgeBg: "#d9ece0", group: "#f2f8f4" },
 };
 
 export const ROLE_LABEL: Record<Role, string> = {
@@ -42,7 +47,7 @@ export const ACTIONS: { id: ActionType; label: string; description: string }[] =
   {
     id: "conceptual_variations",
     label: "Conceptual variations",
-    description: "Renders each selected concept or motif as an image. A selected image is used as the base.",
+    description: "Renders each selected concept, motif or link as an image. A selected image is used as the base.",
   },
 ];
 
@@ -50,21 +55,17 @@ export const ACTION_LABEL: Record<ActionType, string> = Object.fromEntries(
   ACTIONS.map((a) => [a.id, a.label]),
 ) as Record<ActionType, string>;
 
-// Short line under a node saying where it came from.
+// Where a node came from, as a phrase that can't be mistaken for a button.
 export function originLabel(n: IdeaNode): string {
-  if (n.origin.kind === "user") return "Your idea";
+  if (n.origin.kind === "user") return "Added by you";
   const dim = n.origin.params?.dimensionId;
   const dimLabel = dim ? DIMENSIONS.find((d) => d.id === dim)?.label : undefined;
-  return dimLabel ? `${ACTION_LABEL[n.origin.action]} · ${dimLabel}` : ACTION_LABEL[n.origin.action];
+  return dimLabel ? `Made by ${ACTION_LABEL[n.origin.action]} (${dimLabel})` : `Made by ${ACTION_LABEL[n.origin.action]}`;
 }
 
 export const COLLECTION_COLORS = [
-  "#c9a84c", // warm gold
-  "#7a9e5e", // sage green
-  "#c14f58", // muted rose
-  "#4a7a9b", // slate blue
-  "#8b6b4a", // warm brown
-  "#7b6b8e", // muted violet
-  "#4a8b7a", // teal
-  "#9b4a4a", // terracotta
+  "#c9a84c", "#7a9e5e", "#c14f58", "#4a7a9b", "#8b6b4a", "#7b6b8e", "#4a8b7a", "#9b4a4a",
 ];
+
+// Spoken names for the colours above, for the colour picker.
+export const COLLECTION_COLOR_NAMES = ["Gold", "Sage", "Rose", "Slate blue", "Brown", "Violet", "Teal", "Terracotta"];

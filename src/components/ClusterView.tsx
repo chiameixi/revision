@@ -1,14 +1,15 @@
 "use client";
 
 // The collections view: user collections plus one group per role for nodes
-// that aren't in any collection yet. Drag cards between them. Reads and
-// writes through the store; positions are saved in views.cluster.
+// that aren't in any collection yet. Drag cards between them, or select cards
+// and use "Add to collection" in the selection bar. Reads and writes through
+// the store; dragged positions are saved in views.cluster.
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import {
   ReactFlow,
   Background,
-  Panel,
+  BackgroundVariant,
   applyNodeChanges,
   getNodesBounds,
   getViewportForBounds,
@@ -19,16 +20,20 @@ import {
 } from "@xyflow/react";
 import { toPng } from "html-to-image";
 import "@xyflow/react/dist/style.css";
+import { CheckSquare, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useProjectStore } from "@/store/projectStore";
 import { visibleNodes } from "@/domain/graph";
 import type { Collection, CollectionId, IdeaNode, NodeId, ProjectState, Role } from "@/domain/types";
 import { useImageUrl } from "./useImageUrl";
-import { COLLECTION_COLORS, ROLES, ROLE_LABEL, ROLE_LABEL_PLURAL, ROLE_STYLE, originLabel } from "./nodeStyle";
-import styles from "./ClusterView.module.css";
+import { COLLECTION_COLORS, COLLECTION_COLOR_NAMES, ROLES, ROLE_LABEL_PLURAL, ROLE_STYLE } from "./nodeStyle";
+import { Menu, RoleBadge } from "./ui";
+import styles from "./TreeView.module.css";
 
 const DRAG_NODE = "application/x-node-id";
 const DRAG_FROM = "application/x-from-collection";
-const COL_W = 360;
+const GROUP_W = 340;
+const COL_GAP = 32;
+const ACCENT = "var(--color-accent)";
 
 // ── Context for the two container node types ──────────────────────────────────
 
@@ -36,10 +41,10 @@ interface Ctx {
   nodes: Record<NodeId, IdeaNode>;      // visible nodes only
   collections: Record<CollectionId, Collection>;
   unassigned: Record<Role, IdeaNode[]>;
-  selected: NodeId | null;
+  selected: Set<string>;
   dragOverId: string | null;
   setDragOverId: (id: string | null) => void;
-  onSelect: (id: NodeId) => void;
+  onSelect: (id: NodeId, additive: boolean) => void;
   onDrop: (nodeId: NodeId, from: CollectionId | null, to: CollectionId | null) => void;
 }
 
@@ -67,18 +72,11 @@ function dropZone(ctx: Ctx, zoneId: string, to: CollectionId | null) {
   };
 }
 
-// ── Mini card ─────────────────────────────────────────────────────────────────
+// ── Cards ─────────────────────────────────────────────────────────────────────
 
-function MiniCard({ node, from, onRemove }: { node: IdeaNode; from: CollectionId | null; onRemove?: () => void }) {
-  const { selected, onSelect } = useCtx();
-  const url = useImageUrl(node.image?.imageId);
-  const isSelected = selected === node.id;
-  const ts = ROLE_STYLE[node.role];
-  const border = isSelected ? ts.selectedBorder : ts.border;
-  const shadow = isSelected ? "2px 2px 0px rgba(0,0,0,0.5)" : "none";
-  const bg = isSelected ? "#f5f4f0" : ts.bg;
-
-  const drag = {
+function useCardProps(node: IdeaNode, from: CollectionId | null) {
+  const { onSelect } = useCtx();
+  return {
     draggable: true,
     onDragStart: (e: React.DragEvent) => {
       e.stopPropagation();
@@ -86,70 +84,75 @@ function MiniCard({ node, from, onRemove }: { node: IdeaNode; from: CollectionId
       if (from) e.dataTransfer.setData(DRAG_FROM, from);
       e.dataTransfer.effectAllowed = "move";
     },
-    onClick: (e: React.MouseEvent) => { e.stopPropagation(); onSelect(node.id); },
+    onClick: (e: React.MouseEvent) => { e.stopPropagation(); onSelect(node.id, e.shiftKey); },
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onSelect(node.id, e.shiftKey); }
+    },
+    role: "button" as const,
+    tabIndex: 0,
   };
-  const removeBtn = (cls: string) => onRemove && (
-    <button className={cls} title="Take out of this collection" onClick={(e) => { e.stopPropagation(); onRemove(); }}>✕</button>
-  );
+}
 
-  if (node.image) {
-    return (
-      <div {...drag} className={`relative group/minicard overflow-hidden cursor-pointer nodrag nowheel col-span-2 ${styles.visualCard}`}
-        style={{ border: `1px solid ${border}`, boxShadow: shadow }}>
-        {removeBtn("nodrag absolute top-1.5 right-1.5 opacity-0 group-hover/minicard:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#6b6b6b] hover:text-red-400 hover:bg-red-50 text-[11px] leading-none z-20")}
-        <div className="absolute top-0 left-0 right-0 p-1.5 flex items-center gap-1.5 z-10 bg-gradient-to-b from-black/30 to-transparent">
-          <span className="text-[10px] font-semibold uppercase tracking-wide px-1 py-0.5 rounded text-white" style={{ background: node.role === "visual" ? "rgba(0,0,0,0.5)" : ts.badgeBg }}>
-            {ROLE_LABEL[node.role]}
-          </span>
-          {isSelected && <span className="text-[10px] text-white bg-blue-500/80 px-1 rounded font-bold">✓</span>}
-        </div>
-        {url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={url} alt={node.title} className="w-full h-full object-cover" />
-        ) : <div className="w-full h-full bg-[#eee]" />}
-        <div className="absolute bottom-0 left-0 right-0 px-2 py-1 bg-gradient-to-t from-black/80 via-black/40 to-transparent z-10">
-          <p className="text-[11px] text-white leading-tight truncate font-medium">{node.title}</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (node.role === "concept" || node.role === "motif") {
-    const content = (
-      <>
-        <p className={styles.chipText}>{node.title}</p>
-        {isSelected && <span className={styles.chipCheck}>✓</span>}
-        {removeBtn(`nodrag absolute right-1.5 opacity-0 group-hover/minicard:opacity-100 transition-opacity w-4 h-4 rounded-full flex items-center justify-center text-[#6b6b6b] hover:text-red-400 text-[11px] leading-none ${styles.centerY}`)}
-      </>
-    );
-    if (node.role === "motif") {
-      return (
-        <div {...drag} className={styles.chipMotif} style={{ background: border, filter: isSelected ? "drop-shadow(2px 2px 0px rgba(0,0,0,0.5))" : undefined }}>
-          <div className={`relative group/minicard cursor-pointer nodrag nowheel ${styles.chipMotifInner}`}
-            style={{ background: bg, paddingLeft: 8, paddingRight: onRemove ? 22 : 8 }}>{content}</div>
-        </div>
-      );
-    }
-    return (
-      <div {...drag} className={`relative group/minicard cursor-pointer nodrag nowheel ${styles.chipNode}`}
-        style={{ background: bg, border: `1px solid ${border}`, boxShadow: shadow, paddingLeft: 7, paddingRight: onRemove ? 22 : 8 }}>
-        {content}
-      </div>
-    );
-  }
-
+function RemoveFromCollection({ onRemove, title }: { onRemove: () => void; title: string }) {
   return (
-    <div {...drag} className={`relative group/minicard overflow-hidden cursor-pointer nodrag nowheel ${styles.noteCard}`}
-      style={{ background: bg, border: `1px solid ${border}`, boxShadow: shadow }}>
-      {removeBtn("nodrag absolute top-1.5 right-1.5 opacity-0 group-hover/minicard:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#6b6b6b] hover:text-red-400 hover:bg-red-50 text-[11px] leading-none z-10")}
-      <div className="p-2 flex flex-col gap-0.5 h-full">
-        <div className="flex items-center gap-1.5 pr-4">
-          <span className="text-[10px] uppercase tracking-[0.12em] shrink-0 text-[#666]">{ROLE_LABEL[node.role]}</span>
-          {isSelected && <span className="text-[11px] text-black shrink-0">✓</span>}
+    <button className="nodrag absolute top-1 right-1 w-6 h-6 rounded-md flex items-center justify-center bg-white/90 text-ink-2 hover:text-danger opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+      aria-label={`Take ${title} out of this collection`} onClick={(e) => { e.stopPropagation(); onRemove(); }}>
+      <X size={13} />
+    </button>
+  );
+}
+
+function TextCard({ node, from, onRemove }: { node: IdeaNode; from: CollectionId | null; onRemove?: () => void }) {
+  const { selected } = useCtx();
+  const props = useCardProps(node, from);
+  const s = ROLE_STYLE[node.role];
+  const on = selected.has(node.id);
+  return (
+    <div {...props} aria-pressed={on} aria-label={`${node.role}: ${node.title}`}
+      className="nodrag nowheel relative group cursor-pointer rounded-md border px-2.5 py-2 pr-7 flex flex-col gap-1"
+      style={{ background: s.fill, borderColor: on ? ACCENT : s.border, boxShadow: on ? `0 0 0 2px ${ACCENT}` : undefined }}>
+      <RoleBadge role={node.role} />
+      <p className="idea text-[14px] leading-snug text-ink line-clamp-3">{node.title}</p>
+      {onRemove && <RemoveFromCollection onRemove={onRemove} title={node.title} />}
+    </div>
+  );
+}
+
+function ImageCard({ node, from, onRemove }: { node: IdeaNode; from: CollectionId | null; onRemove?: () => void }) {
+  const { selected } = useCtx();
+  const props = useCardProps(node, from);
+  const url = useImageUrl(node.image?.imageId);
+  const on = selected.has(node.id);
+  return (
+    <div {...props} aria-pressed={on} aria-label={`${node.role} image: ${node.title}`} title={node.title}
+      className="nodrag nowheel relative group cursor-pointer rounded-md overflow-hidden border aspect-[4/3] bg-subtle"
+      style={{ borderColor: on ? ACCENT : "var(--color-line)", boxShadow: on ? `0 0 0 2px ${ACCENT}` : undefined }}>
+      {url && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={url} alt="" className="w-full h-full object-cover" />
+      )}
+      {node.role !== "visual" && <span className="absolute left-1 top-1"><RoleBadge role={node.role} onImage /></span>}
+      {onRemove && <RemoveFromCollection onRemove={onRemove} title={node.title} />}
+    </div>
+  );
+}
+
+// Text cards two across, images three across.
+function CardGrid({ items, from, onRemove }: { items: IdeaNode[]; from: CollectionId | null; onRemove?: (id: NodeId) => void }) {
+  const images = items.filter((n) => n.image);
+  const texts = items.filter((n) => !n.image);
+  return (
+    <div className="flex flex-col gap-2">
+      {texts.length > 0 && (
+        <div className="grid grid-cols-2 gap-2">
+          {texts.map((n) => <TextCard key={n.id} node={n} from={from} onRemove={onRemove && (() => onRemove(n.id))} />)}
         </div>
-        <p className="text-[11px] text-[#111] leading-tight line-clamp-2 flex-1">{node.title}</p>
-        <p className="text-[11px] truncate text-[#757575]">{originLabel(node)}</p>
-      </div>
+      )}
+      {images.length > 0 && (
+        <div className="grid grid-cols-3 gap-1.5">
+          {images.map((n) => <ImageCard key={n.id} node={n} from={from} onRemove={onRemove && (() => onRemove(n.id))} />)}
+        </div>
+      )}
     </div>
   );
 }
@@ -161,6 +164,7 @@ function CollectionContainer({ data }: NodeProps) {
   const updateCollection = useProjectStore((s) => s.updateCollection);
   const deleteCollection = useProjectStore((s) => s.deleteCollection);
   const removeFromCollection = useProjectStore((s) => s.removeFromCollection);
+  const setSelection = useProjectStore((s) => s.setSelection);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ title: "", description: "" });
 
@@ -176,52 +180,46 @@ function CollectionContainer({ data }: NodeProps) {
   };
 
   return (
-    <div className={`overflow-hidden transition-shadow ${styles.clusterNode}`} {...dropZone(ctx, id, id)}
-      style={{ background: isOver ? `${col.color}10` : "#fff", border: `1.5px solid ${isOver ? col.color : "rgba(0,0,0,0.18)"}`, boxShadow: isOver ? `2px 2px 0px ${col.color}` : "none" }}>
-      <div className="px-3 py-2.5 flex items-center gap-2 cursor-grab" style={{ background: `${col.color}16`, borderBottom: `1px solid ${col.color}55` }}>
-        <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: col.color }} />
-        {editing ? (
-          <input autoFocus value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
-            onKeyDown={(e) => { if (e.key === "Enter") save(); if (e.key === "Escape") setEditing(false); }}
-            className="nodrag flex-1 text-[11px] font-semibold bg-transparent border-b border-[#2563eb] outline-none min-w-0" />
-        ) : (
-          <span className="flex-1 text-[11px] font-semibold text-[#222] truncate">{col.title}</span>
-        )}
-        <span className="text-[11px] text-[#6b6b6b] shrink-0">{items.length}</span>
-        <button className="nodrag text-[11px] text-[#6b6b6b] hover:text-[#555] transition-colors" title="Rename"
-          onClick={() => { setForm({ title: col.title, description: col.description ?? "" }); setEditing(true); }}>✎</button>
-        <button className="nodrag text-[11px] text-[#6b6b6b] hover:text-red-400 transition-colors ml-0.5" title="Delete collection (its nodes stay)"
-          onClick={() => deleteCollection(id)}>✕</button>
-      </div>
+    <section aria-label={`Collection: ${col.title}`} {...dropZone(ctx, id, id)}
+      className="rounded-lg bg-surface border overflow-hidden"
+      style={{ width: GROUP_W, borderColor: isOver ? col.color : "var(--color-line)", boxShadow: isOver ? `0 0 0 2px ${col.color}` : "var(--shadow-float)" }}>
+      <header className="flex items-center gap-2 pl-3 pr-1.5 h-11 border-b cursor-grab" style={{ borderColor: `${col.color}55`, background: `${col.color}14` }}>
+        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: col.color }} aria-hidden />
+        <h2 className="idea text-[16px] text-ink truncate flex-1">{col.title}</h2>
+        <span className="text-[12px] text-muted tabular-nums">{items.length}</span>
+        <button className="nodrag icon-btn" aria-label={`Select everything in ${col.title}`} title="Select all"
+          disabled={!items.length} onClick={() => setSelection(items.map((n) => n.id))}><CheckSquare size={14} /></button>
+        <button className="nodrag icon-btn" aria-label={`Rename ${col.title}`} title="Rename"
+          onClick={() => { setForm({ title: col.title, description: col.description ?? "" }); setEditing(true); }}><Pencil size={14} /></button>
+        <button className="nodrag icon-btn hover:text-danger" aria-label={`Delete ${col.title} (its nodes stay)`} title="Delete collection"
+          onClick={() => deleteCollection(id)}><Trash2 size={14} /></button>
+      </header>
 
       {editing && (
-        <div className="nodrag px-3 py-2 bg-white border-b border-[#f0efec]">
-          <input placeholder="Description (optional)…" value={form.description}
-            onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-            onKeyDown={(e) => { if (e.key === "Enter") save(); if (e.key === "Escape") setEditing(false); }}
-            className="w-full text-[11px] bg-transparent border-b border-[#e4e3e0] outline-none text-[#666]" />
-          <div className="flex gap-2 mt-1.5">
-            <button onClick={save} className="text-[11px] text-white bg-[#333] rounded px-2 py-0.5 nodrag">Save</button>
-            <button onClick={() => setEditing(false)} className="text-[11px] text-[#6b6b6b] nodrag">Cancel</button>
+        <form className="nodrag p-3 border-b border-line flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); save(); }}
+          onKeyDown={(e) => { if (e.key === "Escape") setEditing(false); }}>
+          <label className="field-label" htmlFor={`col-title-${id}`}>Name</label>
+          <input id={`col-title-${id}`} autoFocus className="field" value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} />
+          <label className="field-label" htmlFor={`col-desc-${id}`}>Description (optional)</label>
+          <input id={`col-desc-${id}`} className="field" value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
+          <div className="flex gap-1.5 justify-end">
+            <button type="button" className="btn btn-sm" onClick={() => setEditing(false)}>Cancel</button>
+            <button type="submit" className="btn btn-sm btn-primary">Save</button>
           </div>
-        </div>
+        </form>
       )}
-      {!editing && col.description && (
-        <div className="px-3 py-1.5 border-b border-[#f0efec]"><p className="text-[11px] text-[#666] leading-snug">{col.description}</p></div>
-      )}
+      {!editing && col.description && <p className="px-3 pt-2.5 text-[13px] text-ink-2">{col.description}</p>}
 
-      <div className="nodrag nowheel p-2.5">
+      <div className="nodrag nowheel p-3">
         {items.length === 0 ? (
-          <div className={`flex items-center justify-center py-5 border border-dashed ${styles.sq}`} style={{ borderColor: `${col.color}70` }}>
-            <p className="text-[11px] text-[#6b6b6b]">{isOver ? "Drop here ↓" : "Drag cards here"}</p>
-          </div>
+          <p className="rounded-md border border-dashed py-6 text-center text-[13px] text-muted" style={{ borderColor: `${col.color}90` }}>
+            {isOver ? "Drop to add" : "Drag cards here, or select some and use Add to collection"}
+          </p>
         ) : (
-          <div className="grid grid-cols-2 gap-2">
-            {items.map((n) => <MiniCard key={n.id} node={n} from={id} onRemove={() => removeFromCollection(id, n.id)} />)}
-          </div>
+          <CardGrid items={items} from={id} onRemove={(nodeId) => removeFromCollection(id, nodeId)} />
         )}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -231,56 +229,52 @@ function RoleGroup({ data }: NodeProps) {
   const ctx = useCtx();
   const role = data.role as Role;
   const items = ctx.unassigned[role];
-  const s = ROLE_STYLE[role];
   const zoneId = `role::${role}`;
   const isOver = ctx.dragOverId === zoneId;
-
-  if (items.length === 0) {
-    return (
-      <div className={`overflow-hidden opacity-35 ${styles.clusterNode}`} style={{ background: s.clusterBg, border: "1px dashed rgba(0,0,0,0.3)" }}
-        {...dropZone(ctx, zoneId, null)}>
-        <div className="px-3 py-3 flex items-center gap-2 cursor-grab">
-          <span className="text-[11px] uppercase tracking-[0.14em] text-[#666]">{ROLE_LABEL_PLURAL[role]}</span>
-          <span className="text-[11px] italic text-[#757575]">none outside collections</span>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className={`overflow-hidden transition-shadow ${styles.clusterNode}`} {...dropZone(ctx, zoneId, null)}
-      style={{ background: isOver ? "#f5f4f0" : s.clusterBg, border: `1px solid ${isOver ? "#000" : "rgba(0,0,0,0.18)"}`, boxShadow: isOver ? "2px 2px 0px rgba(0,0,0,0.4)" : "none" }}>
-      <div className={`px-3 py-2.5 flex items-center gap-2 cursor-grab ${styles.sectionHeader}`}>
-        <span className="text-[11px] uppercase tracking-[0.14em] text-[rgba(0,0,0,0.5)]">{ROLE_LABEL_PLURAL[role]}</span>
-        <span className="text-[11px] flex-1 text-[#757575]">{items.length} not in a collection</span>
-      </div>
-      <div className="nodrag nowheel p-2.5">
-        <div className="grid grid-cols-2 gap-2">
-          {items.map((n) => <MiniCard key={n.id} node={n} from={null} />)}
-        </div>
-      </div>
-    </div>
+    <section aria-label={`${ROLE_LABEL_PLURAL[role]} not in a collection`} {...dropZone(ctx, zoneId, null)}
+      className="rounded-lg border overflow-hidden"
+      style={{ width: GROUP_W, background: ROLE_STYLE[role].group, borderColor: isOver ? "var(--color-ink-2)" : "var(--color-line)" }}>
+      <header className="flex items-baseline gap-2 px-3 h-10 pt-2.5 cursor-grab">
+        <h2 className="text-[13px] font-semibold text-ink">{ROLE_LABEL_PLURAL[role]}</h2>
+        <span className="text-[12px] text-muted">{items.length} not in a collection</span>
+      </header>
+      <div className="nodrag nowheel px-3 pb-3"><CardGrid items={items} from={null} /></div>
+    </section>
   );
 }
 
 const nodeTypes = { collection: CollectionContainer, role: RoleGroup };
 
-function buildFlowNodes(p: ProjectState): FlowNode[] {
+// Rough height of a group from what's in it, so groups can be packed into
+// columns without overlapping before React Flow has measured them.
+function estimateHeight(items: IdeaNode[], extra = 0): number {
+  const texts = items.filter((n) => !n.image).length;
+  const images = items.filter((n) => n.image).length;
+  const body = items.length === 0 ? 70 : Math.ceil(texts / 2) * 78 + Math.ceil(images / 3) * 82 + (texts && images ? 8 : 0);
+  return 44 + 24 + body + extra;
+}
+
+function buildFlowNodes(p: ProjectState, ctx: Pick<Ctx, "nodes" | "unassigned">): FlowNode[] {
   const saved = p.views.cluster.positions;
   const cols = Object.values(p.collections).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  const nodes: FlowNode[] = cols.map((c, i) => ({
-    id: c.id, type: "collection", style: { width: 320 }, data: { collectionId: c.id },
-    position: saved[c.id] ?? { x: (i % 2) * COL_W + 20, y: Math.floor(i / 2) * 420 + 20 },
-  }));
-  const baseY = Math.max(1, Math.ceil(cols.length / 2)) * 420 + 32;
-  ROLES.forEach((r, i) => {
-    const id = `role::${r}`;
-    nodes.push({
-      id, type: "role", style: { width: 320 }, data: { role: r },
-      position: saved[id] ?? { x: (i % 2) * COL_W + 20, y: baseY + Math.floor(i / 2) * 360 },
-    });
+  const groups: { id: string; type: string; data: Record<string, unknown>; h: number }[] = [
+    ...cols.map((c) => ({
+      id: c.id, type: "collection", data: { collectionId: c.id },
+      h: estimateHeight(c.nodeIds.map((n) => ctx.nodes[n]).filter(Boolean), c.description ? 28 : 0),
+    })),
+    ...ROLES.filter((r) => ctx.unassigned[r].length > 0).map((r) => ({
+      id: `role::${r}`, type: "role", data: { role: r }, h: estimateHeight(ctx.unassigned[r]) - 4,
+    })),
+  ];
+  // Pack into two columns, each group into the shorter one.
+  const colY = [20, 20];
+  return groups.map((g) => {
+    const c = colY[0] <= colY[1] ? 0 : 1;
+    const position = saved[g.id] ?? { x: 20 + c * (GROUP_W + COL_GAP), y: colY[c] };
+    colY[c] += g.h + 24;
+    return { id: g.id, type: g.type, data: g.data, position };
   });
-  return nodes;
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -289,16 +283,17 @@ export default function ClusterView() {
   const project = useProjectStore((s) => s.project)!;
   const selection = useProjectStore((s) => s.selection);
   const setSelection = useProjectStore((s) => s.setSelection);
+  const toggleSelected = useProjectStore((s) => s.toggleSelected);
   const clearSelection = useProjectStore((s) => s.clearSelection);
   const moveToCollection = useProjectStore((s) => s.moveToCollection);
   const removeFromCollection = useProjectStore((s) => s.removeFromCollection);
   const createCollection = useProjectStore((s) => s.createCollection);
   const updateCollection = useProjectStore((s) => s.updateCollection);
   const moveNode = useProjectStore((s) => s.moveNode);
+  const resetLayout = useProjectStore((s) => s.resetLayout);
 
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [newCol, setNewCol] = useState({ open: false, title: "", description: "", colorIdx: 0 });
-  const [isExporting, setIsExporting] = useState(false);
   const [rf, setRf] = useState<ReactFlowInstance | null>(null);
 
   const shown = useMemo(() => visibleNodes(project), [project]);
@@ -310,41 +305,47 @@ export default function ClusterView() {
       nodes,
       collections: project.collections,
       unassigned,
-      selected: selection.length === 1 ? selection[0] : null,
+      selected: new Set(selection),
       dragOverId,
       setDragOverId,
-      onSelect: (id) => setSelection(selection.length === 1 && selection[0] === id ? [] : [id]),
+      onSelect: (id, additive) => {
+        if (additive) toggleSelected(id);
+        else setSelection(selection.length === 1 && selection[0] === id ? [] : [id]);
+      },
       onDrop: (nodeId, from, to) => {
         if (from === to) return;
         if (to) moveToCollection(nodeId, from, to);
         else if (from) removeFromCollection(from, nodeId);
       },
     };
-  }, [shown, project.collections, selection, dragOverId, setSelection, moveToCollection, removeFromCollection]);
+  }, [shown, project.collections, selection, dragOverId, setSelection, toggleSelected, moveToCollection, removeFromCollection]);
 
-  // React Flow owns positions while dragging; rebuild when collections change.
-  const [flowNodes, setFlowNodes] = useState<FlowNode[]>(() => buildFlowNodes(project));
-  const collectionKey = Object.keys(project.collections).sort().join(",");
+  // Layout follows content; React Flow owns positions only while dragging.
+  const computed = useMemo(() => buildFlowNodes(project, ctx), [project, ctx]);
+  const [flowNodes, setFlowNodes] = useState<FlowNode[]>(computed);
   useEffect(() => {
     setFlowNodes((current) => {
       const live = new Map(current.map((n) => [n.id, n]));
-      return buildFlowNodes(project).map((n) => {
+      return computed.map((n) => {
         const existing = live.get(n.id);
-        return existing ? { ...n, position: existing.position, measured: existing.measured } : n;
+        return existing ? { ...n, measured: existing.measured, position: existing.dragging ? existing.position : n.position } : n;
       });
     });
-    // Bring a newly created collection into view once React Flow has measured it.
-    const t = setTimeout(() => rf?.fitView({ padding: 0.15, duration: 250 }), 50);
+  }, [computed]);
+
+  // Refit when groups appear or disappear, readable rather than all-in-view.
+  const groupKey = computed.map((n) => n.id).join(",");
+  useEffect(() => {
+    const t = setTimeout(() => rf?.fitView({ padding: 0.1, maxZoom: 1, minZoom: 0.7, duration: 250 }), 60);
     return () => clearTimeout(t);
-    // Only rebuild when the set of collections changes, not on every edit.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collectionKey]);
+  }, [groupKey, rf]);
 
   const onNodesChange = useCallback((changes: NodeChange<FlowNode>[]) => {
-    setFlowNodes((nds) => applyNodeChanges(changes, nds));
+    setFlowNodes((nds) => applyNodeChanges(changes.filter((c) => c.type !== "select"), nds));
   }, []);
 
-  function addCollection() {
+  function addCollection(e?: React.FormEvent) {
+    e?.preventDefault();
     if (!newCol.title.trim()) return;
     const id = createCollection(newCol.title.trim(), COLLECTION_COLORS[newCol.colorIdx]);
     if (id && newCol.description.trim()) updateCollection(id, { description: newCol.description.trim() });
@@ -353,35 +354,30 @@ export default function ClusterView() {
 
   const exportPng = useCallback(async () => {
     if (!rf) return;
-    setIsExporting(true);
-    try {
-      const nodes = rf.getNodes();
-      if (!nodes.length) return;
-      const bounds = getNodesBounds(nodes);
-      const W = 3200;
-      const H = Math.round(W * (bounds.height / bounds.width)) || 2000;
-      const { x, y, zoom } = getViewportForBounds(bounds, W, H, 0.05, 4, 0.08);
-      const viewport = document.querySelector(".react-flow__viewport") as HTMLElement | null;
-      if (!viewport) return;
-      const dataUrl = await toPng(viewport, {
-        backgroundColor: "#f7f6f3", width: W, height: H,
-        style: { width: `${W}px`, height: `${H}px`, transform: `translate(${x}px, ${y}px) scale(${zoom})` },
-      });
-      const a = document.createElement("a");
-      a.href = dataUrl;
-      a.download = `${project.title || "collections"}-collections-${Date.now()}.png`;
-      a.click();
-    } finally {
-      setIsExporting(false);
-    }
+    const nodes = rf.getNodes();
+    if (!nodes.length) return;
+    const bounds = getNodesBounds(nodes);
+    const W = 3200;
+    const H = Math.round(W * (bounds.height / bounds.width)) || 2000;
+    const { x, y, zoom } = getViewportForBounds(bounds, W, H, 0.05, 4, 0.08);
+    const viewport = document.querySelector(".react-flow__viewport") as HTMLElement | null;
+    if (!viewport) return;
+    const dataUrl = await toPng(viewport, {
+      backgroundColor: "#f3f4f6", width: W, height: H,
+      style: { width: `${W}px`, height: `${H}px`, transform: `translate(${x}px, ${y}px) scale(${zoom})` },
+    });
+    const a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = `${project.title || "collections"}-collections-${Date.now()}.png`;
+    a.click();
   }, [rf, project.title]);
 
   if (shown.length === 0 && Object.keys(project.collections).length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center text-center py-24 text-[#6b6b6b]">
-        <div>
-          <p className="text-sm mb-1">Nothing here yet.</p>
-          <p className="text-xs">Build the tree first, then group nodes into collections here.</p>
+      <div className="flex-1 flex items-center justify-center">
+        <div className="floating max-w-sm px-5 py-4 text-center">
+          <p className="text-[15px] font-semibold text-ink mb-1">Nothing to group yet</p>
+          <p className="text-[13px] text-ink-2">Build the tree first, then group its nodes into collections here.</p>
         </div>
       </div>
     );
@@ -389,8 +385,53 @@ export default function ClusterView() {
 
   return (
     <ClusterCtx.Provider value={ctx}>
-      <div className="flex-1 h-full overflow-hidden bg-[#f7f6f3]">
+      <div className={`relative flex-1 h-full overflow-hidden ${styles.canvas}`}>
+        {/* Toolbar first in the page so Tab reaches it before the cards. */}
+      <div className="absolute top-3 right-3 z-10 flex items-start gap-2">
+        {newCol.open ? (
+          <form className="floating p-4 w-72 flex flex-col gap-3" onSubmit={addCollection}
+            onKeyDown={(e) => { if (e.key === "Escape") setNewCol((c) => ({ ...c, open: false })); }}>
+            <h2 className="text-[15px] font-semibold text-ink">New collection</h2>
+            <div>
+              <label htmlFor="new-col-title" className="field-label">Name</label>
+              <input id="new-col-title" autoFocus className="field" value={newCol.title}
+                onChange={(e) => setNewCol((c) => ({ ...c, title: e.target.value }))} />
+            </div>
+            <div>
+              <label htmlFor="new-col-desc" className="field-label">Description (optional)</label>
+              <input id="new-col-desc" className="field" value={newCol.description}
+                onChange={(e) => setNewCol((c) => ({ ...c, description: e.target.value }))} />
+            </div>
+            <fieldset>
+              <legend className="field-label">Colour</legend>
+              <div role="radiogroup" className="flex gap-1.5 flex-wrap">
+                {COLLECTION_COLORS.map((color, i) => (
+                  <button type="button" key={color} role="radio" aria-checked={newCol.colorIdx === i} aria-label={COLLECTION_COLOR_NAMES[i]}
+                    onClick={() => setNewCol((c) => ({ ...c, colorIdx: i }))}
+                    className="w-6 h-6 rounded-full border-2 transition-transform"
+                    style={{ background: color, borderColor: newCol.colorIdx === i ? "var(--color-ink)" : "transparent", transform: newCol.colorIdx === i ? "scale(1.1)" : undefined }} />
+                ))}
+              </div>
+            </fieldset>
+            <div className="flex gap-1.5 justify-end">
+              <button type="button" className="btn" onClick={() => setNewCol((c) => ({ ...c, open: false, title: "", description: "" }))}>Cancel</button>
+              <button type="submit" className="btn btn-primary" disabled={!newCol.title.trim()}>Create</button>
+            </div>
+          </form>
+        ) : (
+          <button className="btn btn-primary shadow-[var(--shadow-float)]" onClick={() => setNewCol((c) => ({ ...c, open: true }))}>
+            <Plus size={15} aria-hidden /> New collection
+          </button>
+        )}
+        <div className="shadow-[var(--shadow-float)] rounded-md">
+          <Menu label="More collection actions" items={[
+            { label: "Tidy layout", onSelect: () => resetLayout("cluster"), disabled: Object.keys(project.views.cluster.positions).length === 0 },
+            { label: "Export as PNG", onSelect: exportPng },
+          ]} />
+        </div>
+      </div>
         <ReactFlow
+          proOptions={{ hideAttribution: true }}
           nodes={flowNodes}
           edges={[]}
           nodeTypes={nodeTypes}
@@ -398,7 +439,7 @@ export default function ClusterView() {
           onNodeDragStop={(_e, n) => moveNode("cluster", n.id, n.position)}
           onInit={setRf}
           fitView
-          fitViewOptions={{ padding: 0.15 }}
+          fitViewOptions={{ padding: 0.1, maxZoom: 1, minZoom: 0.7 }}
           nodesDraggable
           nodesConnectable={false}
           elementsSelectable={false}
@@ -407,49 +448,9 @@ export default function ClusterView() {
           minZoom={0.3}
           maxZoom={2}
           onPaneClick={clearSelection}
+          aria-label="Collections"
         >
-          <Background color="#bbb" gap={24} size={1} />
-          <Panel position="top-right">
-            {!newCol.open && (
-              <div className="flex items-center gap-1.5 mb-1.5">
-                <button onClick={exportPng} disabled={isExporting} title="Export collections as a PNG"
-                  className={`bg-white border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 text-[11px] flex items-center gap-1 transition-colors ${styles.sq} ${
-                    isExporting ? "text-[#757575] cursor-wait" : "text-[#666] hover:text-black hover:border-black"}`}>
-                  <span className="text-[12px] leading-none">↓</span>{isExporting ? "Exporting…" : "Export PNG"}
-                </button>
-              </div>
-            )}
-            {newCol.open ? (
-              <div className={`bg-white border border-[rgba(0,0,0,0.18)] shadow-lg p-4 w-64 flex flex-col gap-3 ${styles.sq}`}>
-                <p className="text-[11px] uppercase tracking-[0.12em] text-[rgba(0,0,0,0.5)]">New collection</p>
-                <input autoFocus placeholder="Collection title…" value={newCol.title}
-                  onChange={(e) => setNewCol((c) => ({ ...c, title: e.target.value }))}
-                  onKeyDown={(e) => e.key === "Enter" && addCollection()}
-                  className={`text-[11px] border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 outline-none focus:border-black ${styles.sq}`} />
-                <input placeholder="Description (optional)…" value={newCol.description}
-                  onChange={(e) => setNewCol((c) => ({ ...c, description: e.target.value }))}
-                  onKeyDown={(e) => e.key === "Enter" && addCollection()}
-                  className={`text-[11px] border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 outline-none focus:border-black ${styles.sq}`} />
-                <div className="flex gap-1.5 flex-wrap">
-                  {COLLECTION_COLORS.map((color, i) => (
-                    <button key={color} onClick={() => setNewCol((c) => ({ ...c, colorIdx: i }))} aria-label={`Colour ${i + 1}`}
-                      className={`w-5 h-5 border-2 transition-transform ${styles.sq}`}
-                      style={{ background: color, borderColor: newCol.colorIdx === i ? "#333" : "transparent", transform: newCol.colorIdx === i ? "scale(1.2)" : "scale(1)" }} />
-                  ))}
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={addCollection} className={`text-[11px] text-white bg-black hover:bg-[#333] px-3 py-1 transition-colors ${styles.sq}`}>Create</button>
-                  <button onClick={() => setNewCol((c) => ({ ...c, open: false, title: "", description: "" }))}
-                    className="text-[11px] text-[#666] hover:text-black transition-colors">Cancel</button>
-                </div>
-              </div>
-            ) : (
-              <button onClick={() => setNewCol((c) => ({ ...c, open: true }))}
-                className={`bg-white border border-[rgba(0,0,0,0.2)] hover:border-black text-[11px] text-[rgba(0,0,0,0.5)] hover:text-black px-4 py-2 transition-colors ${styles.sq}`}>
-                + New collection
-              </button>
-            )}
-          </Panel>
+          <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#c9ccd3" />
         </ReactFlow>
       </div>
     </ClusterCtx.Provider>

@@ -12,13 +12,13 @@ import {
   Background,
   Controls,
   Handle,
-  Panel,
   Position,
   BackgroundVariant,
   MarkerType,
   BaseEdge,
   EdgeLabelRenderer,
   getBezierPath,
+  getSmoothStepPath,
   applyNodeChanges,
   useNodes,
   useViewport,
@@ -38,147 +38,107 @@ import {
   type EdgeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { Check, ChevronDown, ChevronUp, ImagePlus, Lasso, MousePointer2, Plus, Spline, X } from "lucide-react";
 import { projectStore, useProjectStore } from "@/store/projectStore";
 import { ancestors, treeEdges, visibleLinks, visibleNodes } from "@/domain/graph";
-import { BRIEF_H, BRIEF_ID, BRIEF_W, computeTreeLayout, noteHeight } from "@/domain/treeLayout";
+import { BRIEF_H, BRIEF_ID, BRIEF_W, computeTreeLayout } from "@/domain/treeLayout";
 import type { ActionType, Collection, IdeaNode, NodeId } from "@/domain/types";
 import { fileToImage } from "@/services/images";
 import { useImageUrl } from "./useImageUrl";
-import { ACTIONS, ROLE_LABEL, ROLE_STYLE, originLabel } from "./nodeStyle";
+import { ROLE_STYLE, ROLES, ROLE_LABEL } from "./nodeStyle";
+import { Menu, RoleBadge } from "./ui";
 import styles from "./TreeView.module.css";
 
-const SOURCE_COLOR = "#2d4f8a";
+const ACCENT = "var(--color-accent)";
+type Tool = "select" | "lasso" | "link";
 
 // ── Node data ─────────────────────────────────────────────────────────────────
 
 type IdeaNodeData = {
   node: IdeaNode;
-  isSelected: boolean;      // the only selected thing
-  isMultiSelected: boolean; // one of several selected
+  isSelected: boolean;      // selected, alone or with others
   isHovered: boolean;
   isAncestor: boolean;      // ancestor of the hovered node
   isSourceOfSelected: boolean;
   isNew: boolean;           // just made by a run; glows briefly
   collectionColors?: string[];
-  connectMode: boolean;
+  linking: boolean;
   onRemove: (id: NodeId) => void;
-  onQuickRun: (id: NodeId, action: ActionType) => void;
 };
 
 type BriefNodeData = {
   title: string;
   brief: string;
   isSelected: boolean;
-  connectMode: boolean;
   onUpload: (files: File[]) => void;
 };
 
-function handleStyle(connectMode: boolean, side: "left" | "right"): React.CSSProperties {
-  return {
-    opacity: connectMode ? 1 : 0,
-    pointerEvents: connectMode ? "auto" : "none",
-    background: side === "right" ? "#64748b" : "#94a3b8",
-  };
+function handleStyle(linking: boolean): React.CSSProperties {
+  return { opacity: linking ? 1 : 0, pointerEvents: linking ? "auto" : "none", background: "var(--color-ink-2)" };
 }
 
-function highlight(d: IdeaNodeData, base: string) {
-  const primary = d.collectionColors?.[0];
-  const border = d.isMultiSelected ? primary ?? "#000"
-    : d.isSelected ? "#000"
-    : d.isSourceOfSelected ? SOURCE_COLOR
-    : d.isAncestor ? "rgba(0,0,0,0.4)"
-    : primary ?? base;
-  const shadow = d.isMultiSelected ? `0 0 0 2px ${primary ?? "rgba(0,0,0,0.4)"}`
-    : d.isSelected ? "2px 2px 0px #000"
-    : d.isSourceOfSelected ? `0 0 0 2px ${SOURCE_COLOR}`
-    : d.isAncestor ? "0 0 0 1px rgba(0,0,0,0.2)"
-    : d.isHovered ? "1px 1px 0px #888"
-    : "none";
-  return { border, shadow, primary };
+// Outline and ring for each interaction state, shared by every node shape.
+function outline(d: IdeaNodeData) {
+  const base = ROLE_STYLE[d.node.role].border;
+  if (d.isSelected) return { color: ACCENT, ring: `0 0 0 2px ${ACCENT}` };
+  if (d.isSourceOfSelected) return { color: "var(--color-ink-2)", ring: "0 0 0 1.5px var(--color-ink-2)" };
+  if (d.isAncestor || d.isHovered) return { color: "var(--color-ink-2)", ring: "none" };
+  return { color: d.collectionColors?.[0] ?? base, ring: "none" };
 }
 
 function CollectionDots({ colors }: { colors?: string[] }) {
   if (!colors?.length) return null;
   return (
-    <div className="flex gap-[1px] shrink-0">
-      {colors.map((c) => <div key={c} className="w-[3px] h-[3px] rounded-full" style={{ background: c }} />)}
-    </div>
+    <span className="flex gap-0.5" aria-hidden>
+      {colors.map((c) => <span key={c} className="w-1.5 h-1.5 rounded-full" style={{ background: c }} />)}
+    </span>
   );
 }
 
-// ── Text node (concept / motif chips, notes, visuals without an image) ────────
+function RemoveButton({ id, onRemove, onImage }: { id: NodeId; onRemove: (id: NodeId) => void; onImage?: boolean }) {
+  return (
+    <button aria-label="Remove node" title="Remove"
+      onClick={(e) => { e.stopPropagation(); onRemove(id); }}
+      className={`nodrag absolute top-1 right-1 w-6 h-6 rounded-md flex items-center justify-center opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity ${
+        onImage ? "bg-white/90 text-ink-2 hover:text-danger" : "text-muted hover:text-danger hover:bg-white/70"}`}>
+      <X size={13} />
+    </button>
+  );
+}
+
+// ── Text node: concept and note rectangles, motif octagon, visual without image ─
 
 function TextIdeaNode({ data }: { data: IdeaNodeData }) {
-  const { node, connectMode, onRemove } = data;
+  const { node, linking, onRemove } = data;
   const s = ROLE_STYLE[node.role];
-  const { border, shadow, primary } = highlight(data, s.border);
-  const picked = data.isSelected || data.isMultiSelected;
-  const bg = data.isMultiSelected ? "#fafaf8" : data.isAncestor ? "#f5f4f0" : s.bg;
-  const removeBtn = (
-    <button
-      className={`absolute right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 flex items-center justify-center text-[#757575] hover:text-black text-[11px] leading-none z-10 ${styles.centerY}`}
-      onClick={(e) => { e.stopPropagation(); onRemove(node.id); }}
-      title="Remove"
-    >✕</button>
+  const o = outline(data);
+  const body = (
+    <div className="relative group flex flex-col gap-1 px-3 py-2 pr-7 min-h-[34px] justify-center">
+      {node.role !== "concept" && node.role !== "motif" && (
+        <div className="flex items-center gap-1.5"><RoleBadge role={node.role} /><CollectionDots colors={data.collectionColors} /></div>
+      )}
+      <div className="flex items-start gap-1.5">
+        {(node.role === "concept" || node.role === "motif") && <span className="mt-1.5"><CollectionDots colors={data.collectionColors} /></span>}
+        <p className="idea text-[14px] leading-[1.25] text-ink flex-1 break-words">{node.title}</p>
+      </div>
+      {!linking && <RemoveButton id={node.id} onRemove={onRemove} />}
+    </div>
   );
 
-  if (node.role === "concept" || node.role === "motif") {
-    const content = (
-      <>
-        {!picked && <CollectionDots colors={data.collectionColors} />}
-        <p className={styles.chipText}>{node.title}</p>
-        {picked && <span className={styles.chipCheck}>✓</span>}
-        {removeBtn}
-      </>
-    );
-    if (node.role === "motif") {
-      const filter = data.isMultiSelected ? `drop-shadow(0 0 3px ${primary ?? "rgba(0,0,0,0.5)"})`
-        : data.isSelected ? "drop-shadow(2px 2px 0px #000)"
-        : data.isAncestor ? "drop-shadow(0 0 2px rgba(0,0,0,0.2))"
-        : data.isHovered ? "drop-shadow(1px 1px 2px rgba(0,0,0,0.3))"
-        : undefined;
-      return (
-        <>
-          <Handle type="target" position={Position.Left} className={styles.handleDot} style={handleStyle(connectMode, "left")} />
-          <div className={styles.chipMotif} style={{ background: border, filter }}>
-            <div className={`relative group ${styles.chipMotifInner}`} style={{ background: bg, paddingLeft: 10 }}>{content}</div>
-          </div>
-          <Handle type="source" position={Position.Right} className={styles.handleDot} style={handleStyle(connectMode, "right")} />
-        </>
-      );
-    }
-    return (
-      <>
-        <Handle type="target" position={Position.Left} className={styles.handleDot} style={handleStyle(connectMode, "left")} />
-        <div className={`relative group ${styles.chipNode}`} style={{ background: bg, border: `1px solid ${border}`, boxShadow: shadow, paddingLeft: 9 }}>
-          {content}
-        </div>
-        <Handle type="source" position={Position.Right} className={styles.handleDot} style={handleStyle(connectMode, "right")} />
-      </>
-    );
-  }
-
-  const h = noteHeight(node.title);
   return (
     <>
-      <Handle type="target" position={Position.Left} className={styles.handleDot} style={handleStyle(connectMode, "left")} />
-      <div className={`relative group ${styles.noteNode}`} style={{ background: bg, border: `1px solid ${border}`, boxShadow: shadow, height: h }}>
-        {!picked && data.collectionColors?.length ? (
-          <div className="absolute top-1.5 left-1.5"><CollectionDots colors={data.collectionColors} /></div>
-        ) : null}
-        {!connectMode && removeBtn}
-        <div className={`p-2.5 flex flex-col justify-center ${styles.noteBody}`} style={{ height: h }}>
-          {node.role !== "note" && (
-            <div className="flex items-center gap-1.5 pr-4">
-              <span className="text-[10px] uppercase tracking-[0.14em] shrink-0 text-[#666]">{ROLE_LABEL[node.role]}</span>
-              {picked && <span className="text-[11px] text-black shrink-0">✓</span>}
-            </div>
-          )}
-          <p className={`text-[11px] text-[#111] leading-tight flex-1${node.role === "note" ? "" : " line-clamp-2"}`}>{node.title}</p>
-          {node.role !== "note" && <p className="text-[11px] truncate text-[#757575]">{originLabel(node)}</p>}
+      <Handle type="target" position={Position.Left} className={styles.handleDot} style={handleStyle(linking)} />
+      {node.role === "motif" ? (
+        <div className={styles.motif} style={{ background: o.color, filter: o.ring !== "none" ? `drop-shadow(0 0 1.5px ${ACCENT})` : undefined }}>
+          <div className={styles.motifInner} style={{ background: s.fill, width: 157 }}>{body}</div>
         </div>
-      </div>
-      <Handle type="source" position={Position.Right} className={styles.handleDot} style={handleStyle(connectMode, "right")} />
+      ) : (
+        <div className={`border ${node.role === "concept" ? "rounded-md w-[160px]" : "rounded-lg w-[140px]"}`}
+          style={{ background: s.fill, borderColor: o.color, boxShadow: o.ring }}>
+          {body}
+        </div>
+      )}
+      <Handle type="source" position={Position.Right} className={styles.handleDot} style={handleStyle(linking)} />
     </>
   );
 }
@@ -186,53 +146,33 @@ function TextIdeaNode({ data }: { data: IdeaNodeData }) {
 // ── Image node (any role with an image) ───────────────────────────────────────
 
 function ImageIdeaNode({ data }: { data: IdeaNodeData }) {
-  const { node, connectMode, onRemove, onQuickRun } = data;
+  const { node, linking, onRemove } = data;
   const url = useImageUrl(node.image?.imageId);
-  const s = ROLE_STYLE[node.role];
-  const { border, shadow, primary } = highlight(data, s.border);
-  const picked = data.isSelected || data.isMultiSelected;
-
+  const o = outline(data);
   return (
     <>
-      <Handle type="target" position={Position.Left} className={styles.handleDot} style={handleStyle(connectMode, "left")} />
-      <div className={`relative group ${styles.visualNode}`} style={{ border: `1px solid ${border}`, boxShadow: shadow }}>
-        <button
-          className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#6b6b6b] hover:text-red-400 hover:bg-red-50 text-[11px] leading-none z-20"
-          onClick={(e) => { e.stopPropagation(); onRemove(node.id); }}
-          title="Remove"
-        >✕</button>
-        <div className="absolute top-0 left-0 right-0 p-2 flex items-center gap-1.5 z-10 bg-gradient-to-b from-black/30 to-transparent">
-          <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0 text-white" style={{ background: node.role === "visual" ? "rgba(0,0,0,0.5)" : s.badgeBg }}>
-            {ROLE_LABEL[node.role]}
-          </span>
-          {picked && <span className="text-[11px] text-white shrink-0">✓</span>}
-        </div>
+      <Handle type="target" position={Position.Left} className={styles.handleDot} style={handleStyle(linking)} />
+      <div className="relative group w-[320px] h-[200px] rounded-lg overflow-hidden border bg-subtle"
+        style={{ borderColor: o.color, boxShadow: o.ring }}>
         {url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={url} alt={node.title} className="w-full h-full object-cover" />
-        ) : (
-          <div className="w-full h-full bg-[#eee]" />
-        )}
-        {!picked && data.collectionColors?.length ? (
-          <div className="absolute inset-y-0 left-0 w-[3px] z-20" style={{ background: primary }} />
-        ) : null}
-        <div className="absolute bottom-0 left-0 right-0 px-2 py-1.5 bg-gradient-to-t from-black/80 via-black/50 to-transparent z-10">
-          <p className="text-[11px] text-white leading-tight truncate font-medium mb-1">{node.title}</p>
-          <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-            <p className="text-[10px] text-white/60 uppercase tracking-wider font-semibold mb-1">Use for →</p>
-            <div className="flex gap-1 flex-wrap">
-              {ACTIONS.map((a) => (
-                <button key={a.id} title={a.description}
-                  onClick={(e) => { e.stopPropagation(); onQuickRun(node.id, a.id); }}
-                  className="text-[10px] bg-white/20 hover:bg-white/45 text-white px-1.5 py-0.5 rounded transition-colors whitespace-nowrap">
-                  {a.label}
-                </button>
-              ))}
-            </div>
-          </div>
+        ) : <div className="w-full h-full bg-line/60" />}
+        <div className="absolute top-2 left-2 flex items-center gap-1.5">
+          <RoleBadge role={node.role} onImage />
+          <CollectionDots colors={data.collectionColors} />
         </div>
+        {data.isSelected && (
+          <span className="absolute top-2 right-9 w-6 h-6 rounded-md bg-white/90 flex items-center justify-center" aria-hidden>
+            <Check size={14} style={{ color: ACCENT }} />
+          </span>
+        )}
+        <div className="absolute inset-x-0 bottom-0 px-3 pt-6 pb-2 bg-gradient-to-t from-black/70 to-transparent">
+          <p className="idea text-[14px] leading-tight text-white truncate">{node.title}</p>
+        </div>
+        {!linking && <RemoveButton id={node.id} onRemove={onRemove} onImage />}
       </div>
-      <Handle type="source" position={Position.Right} className={styles.handleDot} style={handleStyle(connectMode, "right")} />
+      <Handle type="source" position={Position.Right} className={styles.handleDot} style={handleStyle(linking)} />
     </>
   );
 }
@@ -250,25 +190,20 @@ function BriefFlowNode(props: NodeProps) {
   const fileRef = useRef<HTMLInputElement>(null);
   return (
     <>
-      <div className={styles.briefNode} style={{ boxShadow: data.isSelected ? "2px 2px 0px #000" : "none" }}>
-        <div className={styles.briefRow}>
-          <p className={styles.briefLabel}>Project brief</p>
-          {data.isSelected && <span className={styles.briefCheck}>✓</span>}
-        </div>
-        <p className="text-[13px] font-semibold text-[#111] truncate mb-1">{data.title}</p>
-        <p className="text-[11px] text-[#555] leading-relaxed line-clamp-5 flex-1">
-          {data.brief || <span className="italic text-[#6b6b6b]">Click to write your brief…</span>}
+      <div className="w-[320px] h-[200px] rounded-lg border bg-surface px-4 py-3 flex flex-col gap-1.5 cursor-pointer"
+        style={{ borderColor: data.isSelected ? ACCENT : "var(--color-line-strong)", boxShadow: data.isSelected ? `0 0 0 2px ${ACCENT}` : "var(--shadow-float)" }}>
+        <p className="text-[12px] font-medium text-muted">Project brief</p>
+        <p className="idea text-[18px] leading-tight text-ink truncate">{data.title}</p>
+        <p className="idea text-[14px] leading-snug text-ink-2 line-clamp-4 flex-1">
+          {data.brief || <span className="italic text-muted">Click to write your brief</span>}
         </p>
-        <input ref={fileRef} type="file" accept="image/*" multiple className="hidden"
+        <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" aria-label="Add images"
           onChange={(e) => { data.onUpload(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
-        <div className={styles.briefBtnRow}>
-          <button className={`nodrag nopan ${styles.briefUploadBtn}`} onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}>
-            + Images
-          </button>
-        </div>
+        <button className="nodrag nopan btn btn-sm self-start" onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}>
+          <ImagePlus size={14} aria-hidden /> Add images
+        </button>
       </div>
-      <Handle type="source" position={Position.Right} className={styles.handleDot}
-        style={{ opacity: 0, pointerEvents: "none", background: "#64748b" }} />
+      <Handle type="source" position={Position.Right} className={styles.handleDot} style={{ opacity: 0, pointerEvents: "none" }} />
     </>
   );
 }
@@ -279,24 +214,25 @@ const nodeTypes: NodeTypes = { idea: IdeaFlowNode, brief: BriefFlowNode };
 
 function ProvenanceEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, data, selected }: EdgeProps) {
   const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
-  const { onDelete, color, dashed, isSourceEdge } = (data ?? {}) as { onDelete?: () => void; color?: string; dashed?: boolean; isSourceEdge?: boolean };
-  const stroke = selected ? "#000" : (color ?? "#94a3b8");
+  const { onDelete, color, dashed, emphasis } = (data ?? {}) as { onDelete?: () => void; color?: string; dashed?: boolean; emphasis?: boolean };
   return (
     <>
-      <path d={path} fill="none" stroke="transparent" strokeWidth={20} style={{ cursor: "pointer" }} />
+      <path d={path} fill="none" stroke="transparent" strokeWidth={20} style={{ cursor: onDelete ? "pointer" : "default" }} />
       <BaseEdge path={path} markerEnd={markerEnd}
         style={{
-          stroke,
-          strokeWidth: isSourceEdge ? 2.5 : selected ? 2 : 1.5,
-          strokeOpacity: isSourceEdge ? 0.85 : selected ? 0.9 : 0.45,
+          stroke: selected ? ACCENT : color,
+          strokeWidth: emphasis || selected ? 2 : 1.5,
+          strokeOpacity: emphasis || selected ? 0.95 : 0.6,
           strokeDasharray: dashed ? "5 4" : undefined,
-          transition: "stroke 0.15s, stroke-opacity 0.15s, stroke-width 0.15s",
+          transition: "stroke 0.15s, stroke-opacity 0.15s",
         }} />
       {selected && onDelete && (
         <EdgeLabelRenderer>
           <div style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`, pointerEvents: "all" }} className="nodrag nopan">
-            <button onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Remove connection"
-              className="w-5 h-5 rounded-full bg-white border border-[#ccc] text-[#666] hover:text-red-500 hover:border-red-300 flex items-center justify-center text-[11px] leading-none shadow-sm transition-colors">✕</button>
+            <button onClick={(e) => { e.stopPropagation(); onDelete(); }} aria-label="Remove connection"
+              className="w-6 h-6 rounded-full bg-surface border border-line shadow-[var(--shadow-float)] text-ink-2 hover:text-danger flex items-center justify-center">
+              <X size={12} />
+            </button>
           </div>
         </EdgeLabelRenderer>
       )}
@@ -304,24 +240,26 @@ function ProvenanceEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, ta
   );
 }
 
+// User links bend around the column instead of cutting through the nodes in it,
+// and always show a label or a dot to click.
 function LinkEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, data, selected }: EdgeProps) {
-  const [hovered, setHovered] = useState(false);
-  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
+  const [path, labelX, labelY] = getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, borderRadius: 14, offset: 28 });
   const { label } = (data ?? {}) as { label?: string };
+  const stroke = selected ? ACCENT : "var(--color-ink-2)";
   return (
     <>
-      <path d={path} fill="none" stroke="transparent" strokeWidth={20}
-        onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} style={{ cursor: "pointer" }} />
-      <BaseEdge path={path} markerEnd={markerEnd}
-        style={{ stroke: selected ? "#2563eb" : "#64748b", strokeWidth: selected ? 2 : 1.5, strokeDasharray: "5 3", transition: "stroke 0.1s" }} />
-      {(label || hovered || selected) && (
-        <EdgeLabelRenderer>
-          <div style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`, pointerEvents: "none" }}
-            className={`text-[11px] px-1.5 py-0.5 bg-white border ${selected ? "border-[#2563eb] text-[#2563eb]" : "border-[#cbd5e1] text-[#64748b]"} ${styles.sq}`}>
-            {label || "link"}
-          </div>
-        </EdgeLabelRenderer>
-      )}
+      <path d={path} fill="none" stroke="transparent" strokeWidth={24} style={{ cursor: "pointer" }} />
+      <BaseEdge path={path} markerEnd={markerEnd} style={{ stroke, strokeWidth: selected ? 2 : 1.5, strokeDasharray: "5 3" }} />
+      <EdgeLabelRenderer>
+        <div style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`, pointerEvents: "none" }}>
+          {label ? (
+            <span className="block px-2 py-0.5 rounded-full bg-surface border text-[12px] max-w-40 truncate"
+              style={{ borderColor: stroke, color: selected ? ACCENT : "var(--color-ink-2)" }}>{label}</span>
+          ) : (
+            <span className="block w-2.5 h-2.5 rounded-full border-2 bg-surface" style={{ borderColor: stroke }} />
+          )}
+        </div>
+      </EdgeLabelRenderer>
     </>
   );
 }
@@ -334,7 +272,7 @@ function CollectionHalos({ collections }: { collections: Collection[] }) {
   const nodes = useNodes();
   const { x, y, zoom } = useViewport();
   return (
-    <svg className="absolute inset-0 pointer-events-none"
+    <svg className="absolute inset-0 pointer-events-none" aria-hidden
       style={{ width: "100%", height: "100%", zIndex: -1, overflow: "visible", mixBlendMode: "multiply" }}>
       <defs>
         <filter id="halo-blur" x="-200%" y="-200%" width="500%" height="500%"><feGaussianBlur stdDeviation="34" /></filter>
@@ -353,6 +291,94 @@ function CollectionHalos({ collections }: { collections: Collection[] }) {
         ))}
       </g>
     </svg>
+  );
+}
+
+// ── Canvas chrome ─────────────────────────────────────────────────────────────
+
+function ToolSwitch({ tool, onChange }: { tool: Tool; onChange: (t: Tool) => void }) {
+  const tools: { id: Tool; label: string; hint: string; Icon: typeof MousePointer2 }[] = [
+    { id: "select", label: "Select", hint: "Click to select, shift-click to add, drag to pan", Icon: MousePointer2 },
+    { id: "lasso", label: "Lasso", hint: "Drag to select several nodes", Icon: Lasso },
+    { id: "link", label: "Link", hint: "Drag from a node to another node to link them", Icon: Spline },
+  ];
+  return (
+    <div role="radiogroup" aria-label="Canvas tool" className="inline-flex p-0.5 rounded-md bg-surface border border-line shadow-[var(--shadow-float)]">
+      {tools.map(({ id, label, hint, Icon }) => (
+        <button key={id} role="radio" aria-checked={tool === id} title={hint} onClick={() => onChange(id)}
+          className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-[5px] text-[13px] font-medium transition-colors ${
+            tool === id ? "bg-ink text-white" : "text-ink-2 hover:bg-subtle hover:text-ink"}`}>
+          <Icon size={14} aria-hidden /> {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// Open while the tree is empty; tucks itself away once there are nodes, so it
+// doesn't crowd the selection bar. The user can reopen it.
+function Legend({ hasNodes }: { hasNodes: boolean }) {
+  const [open, setOpen] = useState(!hasNodes);
+  useEffect(() => { if (hasNodes) setOpen(false); }, [hasNodes]);
+  return (
+    <div className="floating text-[12px] overflow-hidden w-36">
+      <button onClick={() => setOpen((v) => !v)} aria-expanded={open}
+        className="w-full flex items-center gap-2 px-3 h-8 text-ink-2 font-medium hover:bg-subtle">
+        Key {open ? <ChevronUp size={14} className="ml-auto" aria-hidden /> : <ChevronDown size={14} className="ml-auto" aria-hidden />}
+      </button>
+      {open && (
+        <ul className="px-3 pb-2.5 flex flex-col gap-1.5 text-ink-2">
+          {ROLES.map((r) => (
+            <li key={r} className="flex items-center gap-2">
+              {r === "motif" ? (
+                <svg width="16" height="12" viewBox="0 0 16 12" aria-hidden>
+                  <polygon points="3.5,0.5 12.5,0.5 15.5,3.5 15.5,8.5 12.5,11.5 3.5,11.5 0.5,8.5 0.5,3.5"
+                    fill={ROLE_STYLE[r].fill} stroke={ROLE_STYLE[r].border} />
+                </svg>
+              ) : (
+                <span className={`w-4 h-3 border ${r === "concept" ? "rounded-[3px]" : "rounded-[5px]"}`}
+                  style={{ background: ROLE_STYLE[r].fill, borderColor: ROLE_STYLE[r].border }} aria-hidden />
+              )}
+              {ROLE_LABEL[r]}
+            </li>
+          ))}
+          <li className="flex items-center gap-2">
+            <svg width="16" height="8" aria-hidden><line x1="0" y1="4" x2="16" y2="4" stroke="var(--color-ink-2)" strokeWidth="1.5" strokeDasharray="4 3" /></svg>
+            Your link
+          </li>
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// Shown until the first run, so a first-time participant knows the order of things.
+function GetStarted({ hasBrief, hasImage, onOpenBrief, onRun }: {
+  hasBrief: boolean; hasImage: boolean; onOpenBrief: () => void; onRun: (a: ActionType) => void;
+}) {
+  const Step = ({ done, children }: { done: boolean; children: React.ReactNode }) => (
+    <li className="flex items-center gap-2.5">
+      <span className={`w-5 h-5 shrink-0 rounded-full flex items-center justify-center border ${done ? "bg-ink border-ink text-white" : "border-line-strong"}`}>
+        {done && <Check size={12} aria-hidden />}
+        <span className="sr-only">{done ? "Done:" : "To do:"}</span>
+      </span>
+      <span className={done ? "text-muted" : "text-ink"}>{children}</span>
+    </li>
+  );
+  return (
+    <section aria-label="Get started" className="floating w-80 px-4 py-3">
+      <h2 className="text-[15px] font-semibold text-ink mb-2.5">Get started</h2>
+      <ol className="flex flex-col gap-2 text-[13px]">
+        <Step done={hasBrief}>
+          <button className="underline underline-offset-2 hover:no-underline" onClick={onOpenBrief}>Write your brief</button>
+        </Step>
+        <Step done={hasImage}>Add images of your draft or references <span className="text-muted">(optional)</span></Step>
+        <Step done={false}>
+          <button className="underline underline-offset-2 hover:no-underline disabled:no-underline disabled:text-muted" disabled={!hasBrief}
+            onClick={() => onRun("expand")}>Run Expand</button>{" "}to turn them into concepts and motifs
+        </Step>
+      </ol>
+    </section>
   );
 }
 
@@ -380,15 +406,31 @@ export default function TreeView({
   const clearTree = useProjectStore((s) => s.clearTree);
 
   const [hoveredId, setHoveredId] = useState<NodeId | null>(null);
-  const [lassoMode, setLassoMode] = useState(false);
-  const [connectMode, setConnectMode] = useState(false);
+  const [tool, setTool] = useState<Tool>("select");
   const [showCollectionColors, setShowCollectionColors] = useState(false);
-  const [confirmingClear, setConfirmingClear] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
-  const [exportWithColors, setExportWithColors] = useState(false);
   const [exportColorsActive, setExportColorsActive] = useState(false);
-  const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const rfRef = useRef<ReactFlowInstance | null>(null);
+  const linking = tool === "link";
+
+  const layout = useMemo(() => computeTreeLayout(project), [project]);
+  const shown = useMemo(() => visibleNodes(project), [project]);
+  const provenance = useMemo(() => treeEdges(project), [project]);
+  const links = useMemo(() => visibleLinks(project), [project]);
+  const collections = useMemo(() => Object.values(project.collections), [project]);
+  const hasGenerated = shown.some((n) => n.origin.kind === "generated");
+
+  const singleSelected = selection.length === 1 ? selection[0] : null;
+  const selectedSet = useMemo(() => new Set(selection), [selection]);
+  const hoveredAncestors = useMemo(() => (hoveredId ? ancestors(project, hoveredId) : new Set<NodeId>()), [project, hoveredId]);
+  const selectedAncestors = useMemo(
+    () => (singleSelected && project.nodes[singleSelected] ? ancestors(project, singleSelected) : new Set<NodeId>()),
+    [project, singleSelected],
+  );
+  const collectionColors = useMemo(() => {
+    const map = new Map<NodeId, string[]>();
+    for (const c of collections) for (const id of c.nodeIds) map.set(id, [...(map.get(id) ?? []), c.color]);
+    return map;
+  }, [collections]);
 
   // When a run finishes (or "Show" is pressed), bring its outputs and what
   // they came from into view, and make them glow for a moment.
@@ -402,40 +444,15 @@ export default function TreeView({
     const fit = setTimeout(() => {
       const withParents = new Set(ids);
       for (const id of ids) for (const a of ancestors(projectStore.getState().project!, id)) withParents.add(a);
-      rfRef.current?.fitView({ nodes: [...withParents].map((id) => ({ id })), padding: 0.2, maxZoom: 1, duration: 400 });
+      const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      rfRef.current?.fitView({ nodes: [...withParents].map((id) => ({ id })), padding: 0.2, maxZoom: 1, duration: still ? 0 : 400 });
     }, 80);
     const fade = setTimeout(() => setNewIds(new Set()), 2600);
     return () => { clearTimeout(fit); clearTimeout(fade); };
   }, [focus]);
 
-  const layout = useMemo(() => computeTreeLayout(project), [project]);
-  const shown = useMemo(() => visibleNodes(project), [project]);
-  const provenance = useMemo(() => treeEdges(project), [project]);
-  const links = useMemo(() => visibleLinks(project), [project]);
-  const collections = useMemo(() => Object.values(project.collections), [project]);
-
-  const singleSelected = selection.length === 1 ? selection[0] : null;
-  const selectedSet = useMemo(() => new Set(selection), [selection]);
-  const hoveredAncestors = useMemo(() => (hoveredId ? ancestors(project, hoveredId) : new Set<NodeId>()), [project, hoveredId]);
-  const selectedAncestors = useMemo(
-    () => (singleSelected && project.nodes[singleSelected] ? ancestors(project, singleSelected) : new Set<NodeId>()),
-    [project, singleSelected],
-  );
-
-  const collectionColors = useMemo(() => {
-    const map = new Map<NodeId, string[]>();
-    for (const c of collections) for (const id of c.nodeIds) map.set(id, [...(map.get(id) ?? []), c.color]);
-    return map;
-  }, [collections]);
-
-  const handleRemove = useCallback((id: NodeId) => hideNode(id), [hideNode]);
-  const handleQuickRun = useCallback((id: NodeId, action: ActionType) => {
-    setSelection([id]);
-    onOpenRun(action);
-  }, [setSelection, onOpenRun]);
-
   const handleUpload = useCallback(async (files: File[]) => {
-    for (const f of files) await addImageNode(await fileToImage(f), { role: "visual", title: f.name });
+    for (const f of files) await addImageNode(await fileToImage(f), { role: "visual", title: f.name.replace(/\.[^.]+$/, "") });
   }, [addImageNode]);
 
   // ── React Flow nodes and edges ────────────────────────────────────────────
@@ -443,74 +460,67 @@ export default function TreeView({
   const flowNodes = useMemo((): FlowNode[] => {
     const showColors = showCollectionColors || exportColorsActive;
     const nodes: FlowNode[] = [{
-      id: BRIEF_ID,
-      type: "brief",
-      position: layout.positions[BRIEF_ID],
-      data: { title: project.title, brief: project.brief, isSelected: briefOpen, connectMode, onUpload: handleUpload } satisfies BriefNodeData,
-      width: BRIEF_W,
-      height: BRIEF_H,
-      deletable: false,
-      selected: false,
+      id: BRIEF_ID, type: "brief", position: layout.positions[BRIEF_ID],
+      data: { title: project.title, brief: project.brief, isSelected: briefOpen, onUpload: handleUpload } satisfies BriefNodeData,
+      width: BRIEF_W, height: BRIEF_H, deletable: false, selected: false,
+      ariaLabel: "Project brief. Press Enter to edit",
     }];
     for (const n of shown) {
       nodes.push({
-        id: n.id,
-        type: "idea",
-        position: layout.positions[n.id],
+        id: n.id, type: "idea", position: layout.positions[n.id],
         data: {
           node: n,
-          isSelected: singleSelected === n.id,
-          isMultiSelected: selection.length > 1 && selectedSet.has(n.id),
+          isSelected: selectedSet.has(n.id),
           isHovered: hoveredId === n.id,
           isAncestor: hoveredAncestors.has(n.id),
           isSourceOfSelected: selectedAncestors.has(n.id),
           isNew: newIds.has(n.id),
           collectionColors: showColors ? collectionColors.get(n.id) : undefined,
-          connectMode,
-          onRemove: handleRemove,
-          onQuickRun: handleQuickRun,
+          linking,
+          onRemove: hideNode,
         } satisfies IdeaNodeData,
-        width: layout.sizes[n.id].w,
-        height: layout.sizes[n.id].h,
+        width: layout.sizes[n.id].w, height: layout.sizes[n.id].h,
         selected: selectedSet.has(n.id),
+        // A group (the default role), since it holds its own Remove button; the
+        // selected state is in the name. Enter selects it (see onKeyDown).
+        ariaLabel: `${ROLE_LABEL[n.role]}: ${n.title}${selectedSet.has(n.id) ? ", selected" : ""}`,
       });
     }
     return nodes;
-  }, [project.title, project.brief, layout, shown, briefOpen, connectMode, handleUpload, singleSelected, selection.length, selectedSet,
-    hoveredId, hoveredAncestors, selectedAncestors, newIds, showCollectionColors, exportColorsActive, collectionColors, handleRemove, handleQuickRun]);
+  }, [project.title, project.brief, layout, shown, briefOpen, linking, handleUpload, selectedSet, hoveredId, hoveredAncestors,
+    selectedAncestors, newIds, showCollectionColors, exportColorsActive, collectionColors, hideNode]);
 
   const flowEdges = useMemo((): FlowEdge[] => {
     const edges: FlowEdge[] = [];
     for (const id of layout.briefTargets) {
       edges.push({
-        id: `${BRIEF_ID}->${id}`, source: BRIEF_ID, target: id, type: "default", selectable: false, deletable: false,
-        style: { stroke: "rgba(0,0,0,0.3)", strokeWidth: 1.5, strokeOpacity: 0.6, strokeDasharray: "5 4" },
-        markerEnd: { type: MarkerType.Arrow, color: "rgba(0,0,0,0.3)", width: 10, height: 10, strokeWidth: 0 },
+        id: `${BRIEF_ID}->${id}`, source: BRIEF_ID, target: id, type: "default", selectable: false, deletable: false, focusable: false,
+        style: { stroke: "var(--color-line-strong)", strokeWidth: 1.5, strokeDasharray: "5 4" },
+        markerEnd: { type: MarkerType.Arrow, color: "#c7cad1", width: 10, height: 10, strokeWidth: 0 },
       });
     }
     for (const e of provenance) {
-      const toRole = project.nodes[e.to].role;
-      const isSourceEdge = !!singleSelected && (e.to === singleSelected || (selectedAncestors.has(e.to) && selectedAncestors.has(e.from)));
-      const isActive = hoveredId === e.to || hoveredId === e.from;
-      const color = isSourceEdge ? SOURCE_COLOR : isActive ? "rgba(0,0,0,0.7)" : ROLE_STYLE[toRole].line;
+      const emphasis = (!!singleSelected && (e.to === singleSelected || (selectedAncestors.has(e.to) && selectedAncestors.has(e.from))))
+        || hoveredId === e.to || hoveredId === e.from;
+      const color = emphasis ? "#43464d" : ROLE_STYLE[project.nodes[e.to].role].border;
       // A bridged edge spans removed nodes, so there's no single stored edge to delete.
       const direct = e.bridged ? [] : Object.values(project.edges).filter(
         (x) => x.kind === "derived_from" && !x.hidden && x.from === e.from && x.to === e.to);
       edges.push({
         id: `prov:${e.from}->${e.to}`, source: e.from, target: e.to, type: "provenance",
-        selectable: direct.length > 0, deletable: direct.length > 0,
-        data: {
-          color, isSourceEdge, dashed: e.bridged,
-          onDelete: direct.length > 0 ? () => direct.forEach((x) => hideEdge(x.id)) : undefined,
-        },
-        markerEnd: { type: MarkerType.Arrow, color, width: isSourceEdge ? 14 : 12, height: isSourceEdge ? 14 : 12, strokeWidth: 0 },
+        selectable: direct.length > 0, deletable: direct.length > 0, focusable: false,
+        data: { color, emphasis, dashed: e.bridged, onDelete: direct.length > 0 ? () => direct.forEach((x) => hideEdge(x.id)) : undefined },
+        markerEnd: { type: MarkerType.Arrow, color, width: 12, height: 12, strokeWidth: 0 },
       });
     }
     for (const e of links) {
       edges.push({
         id: e.id, source: e.from, target: e.to, type: "link", selected: selectedSet.has(e.id),
         data: { label: e.label },
-        markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b", width: 12, height: 12, strokeWidth: 0 },
+        ariaLabel: `Link between ${project.nodes[e.from]?.title} and ${project.nodes[e.to]?.title}${e.label ? `: ${e.label}` : ""}`,
+        ariaRole: "button",
+        domAttributes: { "aria-pressed": selectedSet.has(e.id) },
+        markerEnd: { type: MarkerType.ArrowClosed, color: "#43464d", width: 12, height: 12, strokeWidth: 0 },
       });
     }
     return edges;
@@ -526,6 +536,7 @@ export default function TreeView({
         const existing = byId.get(n.id);
         if (!existing) return n;
         return { ...existing, data: n.data, width: n.width, height: n.height, selected: n.selected,
+          ariaLabel: n.ariaLabel,
           position: existing.dragging ? existing.position : n.position };
       });
     });
@@ -546,11 +557,30 @@ export default function TreeView({
 
   // ── Interaction ───────────────────────────────────────────────────────────
 
-  const onNodeClick = useCallback((event: React.MouseEvent, n: FlowNode) => {
-    if (n.id === BRIEF_ID) { clearSelection(); onOpenBrief(); return; }
-    if (event.shiftKey) toggleSelected(n.id);
-    else setSelection(singleSelected === n.id ? [] : [n.id]);
+  const selectNode = useCallback((id: string, additive: boolean) => {
+    if (id === BRIEF_ID) { clearSelection(); onOpenBrief(); return; }
+    if (additive) toggleSelected(id);
+    else setSelection(singleSelected === id ? [] : [id]);
   }, [clearSelection, onOpenBrief, toggleSelected, setSelection, singleSelected]);
+
+  const onNodeClick = useCallback((event: React.MouseEvent, n: FlowNode) => selectNode(n.id, event.shiftKey), [selectNode]);
+
+  // Keyboard: Enter or Space selects the focused node (shift adds), Escape clears.
+  const onKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.closest("button, input, textarea")) return;
+    const nodeEl = target.closest?.(".react-flow__node");
+    const edgeId = target.closest?.(".react-flow__edge")?.getAttribute("data-id");
+    if ((e.key === "Enter" || e.key === " ") && nodeEl) {
+      e.preventDefault();
+      selectNode(nodeEl.getAttribute("data-id")!, e.shiftKey);
+    } else if ((e.key === "Enter" || e.key === " ") && edgeId && project.edges[edgeId]) {
+      e.preventDefault();
+      if (e.shiftKey) toggleSelected(edgeId); else setSelection([edgeId]);
+    } else if (e.key === "Escape") {
+      clearSelection();
+    }
+  }, [selectNode, clearSelection, project.edges, toggleSelected, setSelection]);
 
   const onEdgeClick = useCallback((event: React.MouseEvent, e: FlowEdge) => {
     if (!project.edges[e.id]) return;  // only user links are selectable as inputs
@@ -559,10 +589,10 @@ export default function TreeView({
   }, [project.edges, toggleSelected, setSelection]);
 
   const onSelectionChange = useCallback(({ nodes }: { nodes: FlowNode[] }) => {
-    if (!lassoMode) return;
+    if (tool !== "lasso") return;
     const ids = nodes.map((n) => n.id).filter((id) => id !== BRIEF_ID);
     if (ids.length >= 2) setSelection(ids);
-  }, [lassoMode, setSelection]);
+  }, [tool, setSelection]);
 
   const onNodeDragStop = useCallback((_e: unknown, _n: FlowNode, dragged: FlowNode[]) => {
     for (const n of dragged) moveNode("tree", n.id, n.position);
@@ -587,11 +617,10 @@ export default function TreeView({
     addLink(state.fromNode.id, target);
   }, [addLink]);
 
-  const exportPng = useCallback(async () => {
+  const exportPng = useCallback(async (withColors: boolean) => {
     const rf = rfRef.current;
     if (!rf) return;
-    setIsExporting(true);
-    const flash = exportWithColors && !showCollectionColors;
+    const flash = withColors && !showCollectionColors;
     if (flash) {
       setExportColorsActive(true);
       await new Promise<void>((res) => requestAnimationFrame(() => requestAnimationFrame(() => res())));
@@ -606,7 +635,7 @@ export default function TreeView({
       const viewport = document.querySelector(".react-flow__viewport") as HTMLElement | null;
       if (!viewport) return;
       const dataUrl = await toPng(viewport, {
-        backgroundColor: "#f7f6f3", width: W, height: H,
+        backgroundColor: "#f3f4f6", width: W, height: H,
         style: { width: `${W}px`, height: `${H}px`, transform: `translate(${x}px, ${y}px) scale(${zoom})` },
       });
       const a = document.createElement("a");
@@ -615,17 +644,35 @@ export default function TreeView({
       a.click();
     } finally {
       if (flash) setExportColorsActive(false);
-      setIsExporting(false);
     }
-  }, [exportWithColors, showCollectionColors, project.title]);
-
-  const toolBtn = (active: boolean) => `border px-2.5 py-1.5 text-[11px] transition-colors flex items-center gap-1 ${styles.sq} ${
-    active ? "bg-black border-black text-white" : "bg-white border-[rgba(0,0,0,0.25)] text-[#333] hover:text-black hover:border-black"
-  }`;
+  }, [showCollectionColors, project.title]);
 
   return (
-    <div className={`flex-1 h-full ${styles.canvas}`}>
+    <div className={`relative flex-1 h-full ${styles.canvas}`} onKeyDown={onKeyDown}>
+      {/* Canvas chrome comes first in the page so Tab reaches it before the nodes. */}
+      <div className="absolute top-3 left-3 z-10"><Legend hasNodes={shown.length > 0} /></div>
+      <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
+        <ToolSwitch tool={tool} onChange={setTool} />
+        <button className="btn btn-primary shadow-[var(--shadow-float)]" onClick={() => onOpenAddNode(selection.filter((id) => project.nodes[id]))}>
+          <Plus size={15} aria-hidden /> Add node
+        </button>
+        <div className="shadow-[var(--shadow-float)] rounded-md">
+          <Menu label="More tree actions" items={[
+            { label: "Tidy layout", onSelect: () => resetLayout("tree"), disabled: Object.keys(project.views.tree.positions).length === 0 },
+            { label: showCollectionColors ? "Hide collection colours" : "Show collection colours", onSelect: () => setShowCollectionColors((v) => !v), disabled: collections.length === 0 },
+            { label: "Export as PNG", onSelect: () => exportPng(false) },
+            { label: "Export as PNG with collection colours", onSelect: () => exportPng(true), disabled: collections.length === 0 },
+            { label: "Clear tree", onSelect: clearTree, danger: true, disabled: shown.length === 0 },
+          ]} />
+        </div>
+      </div>
+      {!hasGenerated && (
+        <div className="absolute top-14 left-1/2 -translate-x-1/2 z-10">
+          <GetStarted hasBrief={!!project.brief.trim()} hasImage={shown.some((n) => n.image)} onOpenBrief={onOpenBrief} onRun={onOpenRun} />
+        </div>
+      )}
       <ReactFlow
+        proOptions={{ hideAttribution: true }}
         nodes={displayNodes}
         edges={flowEdges}
         nodeTypes={nodeTypes}
@@ -636,7 +683,7 @@ export default function TreeView({
         onEdgeClick={onEdgeClick}
         onNodeMouseEnter={(_, n) => { if (n.id !== BRIEF_ID) setHoveredId(n.id); }}
         onNodeMouseLeave={() => setHoveredId(null)}
-        onPaneClick={() => { clearSelection(); setConfirmingClear(false); }}
+        onPaneClick={clearSelection}
         onInit={(instance) => { rfRef.current = instance; instance.fitView({ padding: 0.15, maxZoom: 1 }); }}
         fitView
         fitViewOptions={{ padding: 0.15, maxZoom: 1 }}
@@ -645,117 +692,20 @@ export default function TreeView({
         onNodeDragStop={onNodeDragStop}
         onNodesDelete={onNodesDelete}
         connectOnClick={false}
-        nodesConnectable={connectMode}
+        nodesConnectable={linking}
         onConnect={onConnect}
         onConnectEnd={onConnectEnd}
         deleteKeyCode={["Delete", "Backspace"]}
-        selectionOnDrag={lassoMode}
-        panOnDrag={lassoMode ? [1, 2] : true}
+        selectionOnDrag={tool === "lasso"}
+        panOnDrag={tool === "lasso" ? [1, 2] : true}
         selectionMode={SelectionMode.Partial}
         onSelectionChange={onSelectionChange}
+        aria-label="Idea tree"
       >
         {showCollectionColors && <CollectionHalos collections={collections} />}
-        <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="rgba(0,0,0,0.15)" />
+        <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#c9ccd3" />
         <Controls showInteractive={false} position="bottom-right" />
 
-        {shown.length === 0 && (
-          <Panel position="top-center">
-            <div className={`mt-8 text-[12px] italic text-[#6b6b6b] bg-white/80 border border-[rgba(0,0,0,0.1)] px-4 py-2.5 ${styles.sq}`}>
-              Write your brief, add images, then run Expand to start the tree
-            </div>
-          </Panel>
-        )}
-
-        <Panel position="top-right">
-          <div className="flex items-center gap-1.5 mr-2 mt-2">
-            <div className="relative" onMouseEnter={() => setExportMenuOpen(true)} onMouseLeave={() => setExportMenuOpen(false)}>
-              <button onClick={exportPng} disabled={isExporting} title="Export the tree as a PNG" className={toolBtn(false)}>
-                <span className="text-[12px] leading-none">↓</span>{isExporting ? "Exporting…" : "Export PNG"}
-              </button>
-              {exportMenuOpen && (
-                <div className={`absolute top-full left-0 bg-white border border-[rgba(0,0,0,0.18)] px-2.5 py-1.5 z-50 ${styles.sq}`}>
-                  <label className="flex items-center gap-1.5 cursor-pointer whitespace-nowrap text-[11px] text-[rgba(0,0,0,0.55)] hover:text-black select-none">
-                    <input type="checkbox" checked={exportWithColors} onChange={(e) => setExportWithColors(e.target.checked)} className="w-2.5 h-2.5 accent-black" />
-                    Include collection colours
-                  </label>
-                </div>
-              )}
-            </div>
-            <button onClick={() => { setLassoMode((v) => !v); setConnectMode(false); }} className={toolBtn(lassoMode)}
-              title={lassoMode ? "Turn off lasso (dragging pans again)" : "Lasso: drag to select several nodes"}>
-              <span className="text-[11px] leading-none">⬚</span>{lassoMode ? "Lasso on" : "Lasso"}
-            </button>
-            <button onClick={() => { setConnectMode((v) => !v); setLassoMode(false); }} className={toolBtn(connectMode)}
-              title={connectMode ? "Stop drawing links" : "Draw links between nodes"}>
-              <span className="text-[12px] leading-none">⌥</span>{connectMode ? "Linking…" : "Link"}
-            </button>
-            {lassoMode && (
-              <span className={`text-[11px] italic text-[#666] bg-white border border-[rgba(0,0,0,0.15)] px-2 py-1 ${styles.sq}`}>
-                Drag to select · Shift+click to add · Middle-click to pan
-              </span>
-            )}
-            {connectMode && (
-              <span className={`text-[11px] italic text-[#666] bg-white border border-[rgba(0,0,0,0.15)] px-2 py-1 ${styles.sq}`}>
-                Drag from a node's edge to another node
-              </span>
-            )}
-            {collections.length > 0 && (
-              <button onClick={() => setShowCollectionColors((v) => !v)} className={toolBtn(showCollectionColors)}
-                title={showCollectionColors ? "Hide collection colours" : "Show collection colours"}>
-                <span className="text-[12px] leading-none">◉</span>Collections
-              </button>
-            )}
-            <button onClick={() => onOpenAddNode(selection.filter((id) => project.nodes[id]))} className={toolBtn(false)} title="Add a node">
-              <span className="text-[14px] leading-none font-light">+</span>Add node
-            </button>
-            {Object.keys(project.views.tree.positions).length > 0 && (
-              <button onClick={() => resetLayout("tree")} className={toolBtn(false)} title="Put every node back in its automatic position">
-                Tidy
-              </button>
-            )}
-            {confirmingClear ? (
-              <div className={`bg-white border border-red-200 px-2.5 py-1.5 flex items-center gap-2 ${styles.sq}`}>
-                <span className="text-[11px] text-red-500">Clear the tree?</span>
-                <button onClick={() => { clearTree(); setConfirmingClear(false); }} className="text-[11px] font-semibold text-red-600 hover:text-red-800">Yes</button>
-                <button onClick={() => setConfirmingClear(false)} className="text-[11px] text-[#6b6b6b] hover:text-[#555]">No</button>
-              </div>
-            ) : (
-              <button onClick={() => setConfirmingClear(true)} disabled={shown.length === 0}
-                className={`bg-white border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 text-[11px] text-[#333] hover:text-red-600 hover:border-red-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${styles.sq}`}
-                title="Remove every node from this project's tree. The project, brief and collections stay.">
-                Clear tree
-              </button>
-            )}
-          </div>
-        </Panel>
-
-        <Panel position="bottom-left">
-          <div className={`mb-2 ml-2 bg-white border border-[rgba(0,0,0,0.12)] px-3 py-2.5 flex flex-col gap-2 ${styles.sq}`}>
-            <p className="text-[10px] uppercase tracking-[0.16em] text-[#6b6b6b] mb-0.5">Node types</p>
-            <div className="flex items-center gap-2">
-              <div className="w-[18px] h-[14px] shrink-0 bg-[#dde1f2]" style={{ border: "1px solid #8b96c8" }} />
-              <span className="text-[11px] text-[rgba(0,0,0,0.6)]">Concept</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="shrink-0" style={{ background: "#c8a055", padding: 1, clipPath: "polygon(5px 0%, calc(100% - 5px) 0%, 100% 5px, 100% calc(100% - 5px), calc(100% - 5px) 100%, 5px 100%, 0% calc(100% - 5px), 0% 5px)" }}>
-                <div style={{ width: 18, height: 14, background: "#fdf8ef", clipPath: "polygon(4.5px 0%, calc(100% - 4.5px) 0%, 100% 4.5px, 100% calc(100% - 4.5px), calc(100% - 4.5px) 100%, 4.5px 100%, 0% calc(100% - 4.5px), 0% 4.5px)" }} />
-              </div>
-              <span className="text-[11px] text-[rgba(0,0,0,0.6)]">Motif</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-[18px] h-[14px] shrink-0 rounded-[4px] bg-[#f3f8f5]" style={{ border: "1px solid #7aab8a" }} />
-              <span className="text-[11px] text-[rgba(0,0,0,0.6)]">Note</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-[18px] h-[14px] shrink-0 bg-[#fdf4f2]" style={{ border: "1px solid #c89088" }} />
-              <span className="text-[11px] text-[rgba(0,0,0,0.6)]">Visual</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <svg width="18" height="8"><line x1="0" y1="4" x2="18" y2="4" stroke="#64748b" strokeWidth="1.5" strokeDasharray="5 3" /></svg>
-              <span className="text-[11px] text-[rgba(0,0,0,0.6)]">Your link</span>
-            </div>
-          </div>
-        </Panel>
       </ReactFlow>
     </div>
   );

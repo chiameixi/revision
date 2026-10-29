@@ -30,19 +30,22 @@ export default function ProjectPage() {
 
   if (status === "missing") {
     return (
-      <div className="flex flex-col gap-3 h-screen items-center justify-center text-sm text-[#888]">
-        <p>That project doesn&apos;t exist in this browser.</p>
-        <Link href="/" className="underline text-black">Back to projects</Link>
+      <div className="flex h-screen items-center justify-center p-6">
+        <div className="floating max-w-sm px-5 py-4 flex flex-col gap-3">
+          <h1 className="text-[15px] font-semibold text-ink">Project not found</h1>
+          <p className="text-[13px] text-ink-2">Projects are saved in the browser they were made in, so this one may be in a different browser or may have been deleted.</p>
+          <Link href="/" className="btn self-start">Back to projects</Link>
+        </div>
       </div>
     );
   }
 
   if (status !== "ready" || openId !== id) {
-    return <div className="flex h-screen items-center justify-center text-sm text-[#aaa]">Loading…</div>;
+    return <div role="status" className="flex h-screen items-center justify-center text-[13px] text-muted">Loading project…</div>;
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#f0eeea]">
+    <div className="flex h-screen overflow-hidden">
       <Workspace />
     </div>
   );

@@ -1,16 +1,17 @@
 "use client";
 
 // Landing page: every project as a card, newest first. Create, open, rename
-// and delete. Deleting asks for confirmation inline (no browser dialogs).
+// and delete. Deleting asks for confirmation on the card (no browser dialogs).
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Plus } from "lucide-react";
 import { useProjectStore } from "@/store/projectStore";
 import type { ProjectSummary } from "@/domain/types";
-import { useImageUrl } from "./useImageUrl";
 import { formatUsd, PRICES_CHECKED } from "@/domain/pricing";
-import styles from "./Workspace.module.css";
+import { useImageUrl } from "./useImageUrl";
+import { Menu } from "./ui";
 
 function timeAgo(iso: string): string {
   const secs = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
@@ -39,50 +40,53 @@ function ProjectCard({ p }: { p: ProjectSummary }) {
   };
 
   return (
-    <article className={`group bg-white border border-[rgba(0,0,0,0.15)] hover:border-black transition-colors flex flex-col overflow-hidden ${styles.sq}`}>
-      <Link href={`/p/${p.id}`} className="block aspect-[16/9] bg-[#f5f4f0] overflow-hidden" aria-label={`Open ${p.title}`}>
+    <article className="group relative rounded-lg bg-surface border border-line hover:border-line-strong hover:shadow-[var(--shadow-float)] transition-shadow overflow-hidden flex flex-col">
+      <div className="aspect-[16/9] bg-subtle border-b border-line overflow-hidden">
         {cover ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={cover} alt="" className="w-full h-full object-cover" />
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-[11px] italic text-[#757575]">No images yet</div>
+          <div className="w-full h-full flex items-center justify-center text-[13px] text-muted">No images yet</div>
         )}
-      </Link>
-      <div className="p-3.5 flex flex-col gap-1.5 flex-1">
-        {renaming ? (
-          <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onBlur={saveTitle}
-            onKeyDown={(e) => { if (e.key === "Enter") saveTitle(); if (e.key === "Escape") { setTitle(p.title); setRenaming(false); } }}
-            className="text-[14px] font-semibold text-[#111] border-b border-black outline-none bg-transparent" />
-        ) : (
-          <Link href={`/p/${p.id}`} className="text-[14px] font-semibold text-[#111] truncate hover:underline">{p.title}</Link>
-        )}
-        <p className="text-[12px] text-[#666] leading-snug line-clamp-2 min-h-[2.5em]">
-          {p.briefExcerpt || <span className="italic text-[#6b6b6b]">No brief yet</span>}
-        </p>
-        <div className="flex items-center gap-2 text-[11px] text-[#6b6b6b] mt-auto pt-1" style={{ fontVariantNumeric: "tabular-nums" }}>
-          <span>{p.nodeCount} {p.nodeCount === 1 ? "node" : "nodes"}</span>
-          <span>·</span>
-          <span>{p.imageCount} {p.imageCount === 1 ? "image" : "images"}</span>
-          <span>·</span>
-          <span title={`${p.calls} model ${p.calls === 1 ? "call" : "calls"}, estimated cost`}>≈ {formatUsd(p.costUsd)}</span>
-          <span>·</span>
-          <span title={new Date(p.updatedAt).toLocaleString()}>{timeAgo(p.updatedAt)}</span>
-        </div>
-        <div className="flex items-center gap-3 text-[11px] pt-1">
-          {confirmDelete ? (
-            <>
-              <span className="text-red-600">Delete this project and its log?</span>
-              <button onClick={() => deleteProject(p.id)} className="font-semibold text-red-600 hover:text-red-800">Delete</button>
-              <button onClick={() => setConfirmDelete(false)} className="text-[#6b6b6b] hover:text-[#333]">Keep</button>
-            </>
-          ) : (
-            <>
-              <button onClick={() => setRenaming(true)} className="text-[#6b6b6b] hover:text-black">Rename</button>
-              <button onClick={() => setConfirmDelete(true)} className="text-[#6b6b6b] hover:text-red-600">Delete</button>
-            </>
-          )}
-        </div>
       </div>
+      <div className="p-4 flex flex-col gap-1.5 flex-1">
+        {renaming ? (
+          <>
+            <label htmlFor={`rename-${p.id}`} className="sr-only">Project name</label>
+            <input id={`rename-${p.id}`} autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onBlur={saveTitle}
+              onKeyDown={(e) => { if (e.key === "Enter") saveTitle(); if (e.key === "Escape") { setTitle(p.title); setRenaming(false); } }}
+              className="field idea text-[17px] relative z-10" />
+          </>
+        ) : (
+          <h2 className="idea text-[18px] leading-tight text-ink truncate">
+            {/* The whole card opens the project; the link's box covers it. */}
+            <Link href={`/p/${p.id}`} className="after:absolute after:inset-0 focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:outline-accent focus-visible:after:rounded-lg">
+              {p.title}
+            </Link>
+          </h2>
+        )}
+        <p className="idea text-[14px] leading-snug text-ink-2 line-clamp-2 min-h-[2.6em]">
+          {p.briefExcerpt || <span className="italic text-muted">No brief yet</span>}
+        </p>
+        <p className="text-[12px] text-muted mt-auto pt-2 tabular-nums" title={`Last edited ${new Date(p.updatedAt).toLocaleString()}`}>
+          {p.nodeCount} {p.nodeCount === 1 ? "node" : "nodes"}, {p.imageCount} {p.imageCount === 1 ? "image" : "images"}, about {formatUsd(p.costUsd)}. Edited {timeAgo(p.updatedAt)}.
+        </p>
+        {confirmDelete && (
+          <div role="alert" className="relative z-10 mt-2 flex items-center gap-2 rounded-md bg-danger-soft px-2.5 py-2">
+            <span className="text-[13px] text-danger flex-1">Delete this project and its log?</span>
+            <button className="btn btn-sm" onClick={() => setConfirmDelete(false)}>Keep</button>
+            <button className="btn btn-sm btn-primary bg-danger border-danger hover:bg-[#912018]" onClick={() => deleteProject(p.id)}>Delete</button>
+          </div>
+        )}
+      </div>
+      {!renaming && !confirmDelete && (
+        <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+          <Menu label={`Actions for ${p.title}`} items={[
+            { label: "Rename", onSelect: () => setRenaming(true) },
+            { label: "Delete", onSelect: () => setConfirmDelete(true), danger: true },
+          ]} />
+        </div>
+      )}
     </article>
   );
 }
@@ -97,6 +101,7 @@ export default function ProjectsGrid() {
   const totals = projects.reduce((t, p) => ({ calls: t.calls + p.calls, costUsd: t.costUsd + p.costUsd }), { calls: 0, costUsd: 0 });
 
   useEffect(() => { loadProjects().then(() => setLoaded(true)); }, [loadProjects]);
+  useEffect(() => { document.title = "Projects | Design Workspace"; }, []);
 
   async function newProject() {
     setCreating(true);
@@ -105,30 +110,30 @@ export default function ProjectsGrid() {
   }
 
   return (
-    <main className="min-h-screen bg-[#f0eeea]">
-      <div className="max-w-6xl mx-auto px-6 py-10 flex flex-col gap-8">
-        <header>
-          <h1 className="text-[26px] text-black">Projects</h1>
-          <p className="text-[13px] italic text-[#666] mt-1">
-            {loaded && projects.length === 0
-              ? "No projects yet. Start one with a brief, then expand it into concepts, motifs and visuals."
-              : "Each project has its own brief, tree and collections."}
-          </p>
+    <main className="min-h-screen">
+      <div className="max-w-6xl mx-auto px-6 py-12 flex flex-col gap-8">
+        <header className="flex flex-wrap items-end gap-x-6 gap-y-2">
+          <div className="flex-1 min-w-64">
+            <h1 className="text-[28px] font-semibold tracking-tight text-ink">Projects</h1>
+            <p className="text-[14px] text-ink-2 mt-1">
+              {loaded && projects.length === 0
+                ? "No projects yet. Start one with a brief, then expand it into concepts, motifs and visuals."
+                : "Each project has its own brief, tree and collections."}
+            </p>
+          </div>
           {totals.calls > 0 && (
-            <p className="text-[12px] text-[#666] mt-2" style={{ fontVariantNumeric: "tabular-nums" }}
+            <p className="text-[13px] text-muted tabular-nums"
               title={`Estimated from the tokens Gemini reports, at list prices checked ${PRICES_CHECKED}. Retries and failed calls are included. Deleted projects aren't counted.`}>
-              Gemini use across all projects: {totals.calls} {totals.calls === 1 ? "call" : "calls"} · ≈ {formatUsd(totals.costUsd)}
+              Gemini use across all projects: {totals.calls} {totals.calls === 1 ? "call" : "calls"}, about {formatUsd(totals.costUsd)}
             </p>
           )}
         </header>
 
-        <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(240px,1fr))]">
+        <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(260px,1fr))]">
           <button onClick={newProject} disabled={creating}
-            className={`group min-h-[280px] border border-dashed border-[rgba(0,0,0,0.3)] bg-transparent hover:bg-white hover:border-black transition-colors flex flex-col items-center justify-center gap-2 disabled:opacity-50 ${styles.sq}`}>
-            <span className="text-[44px] leading-none font-light text-[#6b6b6b] group-hover:text-black transition-colors">+</span>
-            <span className="text-[13px] text-[rgba(0,0,0,0.5)] group-hover:text-black transition-colors">
-              {creating ? "Creating…" : "New project"}
-            </span>
+            className="min-h-[280px] rounded-lg border-2 border-dashed border-line-strong text-ink-2 hover:border-ink-2 hover:text-ink hover:bg-surface transition-colors flex flex-col items-center justify-center gap-2 disabled:opacity-50">
+            <Plus size={28} strokeWidth={1.5} aria-hidden />
+            <span className="text-[14px] font-medium">{creating ? "Creating…" : "New project"}</span>
           </button>
           {projects.map((p) => <ProjectCard key={p.id} p={p} />)}
         </div>

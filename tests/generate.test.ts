@@ -106,7 +106,7 @@ describe("outputsFor", () => {
   it("connects a conceptual variation only to its idea and base", () => {
     const [job] = jobs(planRun("conceptual_variations", sel([concept, motif, img]), "b", images, "r1"));
     const out = outputsFor(job, { imageDataUrl: PNG, text: "" }, "r1");
-    expect(out.nodes[0]).toMatchObject({ role: "visual", title: "Ebb" });
+    expect(out.nodes[0]).toMatchObject({ role: "visual", title: "Ebb, visualized" });
     expect(out.nodes[0].body).toBeUndefined();
     expect(out.edges.map((e) => e.from)).toEqual(["Ebb", "img"]);
   });

@@ -4,49 +4,58 @@
 // user-drawn link, one for the brief. All read and write through the store.
 // Text fields save on blur, so the study log gets one event per edit.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { Copy, Crop, Expand as ExpandIcon, Plus, Trash2, X } from "lucide-react";
 import { useProjectStore } from "@/store/projectStore";
 import { visibleParents } from "@/domain/graph";
 import type { ActionType, EdgeId, IdeaNode, NodeId, Region, RoleDetails } from "@/domain/types";
 import { fileToImage } from "@/services/images";
 import { useImageUrl } from "./useImageUrl";
 import { ACTIONS, BODY_LABEL, ROLES, ROLE_LABEL, ROLE_STYLE, originLabel } from "./nodeStyle";
-import styles from "./TreeView.module.css";
+import { RoleBadge, useDialogFocus } from "./ui";
+import { whyUnavailable } from "./availability";
+import { ACTION_ICON } from "./actionIcons";
 
 // ── Shared bits ───────────────────────────────────────────────────────────────
 
-function PanelShell({ children }: { children: React.ReactNode }) {
-  return <aside className="w-full h-full border-l border-[#e4e3e0] bg-white flex flex-col overflow-hidden">{children}</aside>;
+function PanelShell({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <aside aria-label={label} className="w-full h-full border-l border-line bg-surface flex flex-col overflow-hidden">
+      {children}
+    </aside>
+  );
 }
 
 // Kind, title and close on top; the rest of the panel scrolls under it.
 function PanelHeader({ kind, title, subtitle, onClose, children }: {
-  kind: string; title: string; subtitle?: string; onClose: () => void; children?: React.ReactNode;
+  kind: React.ReactNode; title: string; subtitle?: string; onClose: () => void; children?: React.ReactNode;
 }) {
   return (
-    <div className="px-4 pt-3 pb-3 border-b border-[#ecebe7] shrink-0 flex flex-col gap-2">
+    <div className="px-4 pt-3 pb-3 border-b border-line shrink-0 flex flex-col gap-2.5">
       <div className="flex items-start gap-2">
-        <div className="flex-1 min-w-0">
-          <p className="text-[11px] uppercase tracking-[0.14em] text-[#6b6b6b]">{kind}</p>
-          <h2 className="text-[15px] font-semibold text-[#111] leading-snug break-words">{title}</h2>
-          {subtitle && <p className="text-[11px] text-[#6b6b6b] mt-0.5">{subtitle}</p>}
+        <div className="flex-1 min-w-0 flex flex-col gap-1">
+          <div className="text-[12px] text-muted">{kind}</div>
+          <h2 className="idea text-[19px] leading-tight text-ink break-words">{title}</h2>
+          {subtitle && <p className="text-[12px] text-muted">{subtitle}</p>}
         </div>
-        <button onClick={onClose} aria-label="Close panel" title="Close"
-          className="shrink-0 w-7 h-7 -mr-1 flex items-center justify-center text-[16px] text-[#555] hover:text-black hover:bg-[#f2f1ed] transition-colors">
-          ✕
-        </button>
+        <button onClick={onClose} aria-label="Close panel" title="Close" className="icon-btn -mr-1.5 -mt-0.5"><X size={16} /></button>
       </div>
       {children}
     </div>
   );
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return <p className="text-[11px] text-[#6b6b6b] uppercase tracking-wide font-semibold mb-2">{children}</p>;
+function Section({ title, children, last }: { title?: string; children: React.ReactNode; last?: boolean }) {
+  return (
+    <section className={`px-4 py-3.5 flex flex-col gap-2.5 ${last ? "" : "border-b border-line"}`}>
+      {title && <h3 className="section-title">{title}</h3>}
+      {children}
+    </section>
+  );
 }
 
 export function EditField({
-  label, value, onCommit, singleLine, placeholder, rows = 3,
+  label, value, onCommit, singleLine, placeholder, rows = 3, idea,
 }: {
   label: string;
   value: string;
@@ -54,7 +63,9 @@ export function EditField({
   singleLine?: boolean;
   placeholder?: string;
   rows?: number;
+  idea?: boolean;    // set the text in the idea serif
 }) {
+  const id = useId();
   const [draft, setDraft] = useState(value);
   const focused = useRef(false);
   useEffect(() => { if (!focused.current) setDraft(value); }, [value]);
@@ -63,9 +74,9 @@ export function EditField({
     focused.current = false;
     if (draft !== value) onCommit(draft);
   };
-  const cls = "w-full text-[12px] text-[#222] bg-[#fafaf8] border border-transparent hover:border-[#e4e3e0] focus:border-[#555] rounded px-2 py-1 outline-none leading-relaxed placeholder-[#757575] transition-colors";
   const common = {
-    className: cls,
+    id,
+    className: `field ${idea ? "idea text-[15px]" : ""}`,
     value: draft,
     placeholder,
     onFocus: () => { focused.current = true; },
@@ -73,58 +84,59 @@ export function EditField({
   };
   return (
     <div>
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-[#6b6b6b] mb-0.5 px-2">{label}</p>
+      <label htmlFor={id} className="field-label">{label}</label>
       {singleLine ? (
         <input {...common} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
       ) : (
-        <textarea {...common} rows={rows} onChange={(e) => setDraft(e.target.value)} className={`${cls} resize-y`} />
+        <textarea {...common} rows={rows} onChange={(e) => setDraft(e.target.value)} className={`${common.className} resize-y leading-relaxed`} />
       )}
     </div>
   );
 }
 
-function RunButtons({ onRun, label }: { onRun: (a: ActionType) => void; label: string }) {
+// The same three actions as the selection bar, run on this panel's subject.
+function RunButtons({ onRun, title, note, selection }: { onRun: (a: ActionType) => void; title: string; note: string; selection: string[] }) {
+  const project = useProjectStore((s) => s.project)!;
   return (
-    <>
-      <p className="text-[11px] text-[#6b6b6b] uppercase tracking-wide font-semibold px-1 pt-1 pb-0.5">{label}</p>
-      {ACTIONS.map((a) => (
-        <button key={a.id} onClick={() => onRun(a.id)} title={a.description}
-          className="w-full text-left text-[11px] px-3 py-1.5 rounded-lg hover:bg-blue-50 hover:text-[#2563eb] text-[#555] transition-colors">
-          {a.label} →
-        </button>
-      ))}
-    </>
+    <Section title={title}>
+      <p className="hint -mt-1">{note}</p>
+      <div className="flex flex-col gap-1.5">
+        {ACTIONS.map((a) => {
+          const reason = whyUnavailable(a.id, project, selection);
+          const Icon = ACTION_ICON[a.id];
+          return (
+            <button key={a.id} className="btn justify-start" onClick={() => { if (!reason) onRun(a.id); }} aria-disabled={!!reason} title={reason ?? a.description}>
+              <Icon size={15} aria-hidden /> {a.label}
+              {reason && <span className="sr-only">. {reason}</span>}
+            </button>
+          );
+        })}
+      </div>
+    </Section>
   );
 }
 
 function NodeChip({ node, onClick }: { node: IdeaNode; onClick: () => void }) {
   const s = ROLE_STYLE[node.role];
   return (
-    <button onClick={onClick} className="text-left px-2.5 py-2 rounded-lg border transition-colors hover:opacity-80"
-      style={{ borderColor: s.border, background: s.bg }}>
-      <span className="text-[10px] font-semibold uppercase tracking-wide px-1 py-0.5 rounded mr-1.5"
-        style={{ background: s.badgeBg, color: s.badgeText }}>{ROLE_LABEL[node.role]}</span>
-      <span className="text-[11px] font-medium text-[#333] leading-snug">{node.title}</span>
+    <button onClick={onClick} className="text-left flex items-start gap-2 px-2.5 py-2 rounded-md border transition-colors hover:border-ink-2"
+      style={{ borderColor: s.border, background: s.fill }}>
+      <RoleBadge role={node.role} />
+      <span className="idea text-[14px] leading-snug text-ink">{node.title}</span>
     </button>
   );
 }
 
-function SiblingImage({ node, onSelect, onZoom }: { node: IdeaNode; onSelect: () => void; onZoom: (url: string) => void }) {
+function SiblingImage({ node, onSelect }: { node: IdeaNode; onSelect: () => void }) {
   const url = useImageUrl(node.image?.imageId);
   return (
-    <div className="relative group/img aspect-square rounded overflow-hidden bg-[#f7f6f3]">
+    <button onClick={onSelect} className="relative aspect-square rounded-md overflow-hidden bg-subtle border border-line hover:border-ink-2"
+      title={`${node.title}. ${originLabel(node)}`}>
       {url && (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={url} alt={node.title} className="w-full h-full object-cover cursor-pointer" onClick={onSelect} />
+        <img src={url} alt={node.title} className="w-full h-full object-cover" />
       )}
-      {url && (
-        <button className="absolute top-1 right-1 opacity-0 group-hover/img:opacity-100 transition-opacity bg-black/40 text-white text-[11px] px-1.5 py-0.5 rounded"
-          onClick={() => onZoom(url)} title="Zoom">⤢</button>
-      )}
-      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/50 to-transparent px-1.5 py-1 opacity-0 group-hover/img:opacity-100 transition-opacity pointer-events-none">
-        <p className="text-white text-[10px] leading-tight truncate">{originLabel(node)}</p>
-      </div>
-    </div>
+    </button>
   );
 }
 
@@ -133,21 +145,62 @@ function RegionPreview({ node, region, onClick }: { node: IdeaNode; region: Regi
   const url = useImageUrl(node.image?.imageId);
   const box = region === "whole" ? null : region.box;
   return (
-    <button onClick={onClick} className="text-left flex flex-col gap-1 group" title={`Open "${node.title}"`}>
-      <div className="relative w-full bg-[#f7f6f3] overflow-hidden rounded">
+    <button onClick={onClick} className="text-left flex flex-col gap-1.5 group">
+      <div className="relative w-full bg-subtle overflow-hidden rounded-md border border-line">
         {url && (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={url} alt={node.title} className="w-full block" />
+          <img src={url} alt={`${node.title}${box ? ", with the region this came from outlined" : ""}`} className="w-full block" />
         )}
         {url && box && (
-          <div className="absolute border-2 border-[#2563eb] bg-[#2563eb]/10 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]"
+          <div className="absolute border-2 border-accent bg-accent/10 shadow-[0_0_0_9999px_rgb(0_0_0/0.35)]"
             style={{ top: `${box[0] / 10}%`, left: `${box[1] / 10}%`, height: `${(box[2] - box[0]) / 10}%`, width: `${(box[3] - box[1]) / 10}%` }} />
         )}
       </div>
-      <span className="text-[11px] text-[#666] group-hover:underline truncate">
-        {node.title} · {box ? "this region" : "the whole image"}
+      <span className="text-[12px] text-ink-2 group-hover:underline truncate">
+        {box ? `From this part of ${node.title}` : `From the whole of ${node.title}`}
       </span>
     </button>
+  );
+}
+
+// Full-size image, with an option to crop a region into a new node.
+function Lightbox({ src, alt, onCrop, onClose }: { src: string; alt: string; onCrop?: () => void; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const onKeyDown = useDialogFocus(ref, onClose, "[data-autofocus]");
+  return (
+    <div ref={ref} role="dialog" aria-modal="true" aria-label={alt} className="fixed inset-0 z-50 bg-black/85 flex flex-col items-center justify-center gap-3 p-8"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onKeyDown={onKeyDown}>
+      <div className="flex items-center gap-2">
+        {onCrop && <button className="btn" onClick={onCrop}><Crop size={15} aria-hidden /> Crop a region</button>}
+        <button data-autofocus className="btn" onClick={onClose}><X size={15} aria-hidden /> Close</button>
+      </div>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={src} alt={alt} className="max-w-full max-h-[82vh] object-contain rounded-lg shadow-[var(--shadow-modal)]" />
+    </div>
+  );
+}
+
+// Links another node to this one without dragging (the canvas Link tool needs a drag).
+function LinkTo({ nodeId }: { nodeId: NodeId }) {
+  const project = useProjectStore((s) => s.project)!;
+  const addLink = useProjectStore((s) => s.addLink);
+  const id = useId();
+  const [target, setTarget] = useState("");
+  const options = Object.values(project.nodes).filter((n) => !n.hidden && n.id !== nodeId)
+    .sort((a, b) => a.title.localeCompare(b.title));
+  if (options.length === 0) return null;
+  return (
+    <Section title="Link to another node">
+      <form className="flex gap-1.5" onSubmit={(e) => { e.preventDefault(); if (target) { addLink(nodeId, target); setTarget(""); } }}>
+        <label htmlFor={id} className="sr-only">Node to link to</label>
+        <select id={id} className="field flex-1 min-w-0" value={target} onChange={(e) => setTarget(e.target.value)}>
+          <option value="">Choose a node</option>
+          {options.map((n) => <option key={n.id} value={n.id}>{n.title} ({ROLE_LABEL[n.role].toLowerCase()})</option>)}
+        </select>
+        <button type="submit" className="btn" disabled={!target}>Link</button>
+      </form>
+    </Section>
   );
 }
 
@@ -169,10 +222,11 @@ export function NodePanel({
   const duplicateNode = useProjectStore((s) => s.duplicateNode);
   const cropNode = useProjectStore((s) => s.cropNode);
   const setSelection = useProjectStore((s) => s.setSelection);
+  const typeLabelId = useId();
 
   const node = project.nodes[nodeId];
   const imageUrl = useImageUrl(node?.image?.imageId);
-  const [lightbox, setLightbox] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState(false);
   const [cropping, setCropping] = useState(false);
 
   const parents = useMemo(() => (node ? visibleParents(project, node.id).map((id) => project.nodes[id]) : []), [project, node]);
@@ -199,7 +253,6 @@ export function NodePanel({
   ), [project, nodeId]);
 
   if (!node) return null;
-  const s = ROLE_STYLE[node.role];
   const imageSiblings = siblings.filter((n) => n.image);
   const textSiblings = siblings.filter((n) => !n.image);
   const setDetail = (key: keyof RoleDetails, v: string) =>
@@ -207,18 +260,17 @@ export function NodePanel({
 
   return (
     <>
-      <PanelShell>
-        <PanelHeader kind={ROLE_LABEL[node.role]} title={node.title} subtitle={originLabel(node)} onClose={onClose}>
+      <PanelShell label={`${ROLE_LABEL[node.role]} details`}>
+        <PanelHeader kind={<RoleBadge role={node.role} />} title={node.title} subtitle={originLabel(node)} onClose={onClose}>
           <div className="flex items-center gap-2">
-            <span id="type-label" className="text-[11px] text-[#6b6b6b]">Type</span>
-            <div role="radiogroup" aria-labelledby="type-label" className="flex flex-1 border border-[rgba(0,0,0,0.2)]">
+            <span id={typeLabelId} className="text-[12px] text-ink-2 font-medium">Type</span>
+            <div role="radiogroup" aria-labelledby={typeLabelId} className="flex flex-1 p-0.5 rounded-md bg-subtle border border-line">
               {ROLES.map((r) => {
-                const rs = ROLE_STYLE[r];
                 const active = node.role === r;
                 return (
                   <button key={r} role="radio" aria-checked={active} onClick={() => !active && retagNode(node.id, r)}
-                    className="flex-1 text-[11px] py-1 transition-colors border-l first:border-l-0 border-[rgba(0,0,0,0.12)]"
-                    style={active ? { background: rs.badgeBg, color: rs.badgeText } : { color: "#444" }}>
+                    className={`flex-1 h-7 rounded-[5px] text-[12px] font-medium transition-colors ${
+                      active ? "bg-surface text-ink shadow-[0_1px_2px_rgb(16_24_40/0.1)]" : "text-ink-2 hover:text-ink"}`}>
                     {ROLE_LABEL[r]}
                   </button>
                 );
@@ -229,48 +281,19 @@ export function NodePanel({
 
         <div className="flex-1 overflow-y-auto">
           {imageUrl && (
-            <div className="border-b border-[#f0efec]">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={imageUrl} alt={node.title} className="w-full object-cover cursor-zoom-in" onClick={() => setLightbox(imageUrl)} />
-              <p className="px-3 py-2 text-[11px] text-[#6b6b6b]">Click to enlarge or crop a region</p>
+            <div className="px-4 pt-3.5">
+              <button onClick={() => setLightbox(true)} className="block w-full rounded-md overflow-hidden border border-line group relative">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={imageUrl} alt={node.title} className="w-full object-cover" />
+                <span className="absolute right-2 bottom-2 btn btn-sm opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity">
+                  <ExpandIcon size={13} aria-hidden /> View and crop
+                </span>
+              </button>
             </div>
           )}
 
-          {(parents.length > 0 || exploredLink) && (
-            <div className="px-4 py-3 border-b border-[#f0efec]">
-              <SectionLabel>Came from</SectionLabel>
-              <div className="flex flex-col gap-1.5">
-                {exploredLink && project.nodes[exploredLink.from] && project.nodes[exploredLink.to] && (
-                  <button onClick={() => setSelection([exploredLink.id])}
-                    className="text-left px-2.5 py-2 rounded-lg border border-dashed border-[#64748b] text-[11px] text-[#334155] hover:bg-[#f1f5f9]">
-                    <span className="uppercase tracking-wide text-[10px] font-semibold mr-1.5">Explored link</span>
-                    {project.nodes[exploredLink.from].title} ↔ {project.nodes[exploredLink.to].title}
-                    {exploredLink.label && <span className="italic text-[#64748b]"> · {exploredLink.label}</span>}
-                  </button>
-                )}
-                {parents.map((p) => {
-                  const region = regions.get(p.id);
-                  return p.image && region
-                    ? <RegionPreview key={p.id} node={p} region={region} onClick={() => setSelection([p.id])} />
-                    : <NodeChip key={p.id} node={p} onClick={() => setSelection([p.id])} />;
-                })}
-              </div>
-            </div>
-          )}
-
-          {imageSiblings.length > 0 && (
-            <div className="border-b border-[#f0efec] p-3">
-              <SectionLabel>Images from the same run</SectionLabel>
-              <div className="grid grid-cols-3 gap-1.5">
-                {imageSiblings.map((sib) => (
-                  <SiblingImage key={sib.id} node={sib} onSelect={() => setSelection([sib.id])} onZoom={setLightbox} />
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="p-4 border-b border-[#f0efec] flex flex-col gap-3" style={{ borderTop: `3px solid ${s.bg}` }}>
-            <EditField label="Title" value={node.title} onCommit={(v) => editNode(node.id, { title: v })} singleLine />
+          <Section>
+            <EditField label="Title" value={node.title} onCommit={(v) => editNode(node.id, { title: v })} singleLine idea />
             <EditField label={BODY_LABEL[node.role]} value={node.body ?? ""} onCommit={(v) => editNode(node.id, { body: v || undefined })} />
             {(node.role === "concept" || node.details?.rationale) && (
               <EditField label="Rationale" value={node.details?.rationale ?? ""} onCommit={(v) => setDetail("rationale", v)} />
@@ -281,81 +304,89 @@ export function NodePanel({
             {(node.role === "motif" || node.details?.category) && (
               <EditField label="Category" value={node.details?.category ?? ""} onCommit={(v) => setDetail("category", v)} singleLine />
             )}
-          </div>
+          </Section>
 
-          {textSiblings.length > 0 && (
-            <div className="p-3 border-b border-[#f0efec]">
-              <SectionLabel>From the same run ({siblings.length})</SectionLabel>
-              <div className="flex flex-col gap-1.5">
-                {textSiblings.map((sib) => <NodeChip key={sib.id} node={sib} onClick={() => setSelection([sib.id])} />)}
-              </div>
-            </div>
+          {(parents.length > 0 || exploredLink) && (
+            <Section title="Came from">
+              {exploredLink && project.nodes[exploredLink.from] && project.nodes[exploredLink.to] && (
+                <button onClick={() => setSelection([exploredLink.id])}
+                  className="text-left px-2.5 py-2 rounded-md border border-dashed border-ink-2 hover:bg-subtle">
+                  <span className="block text-[12px] text-muted">Explored link</span>
+                  <span className="idea text-[14px] text-ink">
+                    {project.nodes[exploredLink.from].title} and {project.nodes[exploredLink.to].title}
+                  </span>
+                  {exploredLink.label && <span className="block text-[12px] text-ink-2 italic">{exploredLink.label}</span>}
+                </button>
+              )}
+              {parents.map((p) => {
+                const region = regions.get(p.id);
+                return p.image && region
+                  ? <RegionPreview key={p.id} node={p} region={region} onClick={() => setSelection([p.id])} />
+                  : <NodeChip key={p.id} node={p} onClick={() => setSelection([p.id])} />;
+              })}
+            </Section>
           )}
+
+          {siblings.length > 0 && (
+            <Section title={`Made in the same run (${siblings.length})`}>
+              {imageSiblings.length > 0 && (
+                <div className="grid grid-cols-3 gap-1.5">
+                  {imageSiblings.map((sib) => <SiblingImage key={sib.id} node={sib} onSelect={() => setSelection([sib.id])} />)}
+                </div>
+              )}
+              {textSiblings.map((sib) => <NodeChip key={sib.id} node={sib} onClick={() => setSelection([sib.id])} />)}
+            </Section>
+          )}
+
+          <LinkTo nodeId={node.id} />
 
           {links.length > 0 && (
-            <div className="p-3 border-b border-[#f0efec]">
-              <SectionLabel>Linked to</SectionLabel>
-              <div className="flex flex-col gap-1">
-                {links.map((e) => {
-                  const other = project.nodes[e.from === node.id ? e.to : e.from];
-                  return (
-                    <div key={e.id} className="flex items-center gap-2 text-[11px] text-[#444]">
-                      <button className="flex-1 text-left truncate hover:underline" onClick={() => setSelection([e.id])}>
-                        {other.title}{e.label ? <span className="italic text-[#6b6b6b]"> · {e.label}</span> : null}
-                      </button>
-                      <button className="text-[#6b6b6b] hover:text-red-400 text-[11px]" title="Remove link" onClick={() => hideEdge(e.id)}>✕</button>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+            <Section title="Linked to">
+              {links.map((e) => {
+                const other = project.nodes[e.from === node.id ? e.to : e.from];
+                return (
+                  <div key={e.id} className="flex items-center gap-1">
+                    <button className="flex-1 text-left truncate text-[13px] text-ink hover:underline" onClick={() => setSelection([e.id])}>
+                      <span className="idea text-[14px]">{other.title}</span>
+                      {e.label && <span className="text-ink-2 italic">, {e.label}</span>}
+                    </button>
+                    <button className="icon-btn hover:text-danger" aria-label={`Remove link to ${other.title}`} onClick={() => hideEdge(e.id)}>
+                      <X size={14} />
+                    </button>
+                  </div>
+                );
+              })}
+            </Section>
           )}
 
-          <div className="p-3 flex flex-col gap-1">
-            <button onClick={() => { const id = duplicateNode(node.id); if (id) setSelection([id]); }}
-              className="w-full text-left text-[11px] px-3 py-1.5 rounded-lg hover:bg-[#f5f0ff] hover:text-purple-700 text-[#555] transition-colors">
-              ⧉ Duplicate node
-            </button>
-            <button onClick={onAddChild}
-              className="w-full text-left text-[11px] px-3 py-1.5 rounded-lg hover:bg-[#f0f9f0] hover:text-green-700 text-[#555] transition-colors">
-              + Add child node
-            </button>
-            <button onClick={() => { hideNode(node.id); onClose(); }}
-              className="w-full text-left text-[11px] px-3 py-1.5 rounded-lg hover:bg-red-50 text-red-700 transition-colors">
-              ✕ Remove node
-            </button>
-            <RunButtons onRun={onRun} label="Use this for" />
-          </div>
+          <RunButtons onRun={onRun} title="Use this node" note="Runs on this node alone." selection={[node.id]} />
+
+          <Section last>
+            <div className="flex flex-wrap gap-1.5">
+              <button className="btn" onClick={() => { const id = duplicateNode(node.id); if (id) setSelection([id]); }}>
+                <Copy size={14} aria-hidden /> Duplicate
+              </button>
+              <button className="btn" onClick={onAddChild}><Plus size={14} aria-hidden /> Add child</button>
+              <button className="btn btn-danger ml-auto" onClick={() => { hideNode(node.id); onClose(); }}>
+                <Trash2 size={14} aria-hidden /> Remove
+              </button>
+            </div>
+          </Section>
         </div>
       </PanelShell>
 
-      {lightbox && !cropping && (
-        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-8" onClick={() => setLightbox(null)}>
-          <div className="relative max-w-4xl max-h-full" onClick={(e) => e.stopPropagation()}>
-            <div className="absolute -top-9 left-0 right-0 flex items-center justify-between">
-              {lightbox === imageUrl ? (
-                <button onClick={() => setCropping(true)}
-                  className="text-sm text-white/70 hover:text-white border border-white/30 hover:border-white/70 px-3 py-1 rounded transition-colors">
-                  ⊙ Crop a region
-                </button>
-              ) : <span />}
-              <button onClick={() => setLightbox(null)} className="text-white/60 hover:text-white text-sm transition-colors">✕ Close</button>
-            </div>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={lightbox} alt="Full size" className="max-w-full max-h-[82vh] object-contain rounded-xl shadow-2xl" />
-          </div>
-        </div>
+      {lightbox && imageUrl && !cropping && (
+        <Lightbox src={imageUrl} alt={node.title} onCrop={() => setCropping(true)} onClose={() => setLightbox(false)} />
       )}
-
-      {lightbox && cropping && (
+      {lightbox && imageUrl && cropping && (
         <CropModal
-          src={lightbox}
+          src={imageUrl}
           mimeType={node.image?.mimeType ?? "image/png"}
           onSave={async (blob, box) => {
             const image = await fileToImage(blob);
             const id = await cropNode(node.id, image, box);
             setCropping(false);
-            setLightbox(null);
+            setLightbox(false);
             if (id) setSelection([id]);
           }}
           onClose={() => setCropping(false)}
@@ -378,24 +409,23 @@ export function LinkPanel({ edgeId, onClose, onRun }: { edgeId: EdgeId; onClose:
   const to = project.nodes[edge.to];
 
   return (
-    <PanelShell>
-      <PanelHeader kind="Link" title={`${from?.title} ↔ ${to?.title}`} onClose={onClose} />
+    <PanelShell label="Link details">
+      <PanelHeader kind="Link" title={`${from?.title} and ${to?.title}`} onClose={onClose} />
       <div className="flex-1 overflow-y-auto">
-        <div className="p-4 border-b border-[#f0efec] flex flex-col gap-3">
+        <Section>
           <EditField label="What connects them" value={edge.label ?? ""} onCommit={(v) => labelEdge(edge.id, v)}
-            placeholder="e.g. both about holding back" />
+            placeholder="For example, both are about holding back" />
           <div className="flex flex-col gap-1.5">
             {from && <NodeChip node={from} onClick={() => setSelection([from.id])} />}
             {to && <NodeChip node={to} onClick={() => setSelection([to.id])} />}
           </div>
-        </div>
-        <div className="p-3 flex flex-col gap-1">
-          <RunButtons onRun={onRun} label="Explore this connection" />
-          <button onClick={() => { hideEdge(edge.id); onClose(); }}
-            className="w-full text-left text-[11px] px-3 py-1.5 mt-1 rounded-lg hover:bg-red-50 text-red-700 transition-colors">
-            ✕ Remove link
+        </Section>
+        <RunButtons onRun={onRun} title="Explore this connection" note="Runs on the link: ideas between the two ends, or one expressed through the other." selection={[edge.id]} />
+        <Section last>
+          <button className="btn btn-danger self-start" onClick={() => { hideEdge(edge.id); onClose(); }}>
+            <Trash2 size={14} aria-hidden /> Remove link
           </button>
-        </div>
+        </Section>
       </div>
     </PanelShell>
   );
@@ -408,14 +438,15 @@ export function BriefPanel({ onClose, onRun }: { onClose: () => void; onRun: (a:
   const setTitle = useProjectStore((s) => s.setTitle);
   const setBrief = useProjectStore((s) => s.setBrief);
   return (
-    <PanelShell>
+    <PanelShell label="Project brief">
       <PanelHeader kind="Project brief" title={project.title} onClose={onClose} />
-      <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
-        <EditField label="Title" value={project.title} onCommit={setTitle} singleLine />
-        <EditField label="Brief" value={project.brief} onCommit={setBrief} placeholder="Describe your design challenge…" rows={10} />
-        <div className="flex flex-col gap-1 -mx-1">
-          <RunButtons onRun={onRun} label="Start from the brief" />
-        </div>
+      <div className="flex-1 overflow-y-auto">
+        <Section>
+          <EditField label="Project name" value={project.title} onCommit={setTitle} singleLine idea />
+          <EditField label="Brief" value={project.brief} onCommit={setBrief} rows={10} idea
+            placeholder="What are you designing, for whom, and what should it feel like?" />
+        </Section>
+        <RunButtons onRun={onRun} title="Start from the brief" note="Runs on the brief, with nothing selected." selection={[]} />
       </div>
     </PanelShell>
   );
@@ -434,6 +465,8 @@ function CropModal({
   onClose: () => void;
 }) {
   const imgRef = useRef<HTMLImageElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const onDialogKeyDown = useDialogFocus(dialogRef, onClose, "[data-autofocus]");
   const [ready, setReady] = useState(false);
   const [crop, setCrop] = useState({ x: 0, y: 0, w: 0, h: 0 });
   const dragRef = useRef<{
@@ -441,7 +474,6 @@ function CropModal({
     startX: number; startY: number;
     startCrop: { x: number; y: number; w: number; h: number };
   } | null>(null);
-
   function handleImageLoad() {
     const img = imgRef.current!;
     const m = 0.1;
@@ -504,7 +536,7 @@ function CropModal({
     canvas.toBlob((blob) => { if (blob) onSave(blob, box); }, type, 0.92);
   }
 
-  const HANDLE = 10;
+  const HANDLE = 12;
   const handles: Array<{ id: "nw" | "ne" | "sw" | "se"; left: number; top: number; cursor: string }> = [
     { id: "nw", left: crop.x - HANDLE / 2,          top: crop.y - HANDLE / 2,          cursor: "nwse-resize" },
     { id: "ne", left: crop.x + crop.w - HANDLE / 2, top: crop.y - HANDLE / 2,          cursor: "nesw-resize" },
@@ -513,36 +545,35 @@ function CropModal({
   ];
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black/92 flex flex-col items-center justify-center gap-5 p-8">
-      <div className="flex items-center gap-4">
-        <p className="text-white/60 text-sm">Drag to select a region</p>
-        <button onClick={handleApply} className="bg-white text-[#111] text-sm px-4 py-1.5 rounded-sm hover:bg-white/90 transition-colors font-medium">
-          Save as new node
-        </button>
-        <button onClick={onClose} className="text-white/50 hover:text-white text-sm transition-colors">Cancel</button>
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Crop a region" className="fixed inset-0 z-[60] bg-black/90 flex flex-col items-center justify-center gap-4 p-8"
+      onKeyDown={onDialogKeyDown}>
+      <div className="flex items-center gap-2">
+        <p className="text-white/80 text-[13px] mr-2">Drag the box or its corners to choose a region</p>
+        <button data-autofocus onClick={handleApply} className="btn btn-primary bg-white text-ink border-white hover:bg-white/90">Save as new node</button>
+        <button onClick={onClose} className="btn">Cancel</button>
       </div>
       <div className="relative inline-block select-none" onPointerMove={onPointerMove} onPointerUp={() => { dragRef.current = null; }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img ref={imgRef} src={src} alt="Crop" className="block max-w-[80vw] max-h-[70vh] object-contain" onLoad={handleImageLoad} draggable={false} />
+        <img ref={imgRef} src={src} alt="Image to crop" className="block max-w-[80vw] max-h-[70vh] object-contain" onLoad={handleImageLoad} draggable={false} />
         {ready && (
           <>
             <div
               style={{
                 position: "absolute", left: crop.x, top: crop.y, width: crop.w, height: crop.h,
-                border: "1.5px solid rgba(255,255,255,0.9)", boxShadow: "0 0 0 9999px rgba(0,0,0,0.55)", cursor: "move",
+                border: "1.5px solid rgb(255 255 255 / 0.9)", boxShadow: "0 0 0 9999px rgb(0 0 0 / 0.55)", cursor: "move",
               }}
               onPointerDown={(e) => onHandlePointerDown(e, "move")}
             >
               {[1, 2].map((n) => (
-                <div key={`v${n}`} style={{ position: "absolute", left: `${(n / 3) * 100}%`, top: 0, bottom: 0, width: 1, background: "rgba(255,255,255,0.3)" }} />
+                <div key={`v${n}`} style={{ position: "absolute", left: `${(n / 3) * 100}%`, top: 0, bottom: 0, width: 1, background: "rgb(255 255 255 / 0.3)" }} />
               ))}
               {[1, 2].map((n) => (
-                <div key={`h${n}`} style={{ position: "absolute", top: `${(n / 3) * 100}%`, left: 0, right: 0, height: 1, background: "rgba(255,255,255,0.3)" }} />
+                <div key={`h${n}`} style={{ position: "absolute", top: `${(n / 3) * 100}%`, left: 0, right: 0, height: 1, background: "rgb(255 255 255 / 0.3)" }} />
               ))}
             </div>
             {handles.map(({ id, left, top, cursor }) => (
               <div key={id}
-                style={{ position: "absolute", left, top, width: HANDLE, height: HANDLE, background: "white", border: "1px solid rgba(0,0,0,0.4)", borderRadius: 2, cursor }}
+                style={{ position: "absolute", left, top, width: HANDLE, height: HANDLE, background: "white", border: "1px solid rgb(0 0 0 / 0.4)", borderRadius: 3, cursor }}
                 onPointerDown={(e) => onHandlePointerDown(e, id)} />
             ))}
           </>

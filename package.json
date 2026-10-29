@@ -17,6 +17,7 @@
     "@xyflow/system": "^0.0.77",
     "dexie": "^4.4.7",
     "html-to-image": "^1.11.13",
+    "lucide-react": "^0.577.0",
     "nanoid": "^5.1.16",
     "next": "^15.2.4",
     "react": "^19.0.0",

@@ -2,3 +2,5 @@ node_modules
 logs/
 .next/
 .env*.local
+.DS_Store
+dragon cafe/
