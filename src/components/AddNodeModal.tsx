@@ -59,7 +59,7 @@ export default function AddNodeModal({ initialParentIds, onClose }: { initialPar
       <div className={`bg-white shadow-xl w-full max-w-md p-5 ${styles.sq}`} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-[13px] font-semibold text-[#111]">Add node</h2>
-          <button onClick={onClose} className="text-[#bbb] hover:text-[#555] text-base leading-none">✕</button>
+          <button onClick={onClose} className="text-[#6b6b6b] hover:text-[#555] text-base leading-none">✕</button>
         </div>
 
         <div className="flex flex-wrap gap-1.5 mb-4">
@@ -68,7 +68,7 @@ export default function AddNodeModal({ initialParentIds, onClose }: { initialPar
             const active = role === r;
             return (
               <button key={r} onClick={() => setRole(r)}
-                className={`text-[9px] font-semibold uppercase tracking-wide px-2.5 py-1 transition-colors ${styles.sq}`}
+                className={`text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 transition-colors ${styles.sq}`}
                 style={active ? { background: s.badgeBg, color: s.badgeText } : { background: "#f5f5f3", color: "#888" }}>
                 {ROLE_LABEL[r]}
               </button>
@@ -79,9 +79,9 @@ export default function AddNodeModal({ initialParentIds, onClose }: { initialPar
         <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }}
           placeholder={file ? "Title (defaults to the file name)" : "Title"}
-          className="w-full text-[13px] border border-[#e4e3e0] rounded-lg px-3 py-2 mb-3 focus:outline-none focus:border-[#aaa] placeholder:text-[#ccc]" />
+          className="w-full text-[13px] border border-[#e4e3e0] rounded-lg px-3 py-2 mb-3 focus:outline-none focus:border-[#aaa] placeholder:text-[#6b6b6b]" />
         <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Description (optional)" rows={2}
-          className="w-full text-[12px] border border-[#e4e3e0] rounded-lg px-3 py-2 mb-3 resize-none focus:outline-none focus:border-[#aaa] placeholder:text-[#ccc]" />
+          className="w-full text-[12px] border border-[#e4e3e0] rounded-lg px-3 py-2 mb-3 resize-none focus:outline-none focus:border-[#aaa] placeholder:text-[#6b6b6b]" />
 
         <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
         {file && preview ? (
@@ -90,19 +90,19 @@ export default function AddNodeModal({ initialParentIds, onClose }: { initialPar
             <img src={preview} alt={file.name} className="w-12 h-12 object-cover rounded shrink-0" />
             <div className="flex-1 min-w-0">
               <p className="text-[11px] text-[#333] truncate">{file.name}</p>
-              <button onClick={() => setFile(null)} className="text-[10px] text-[#888] hover:text-[#333] underline mt-0.5">Remove image</button>
+              <button onClick={() => setFile(null)} className="text-[11px] text-[#666] hover:text-[#333] underline mt-0.5">Remove image</button>
             </div>
           </div>
         ) : (
           <button onClick={() => fileRef.current?.click()}
-            className="w-full border border-dashed border-[#ccc] rounded-lg py-3 text-[11px] text-[#999] hover:border-[#888] hover:text-[#555] transition-colors mb-4">
+            className="w-full border border-dashed border-[#ccc] rounded-lg py-3 text-[11px] text-[#6b6b6b] hover:border-[#888] hover:text-[#555] transition-colors mb-4">
             + Add an image (optional, any role)
           </button>
         )}
 
         {candidates.length > 0 && (
           <div className="mb-4">
-            <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold mb-1.5">Comes from (optional)</p>
+            <p className="text-[11px] text-[#6b6b6b] uppercase tracking-wide font-semibold mb-1.5">Comes from (optional)</p>
             <div className="flex flex-col gap-0.5 max-h-40 overflow-y-auto border border-[#f0efec] rounded-lg p-1">
               {candidates.map((n) => {
                 const s = ROLE_STYLE[n.role];
@@ -110,7 +110,7 @@ export default function AddNodeModal({ initialParentIds, onClose }: { initialPar
                 return (
                   <label key={n.id} className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors ${checked ? "bg-blue-50" : "hover:bg-[#f7f6f3]"}`}>
                     <input type="checkbox" checked={checked} onChange={() => toggleParent(n.id)} className="shrink-0 accent-blue-600" />
-                    <span className="text-[7px] font-semibold uppercase px-1 py-0.5 rounded shrink-0" style={{ background: s.badgeBg, color: s.badgeText }}>
+                    <span className="text-[10px] font-semibold uppercase px-1 py-0.5 rounded shrink-0" style={{ background: s.badgeBg, color: s.badgeText }}>
                       {ROLE_LABEL[n.role]}
                     </span>
                     <span className="text-[11px] text-[#333] truncate flex-1">{n.title}</span>
@@ -122,7 +122,7 @@ export default function AddNodeModal({ initialParentIds, onClose }: { initialPar
         )}
 
         <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="text-[11px] text-[#888] hover:text-[#333] px-3 py-1.5 transition-colors">Cancel</button>
+          <button onClick={onClose} className="text-[11px] text-[#666] hover:text-[#333] px-3 py-1.5 transition-colors">Cancel</button>
           <button onClick={submit} disabled={!canAdd || saving}
             className="text-[11px] bg-[#111] text-white px-4 py-1.5 rounded-lg hover:bg-[#333] transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
             {saving ? "Adding…" : "Add node"}

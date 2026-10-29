@@ -42,7 +42,7 @@ import { makeCollection, makeEdge, makeNode, type NewNodeInput } from "@/domain/
 import * as u from "@/domain/updates";
 import { repo as defaultRepo, type NewImage, type Repository } from "@/db";
 import { blobToDataUrl, dataUrlToImage } from "@/services/images";
-import { ActionCallError, callAction as fetchAction, outputsFor, planRun, readableError, type CallActionFn, type RunOptions, type Selection } from "@/services/generate";
+import { ActionCallError, callAction as fetchAction, outputsFor, planRun, readableError, type CallActionFn, type Job, type RunOptions, type Selection } from "@/services/generate";
 import type { Usage } from "@/domain/wire";
 import { costUsd } from "@/domain/pricing";
 
@@ -52,6 +52,26 @@ type Ref = NodeId | EdgeId;
 export interface Notice {
   id: string;
   message: string;
+  kind: "error" | "info";   // errors stay until dismissed; info fades
+  action?: { label: string; run: () => void };
+}
+
+const ACTION_NAMES: Record<ActionType, string> = {
+  expand: "Expand",
+  visual_variations: "Visual variations",
+  conceptual_variations: "Conceptual variations",
+};
+
+// "Made 4 concepts and 3 motifs", "Made 10 images".
+function describeOutputs(nodes: IdeaNode[]): string {
+  const images = nodes.filter((n) => n.image).length;
+  const parts: string[] = [];
+  const count = (n: number, one: string, many: string) => { if (n) parts.push(`${n} ${n === 1 ? one : many}`); };
+  count(nodes.filter((n) => !n.image && n.role === "concept").length, "concept", "concepts");
+  count(nodes.filter((n) => !n.image && n.role === "motif").length, "motif", "motifs");
+  count(images, "image", "images");
+  count(nodes.filter((n) => !n.image && (n.role === "visual" || n.role === "note")).length, "note", "notes");
+  return parts.length ? `Made ${parts.slice(0, -1).join(", ")}${parts.length > 1 ? " and " : ""}${parts.at(-1)}` : "Made nothing";
 }
 
 export interface ProjectStore {
@@ -61,7 +81,8 @@ export interface ProjectStore {
   saveError: string | null;
   selection: Ref[];
   runs: Record<RunId, RunInProgress>;   // memory only
-  notices: Notice[];                     // errors to show the user
+  notices: Notice[];                     // messages to show the user
+  focus: { nodeIds: NodeId[]; seq: number } | null;  // nodes the canvas should bring into view
 
   // Projects
   loadProjects(): Promise<void>;
@@ -83,6 +104,7 @@ export interface ProjectStore {
   retagNode(id: NodeId, role: Role): void;
   hideNode(id: NodeId): void;
   unhideNode(id: NodeId): void;
+  unhideNodes(ids: NodeId[]): void;
   clearTree(): void;
 
   // Edges
@@ -111,6 +133,7 @@ export interface ProjectStore {
   // the selection doesn't suit the action (a notice explains why).
   runAction(action: ActionType, opts?: RunOptions): Promise<RunId | null>;
   dismissNotice(id: string): void;
+  focusOn(nodeIds: NodeId[]): void;
 }
 
 // How many requests of one run go to the server at once.
@@ -163,8 +186,8 @@ export function createProjectStore(
       getRepo().logEvent({ projectId, actor, type, payload }).catch(() => {});
     }
 
-    function notify(message: string) {
-      set({ notices: [...get().notices, { id: newId("event"), message }] });
+    function notify(message: string, opts: { kind?: Notice["kind"]; action?: Notice["action"] } = {}) {
+      set({ notices: [...get().notices, { id: newId("event"), message, kind: opts.kind ?? "error", action: opts.action }] });
     }
 
     // Applies a change to a project that may no longer be open (a run that
@@ -199,6 +222,79 @@ export function createProjectStore(
       }
     }
 
+    // Runs a run's jobs, at most MAX_PARALLEL at a time. Each job's outputs
+    // land on the canvas as soon as it finishes; failures are reported
+    // together at the end, with a Retry that re-runs only the failed jobs.
+    async function execute(projectId: ProjectId, action: ActionType, runId: RunId, jobs: Job[], inputIds: (NodeId | EdgeId)[]) {
+      set({ runs: { ...get().runs, [runId]: { runId, action, inputs: inputIds, total: jobs.length, done: 0, failed: 0, startedAt: now() } } });
+      const tick = (field: "done" | "failed") => {
+        const r = get().runs[runId];
+        if (r) set({ runs: { ...get().runs, [runId]: { ...r, [field]: r[field] + 1 } } });
+      };
+      const made: IdeaNode[] = [];
+      const errors: string[] = [];
+      const failed: Job[] = [];
+      const used = { calls: 0, costUsd: 0 };
+      const countUsage = (usage?: Usage) => {
+        if (!usage) return;
+        used.calls += usage.calls;
+        used.costUsd += costUsd(usage) ?? 0;
+      };
+
+      await inPool(jobs, MAX_PARALLEL, async (job) => {
+        try {
+          const { result, usage } = await callAction(job.action, job.req);
+          const out = outputsFor(job, result, runId);
+          for (const img of out.images) await getRepo().saveImage(dataUrlToImage(img.dataUrl), img.imageId);
+          await applyTo(projectId, (s) => {
+            const next = u.addNodesAndEdges(s, out.nodes, out.edges);
+            return usage ? u.addUsage(next, usage) : next;
+          });
+          countUsage(usage);
+          made.push(...out.nodes);
+          tick("done");
+        } catch (err) {
+          const usage = err instanceof ActionCallError ? err.usage : undefined;
+          if (usage) await applyTo(projectId, (s) => u.addUsage(s, usage));
+          countUsage(usage);
+          errors.push(`${job.label}: ${readableError(err instanceof Error ? err.message : String(err))}`);
+          failed.push(job);
+          tick("failed");
+        }
+      });
+
+      const { [runId]: _finished, ...rest } = get().runs;
+      set({ runs: rest });
+
+      const outputIds = made.map((n) => n.id);
+      const stillOpen = get().project?.id === projectId;
+      const name = ACTION_NAMES[action];
+      const retry: Notice["action"] = {
+        label: failed.length === jobs.length ? "Retry" : "Retry failed",
+        run: () => {
+          if (get().project?.id !== projectId) return;
+          const again = newId("run");
+          log("run.started", { runId: again, action, inputIds, jobs: failed.length, retryOf: runId });
+          execute(projectId, action, again, failed.map((j) => ({ ...j, req: { ...j.req, runId: again } })), inputIds);
+        },
+      };
+
+      if (made.length && stillOpen) {
+        get().focusOn(outputIds);
+        notify(describeOutputs(made), { kind: "info", action: { label: "Show", run: () => get().focusOn(outputIds) } });
+      }
+      if (errors.length === jobs.length) {
+        // Same message from every job (e.g. a bad key) is only worth showing once.
+        const first = errors[0].slice(errors[0].indexOf(": ") + 2);
+        const detail = jobs.length === 1 || errors.every((e) => e.endsWith(first)) ? first : `All ${jobs.length} outputs failed. ${errors[0]}`;
+        if (stillOpen) notify(`${name} failed: ${detail}`, { action: retry });
+        log("run.failed", { runId, errors: errors.slice(0, 5), ...used }, { actor: "model", projectId });
+      } else {
+        if (errors.length && stillOpen) notify(`${name}: ${errors.length} of ${jobs.length} outputs failed. ${errors[0]}`, { action: retry });
+        log("run.done", { runId, outputIds, failed: errors.length, errors: errors.slice(0, 5), ...used }, { actor: "model", projectId });
+      }
+    }
+
     function parentEdges(parentIds: NodeId[], to: NodeId) {
       return parentIds.map((from) => makeEdge(from, to, "derived_from"));
     }
@@ -211,6 +307,7 @@ export function createProjectStore(
       selection: [],
       runs: {},
       notices: [],
+      focus: null,
 
       // ── Projects ──────────────────────────────────────────────────────────
 
@@ -224,7 +321,7 @@ export function createProjectStore(
         await flush();
         const p = emptyProject(newId("project"), title, now());
         await getRepo().saveProject(p);
-        set({ project: p, status: "ready", selection: [] });
+        set({ project: p, status: "ready", selection: [], notices: [], focus: null });
         log("project.created", { title });
         await get().loadProjects();
         return p.id;
@@ -233,7 +330,7 @@ export function createProjectStore(
       async openProject(id) {
         if (get().project?.id === id && get().status === "ready") return;
         await flush();
-        set({ status: "loading", selection: [] });
+        set({ status: "loading", selection: [], notices: [], focus: null });
         const p = await getRepo().loadProject(id);
         set({ project: p ?? null, status: p ? "ready" : "missing" });
         if (p) log("project.opened");
@@ -241,7 +338,7 @@ export function createProjectStore(
 
       async closeProject() {
         await flush();
-        set({ project: null, status: "idle", selection: [] });
+        set({ project: null, status: "idle", selection: [], notices: [], focus: null });
         await get().loadProjects();
       },
 
@@ -346,18 +443,30 @@ export function createProjectStore(
       },
 
       hideNode(id) {
+        const node = get().project?.nodes[id];
+        if (!node || node.hidden) return;
         commit((p) => u.hideNode(p, id), { type: "node.hidden", payload: { nodeId: id } });
         set({ selection: get().selection.filter((s) => s !== id) });
+        notify(`Removed "${node.title}"`, { kind: "info", action: { label: "Undo", run: () => get().unhideNode(id) } });
       },
 
       unhideNode(id) {
         commit((p) => u.unhideNode(p, id), { type: "node.unhidden", payload: { nodeId: id } });
       },
 
+      unhideNodes(ids) {
+        commit((p) => ids.reduce(u.unhideNode, p), { type: "nodes.unhidden", payload: { nodeIds: ids } });
+      },
+
       clearTree() {
-        const count = Object.values(get().project?.nodes ?? {}).filter((n) => !n.hidden).length;
-        commit(u.clearNodes, { type: "project.cleared", payload: { count } });
+        const ids = Object.values(get().project?.nodes ?? {}).filter((n) => !n.hidden).map((n) => n.id);
+        if (ids.length === 0) return;
+        commit(u.clearNodes, { type: "project.cleared", payload: { count: ids.length } });
         set({ selection: [] });
+        notify(`Cleared ${ids.length} ${ids.length === 1 ? "node" : "nodes"}`, {
+          kind: "info",
+          action: { label: "Undo", run: () => get().unhideNodes(ids) },
+        });
       },
 
       // ── Edges ─────────────────────────────────────────────────────────────
@@ -469,67 +578,21 @@ export function createProjectStore(
         }
 
         const inputIds = [...sel.nodes.map((n) => n.id), ...sel.links.map((l) => l.edge.id)];
-        const { jobs } = plan;
-        set({ runs: { ...get().runs, [runId]: { runId, action, inputs: inputIds, total: jobs.length, done: 0, failed: 0, startedAt: now() } } });
         log("run.started", {
-          runId, action, inputIds, jobs: jobs.length,
+          runId, action, inputIds, jobs: plan.jobs.length,
           counts: opts.counts, dimensionIds: opts.dimensionIds, imagesPerIdea: opts.imagesPerIdea,
           hasInstructions: !!opts.instructions,
         });
-
-        const tick = (field: "done" | "failed") => {
-          const r = get().runs[runId];
-          if (r) set({ runs: { ...get().runs, [runId]: { ...r, [field]: r[field] + 1 } } });
-        };
-        const outputIds: NodeId[] = [];
-        const errors: string[] = [];
-
-        // Each job's outputs land on the canvas as soon as that job finishes.
-        const used = { calls: 0, costUsd: 0 };
-        const countUsage = (usage?: Usage) => {
-          if (!usage) return;
-          used.calls += usage.calls;
-          used.costUsd += costUsd(usage) ?? 0;
-        };
-
-        await inPool(jobs, MAX_PARALLEL, async (job) => {
-          try {
-            const { result, usage } = await callAction(job.action, job.req);
-            const out = outputsFor(job, result, runId);
-            for (const img of out.images) await getRepo().saveImage(dataUrlToImage(img.dataUrl), img.imageId);
-            await applyTo(p.id, (s) => {
-              const next = u.addNodesAndEdges(s, out.nodes, out.edges);
-              return usage ? u.addUsage(next, usage) : next;
-            });
-            countUsage(usage);
-            outputIds.push(...out.nodes.map((n) => n.id));
-            tick("done");
-          } catch (err) {
-            const usage = err instanceof ActionCallError ? err.usage : undefined;
-            if (usage) await applyTo(p.id, (s) => u.addUsage(s, usage));
-            countUsage(usage);
-            errors.push(`${job.label}: ${readableError(err instanceof Error ? err.message : String(err))}`);
-            tick("failed");
-          }
-        });
-
-        const { [runId]: _finished, ...rest } = get().runs;
-        set({ runs: rest });
-
-        if (errors.length === jobs.length) {
-          // Same message from every job (e.g. a bad key) is only worth showing once.
-          const first = errors[0].slice(errors[0].indexOf(": ") + 2);
-          notify(jobs.length === 1 || errors.every((e) => e.endsWith(first)) ? first : `All ${jobs.length} outputs failed. ${errors[0]}`);
-          log("run.failed", { runId, errors: errors.slice(0, 5), ...used }, { actor: "model", projectId: p.id });
-        } else {
-          if (errors.length) notify(`${errors.length} of ${jobs.length} outputs failed. ${errors[0]}`);
-          log("run.done", { runId, outputIds, failed: errors.length, errors: errors.slice(0, 5), ...used }, { actor: "model", projectId: p.id });
-        }
+        await execute(p.id, action, runId, plan.jobs, inputIds);
         return runId;
       },
 
       dismissNotice(id) {
         set({ notices: get().notices.filter((n) => n.id !== id) });
+      },
+
+      focusOn(nodeIds) {
+        set({ focus: { nodeIds, seq: (get().focus?.seq ?? 0) + 1 } });
       },
     };
   });

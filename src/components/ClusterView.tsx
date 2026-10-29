@@ -96,19 +96,19 @@ function MiniCard({ node, from, onRemove }: { node: IdeaNode; from: CollectionId
     return (
       <div {...drag} className={`relative group/minicard overflow-hidden cursor-pointer nodrag nowheel col-span-2 ${styles.visualCard}`}
         style={{ border: `1px solid ${border}`, boxShadow: shadow }}>
-        {removeBtn("nodrag absolute top-1.5 right-1.5 opacity-0 group-hover/minicard:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 text-[10px] leading-none z-20")}
+        {removeBtn("nodrag absolute top-1.5 right-1.5 opacity-0 group-hover/minicard:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#6b6b6b] hover:text-red-400 hover:bg-red-50 text-[11px] leading-none z-20")}
         <div className="absolute top-0 left-0 right-0 p-1.5 flex items-center gap-1.5 z-10 bg-gradient-to-b from-black/30 to-transparent">
-          <span className="text-[7px] font-semibold uppercase tracking-wide px-1 py-0.5 rounded text-white" style={{ background: node.role === "visual" ? "rgba(0,0,0,0.5)" : ts.badgeBg }}>
+          <span className="text-[10px] font-semibold uppercase tracking-wide px-1 py-0.5 rounded text-white" style={{ background: node.role === "visual" ? "rgba(0,0,0,0.5)" : ts.badgeBg }}>
             {ROLE_LABEL[node.role]}
           </span>
-          {isSelected && <span className="text-[8px] text-white bg-blue-500/80 px-1 rounded font-bold">✓</span>}
+          {isSelected && <span className="text-[10px] text-white bg-blue-500/80 px-1 rounded font-bold">✓</span>}
         </div>
         {url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={url} alt={node.title} className="w-full h-full object-cover" />
         ) : <div className="w-full h-full bg-[#eee]" />}
         <div className="absolute bottom-0 left-0 right-0 px-2 py-1 bg-gradient-to-t from-black/80 via-black/40 to-transparent z-10">
-          <p className="text-[9px] text-white leading-tight truncate font-medium">{node.title}</p>
+          <p className="text-[11px] text-white leading-tight truncate font-medium">{node.title}</p>
         </div>
       </div>
     );
@@ -119,7 +119,7 @@ function MiniCard({ node, from, onRemove }: { node: IdeaNode; from: CollectionId
       <>
         <p className={styles.chipText}>{node.title}</p>
         {isSelected && <span className={styles.chipCheck}>✓</span>}
-        {removeBtn(`nodrag absolute right-1.5 opacity-0 group-hover/minicard:opacity-100 transition-opacity w-4 h-4 rounded-full flex items-center justify-center text-[#bbb] hover:text-red-400 text-[9px] leading-none ${styles.centerY}`)}
+        {removeBtn(`nodrag absolute right-1.5 opacity-0 group-hover/minicard:opacity-100 transition-opacity w-4 h-4 rounded-full flex items-center justify-center text-[#6b6b6b] hover:text-red-400 text-[11px] leading-none ${styles.centerY}`)}
       </>
     );
     if (node.role === "motif") {
@@ -141,14 +141,14 @@ function MiniCard({ node, from, onRemove }: { node: IdeaNode; from: CollectionId
   return (
     <div {...drag} className={`relative group/minicard overflow-hidden cursor-pointer nodrag nowheel ${styles.noteCard}`}
       style={{ background: bg, border: `1px solid ${border}`, boxShadow: shadow }}>
-      {removeBtn("nodrag absolute top-1.5 right-1.5 opacity-0 group-hover/minicard:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 text-[10px] leading-none z-10")}
+      {removeBtn("nodrag absolute top-1.5 right-1.5 opacity-0 group-hover/minicard:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#6b6b6b] hover:text-red-400 hover:bg-red-50 text-[11px] leading-none z-10")}
       <div className="p-2 flex flex-col gap-0.5 h-full">
         <div className="flex items-center gap-1.5 pr-4">
-          <span className="text-[8px] uppercase tracking-[0.12em] shrink-0 text-[rgba(0,0,0,0.4)]">{ROLE_LABEL[node.role]}</span>
-          {isSelected && <span className="text-[9px] text-black shrink-0">✓</span>}
+          <span className="text-[10px] uppercase tracking-[0.12em] shrink-0 text-[#666]">{ROLE_LABEL[node.role]}</span>
+          {isSelected && <span className="text-[11px] text-black shrink-0">✓</span>}
         </div>
-        <p className="text-[10px] text-[#111] leading-tight line-clamp-2 flex-1">{node.title}</p>
-        <p className="text-[9px] truncate text-[rgba(0,0,0,0.3)]">{originLabel(node)}</p>
+        <p className="text-[11px] text-[#111] leading-tight line-clamp-2 flex-1">{node.title}</p>
+        <p className="text-[11px] truncate text-[#757575]">{originLabel(node)}</p>
       </div>
     </div>
   );
@@ -187,10 +187,10 @@ function CollectionContainer({ data }: NodeProps) {
         ) : (
           <span className="flex-1 text-[11px] font-semibold text-[#222] truncate">{col.title}</span>
         )}
-        <span className="text-[9px] text-[#aaa] shrink-0">{items.length}</span>
-        <button className="nodrag text-[9px] text-[#ccc] hover:text-[#555] transition-colors" title="Rename"
+        <span className="text-[11px] text-[#6b6b6b] shrink-0">{items.length}</span>
+        <button className="nodrag text-[11px] text-[#6b6b6b] hover:text-[#555] transition-colors" title="Rename"
           onClick={() => { setForm({ title: col.title, description: col.description ?? "" }); setEditing(true); }}>✎</button>
-        <button className="nodrag text-[9px] text-[#ccc] hover:text-red-400 transition-colors ml-0.5" title="Delete collection (its nodes stay)"
+        <button className="nodrag text-[11px] text-[#6b6b6b] hover:text-red-400 transition-colors ml-0.5" title="Delete collection (its nodes stay)"
           onClick={() => deleteCollection(id)}>✕</button>
       </div>
 
@@ -199,21 +199,21 @@ function CollectionContainer({ data }: NodeProps) {
           <input placeholder="Description (optional)…" value={form.description}
             onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
             onKeyDown={(e) => { if (e.key === "Enter") save(); if (e.key === "Escape") setEditing(false); }}
-            className="w-full text-[10px] bg-transparent border-b border-[#e4e3e0] outline-none text-[#666]" />
+            className="w-full text-[11px] bg-transparent border-b border-[#e4e3e0] outline-none text-[#666]" />
           <div className="flex gap-2 mt-1.5">
-            <button onClick={save} className="text-[9px] text-white bg-[#333] rounded px-2 py-0.5 nodrag">Save</button>
-            <button onClick={() => setEditing(false)} className="text-[9px] text-[#aaa] nodrag">Cancel</button>
+            <button onClick={save} className="text-[11px] text-white bg-[#333] rounded px-2 py-0.5 nodrag">Save</button>
+            <button onClick={() => setEditing(false)} className="text-[11px] text-[#6b6b6b] nodrag">Cancel</button>
           </div>
         </div>
       )}
       {!editing && col.description && (
-        <div className="px-3 py-1.5 border-b border-[#f0efec]"><p className="text-[9px] text-[#888] leading-snug">{col.description}</p></div>
+        <div className="px-3 py-1.5 border-b border-[#f0efec]"><p className="text-[11px] text-[#666] leading-snug">{col.description}</p></div>
       )}
 
       <div className="nodrag nowheel p-2.5">
         {items.length === 0 ? (
           <div className={`flex items-center justify-center py-5 border border-dashed ${styles.sq}`} style={{ borderColor: `${col.color}70` }}>
-            <p className="text-[10px] text-[#bbb]">{isOver ? "Drop here ↓" : "Drag cards here"}</p>
+            <p className="text-[11px] text-[#6b6b6b]">{isOver ? "Drop here ↓" : "Drag cards here"}</p>
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-2">
@@ -240,8 +240,8 @@ function RoleGroup({ data }: NodeProps) {
       <div className={`overflow-hidden opacity-35 ${styles.clusterNode}`} style={{ background: s.clusterBg, border: "1px dashed rgba(0,0,0,0.3)" }}
         {...dropZone(ctx, zoneId, null)}>
         <div className="px-3 py-3 flex items-center gap-2 cursor-grab">
-          <span className="text-[9px] uppercase tracking-[0.14em] text-[rgba(0,0,0,0.45)]">{ROLE_LABEL_PLURAL[role]}</span>
-          <span className="text-[9px] italic text-[rgba(0,0,0,0.3)]">none outside collections</span>
+          <span className="text-[11px] uppercase tracking-[0.14em] text-[#666]">{ROLE_LABEL_PLURAL[role]}</span>
+          <span className="text-[11px] italic text-[#757575]">none outside collections</span>
         </div>
       </div>
     );
@@ -251,8 +251,8 @@ function RoleGroup({ data }: NodeProps) {
     <div className={`overflow-hidden transition-shadow ${styles.clusterNode}`} {...dropZone(ctx, zoneId, null)}
       style={{ background: isOver ? "#f5f4f0" : s.clusterBg, border: `1px solid ${isOver ? "#000" : "rgba(0,0,0,0.18)"}`, boxShadow: isOver ? "2px 2px 0px rgba(0,0,0,0.4)" : "none" }}>
       <div className={`px-3 py-2.5 flex items-center gap-2 cursor-grab ${styles.sectionHeader}`}>
-        <span className="text-[9px] uppercase tracking-[0.14em] text-[rgba(0,0,0,0.5)]">{ROLE_LABEL_PLURAL[role]}</span>
-        <span className="text-[9px] flex-1 text-[rgba(0,0,0,0.3)]">{items.length} not in a collection</span>
+        <span className="text-[11px] uppercase tracking-[0.14em] text-[rgba(0,0,0,0.5)]">{ROLE_LABEL_PLURAL[role]}</span>
+        <span className="text-[11px] flex-1 text-[#757575]">{items.length} not in a collection</span>
       </div>
       <div className="nodrag nowheel p-2.5">
         <div className="grid grid-cols-2 gap-2">
@@ -378,7 +378,7 @@ export default function ClusterView() {
 
   if (shown.length === 0 && Object.keys(project.collections).length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center text-center py-24 text-[#bbb]">
+      <div className="flex-1 flex items-center justify-center text-center py-24 text-[#6b6b6b]">
         <div>
           <p className="text-sm mb-1">Nothing here yet.</p>
           <p className="text-xs">Build the tree first, then group nodes into collections here.</p>
@@ -414,7 +414,7 @@ export default function ClusterView() {
               <div className="flex items-center gap-1.5 mb-1.5">
                 <button onClick={exportPng} disabled={isExporting} title="Export collections as a PNG"
                   className={`bg-white border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 text-[11px] flex items-center gap-1 transition-colors ${styles.sq} ${
-                    isExporting ? "text-[rgba(0,0,0,0.3)] cursor-wait" : "text-[rgba(0,0,0,0.45)] hover:text-black hover:border-black"}`}>
+                    isExporting ? "text-[#757575] cursor-wait" : "text-[#666] hover:text-black hover:border-black"}`}>
                   <span className="text-[12px] leading-none">↓</span>{isExporting ? "Exporting…" : "Export PNG"}
                 </button>
               </div>
@@ -440,7 +440,7 @@ export default function ClusterView() {
                 <div className="flex gap-2">
                   <button onClick={addCollection} className={`text-[11px] text-white bg-black hover:bg-[#333] px-3 py-1 transition-colors ${styles.sq}`}>Create</button>
                   <button onClick={() => setNewCol((c) => ({ ...c, open: false, title: "", description: "" }))}
-                    className="text-[11px] text-[rgba(0,0,0,0.4)] hover:text-black transition-colors">Cancel</button>
+                    className="text-[11px] text-[#666] hover:text-black transition-colors">Cancel</button>
                 </div>
               </div>
             ) : (

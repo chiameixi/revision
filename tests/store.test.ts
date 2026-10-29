@@ -254,7 +254,9 @@ describe("runs", () => {
     s().setSelection([draft]);
     await s().runAction("visual_variations", { dimensionIds: ["balance", "color", "shape"] });
     expect(visibleNodes(p()).filter((n) => n.origin.kind === "generated")).toHaveLength(2);
-    expect(s().notices.map((n) => n.message)).toEqual(["1 of 3 outputs failed. Color variation: Timed out"]);
+    expect(s().notices.filter((n) => n.kind === "error").map((n) => n.message))
+      .toEqual(["Visual variations: 1 of 3 outputs failed. Color variation: Timed out"]);
+    expect(s().notices.filter((n) => n.kind === "info").map((n) => n.message)).toEqual(["Made 2 images"]);
   });
 
   it("shows one plain message when every request fails the same way", async () => {
@@ -263,7 +265,7 @@ describe("runs", () => {
     const draft = (await s().addImageNode({ blob: new Blob([new Uint8Array([1])]), mimeType: "image/png" }, { role: "visual", title: "d" }))!;
     s().setSelection([draft]);
     await s().runAction("visual_variations", { dimensionIds: ["balance", "color"] });
-    expect(s().notices.map((n) => n.message)).toEqual(["API key not valid."]);
+    expect(s().notices.map((n) => n.message)).toEqual(["Visual variations failed: API key not valid."]);
     await new Promise((r) => setTimeout(r, 5));
     expect((await repo.listEvents(p().id)).map((e) => e.type)).toContain("run.failed");
   });
@@ -389,5 +391,75 @@ describe("usage", () => {
     expect(done.payload).toMatchObject({ calls: 4 });
     await s().loadProjects();
     expect(s().projects[0]).toMatchObject({ calls: 4 });
+  });
+});
+
+describe("undo and notices", () => {
+  it("offers to undo a removal", () => {
+    const a = s().addNode({ role: "concept", title: "Ebb" })!;
+    s().hideNode(a);
+    const notice = s().notices.at(-1)!;
+    expect(notice).toMatchObject({ kind: "info", message: 'Removed "Ebb"', action: { label: "Undo" } });
+    notice.action!.run();
+    expect(visibleNodes(p()).map((n) => n.id)).toEqual([a]);
+  });
+
+  it("offers to undo clearing the tree, bringing back exactly what was cleared", () => {
+    const a = s().addNode({ role: "concept", title: "A" })!;
+    const b = s().addNode({ role: "motif", title: "B" })!;
+    s().hideNode(b);
+    s().clearTree();
+    s().notices.at(-1)!.action!.run();
+    expect(visibleNodes(p()).map((n) => n.id)).toEqual([a]);
+  });
+
+  it("clears notices when switching projects", async () => {
+    const a = s().addNode({ role: "concept", title: "A" })!;
+    s().hideNode(a);
+    await s().createProject("Other");
+    expect(s().notices).toEqual([]);
+  });
+});
+
+describe("after a run", () => {
+  const PNG = "data:image/png;base64,iVBORw0KGgo=";
+
+  it("asks the canvas to show the new nodes and says what was made", async () => {
+    store = createProjectStore(() => repo, { saveDelayMs: 0, callAction: async () => ({
+      result: { concepts: [{ title: "A", description: "", rationale: "" }], motifs: [{ title: "B", visualQuality: "", howItConveysIdea: "", category: "" }] },
+    }) });
+    await s().createProject("Focus");
+    s().setBrief("Tides");
+    await s().runAction("expand");
+    const made = visibleNodes(p()).map((n) => n.id);
+    expect(s().focus?.nodeIds.sort()).toEqual(made.sort());
+    const notice = s().notices.at(-1)!;
+    expect(notice).toMatchObject({ kind: "info", message: "Made 1 concept and 1 motif", action: { label: "Show" } });
+    const seq = s().focus!.seq;
+    notice.action!.run();
+    expect(s().focus!.seq).toBe(seq + 1);
+  });
+
+  it("retries only the jobs that failed", async () => {
+    const seen: string[] = [];
+    let failColor = true;
+    store = createProjectStore(() => repo, { saveDelayMs: 0, callAction: async (_a, req) => {
+      const dim = (req as { dimensionId: string }).dimensionId;
+      seen.push(dim);
+      if (dim === "color" && failColor) throw new ActionCallError("Timed out");
+      return { result: { imageDataUrl: PNG, text: "" } };
+    } });
+    await s().createProject("Retry");
+    const draft = (await s().addImageNode({ blob: new Blob([new Uint8Array([1])]), mimeType: "image/png" }, { role: "visual", title: "d" }))!;
+    s().setSelection([draft]);
+    await s().runAction("visual_variations", { dimensionIds: ["balance", "color"] });
+    const error = s().notices.find((n) => n.kind === "error")!;
+    expect(error.action?.label).toBe("Retry failed");
+    failColor = false;
+    seen.length = 0;
+    error.action!.run();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(seen).toEqual(["color"]);
+    expect(visibleNodes(p()).filter((n) => n.origin.kind === "generated").map((n) => n.title).sort()).toEqual(["Balance variation", "Color variation"]);
   });
 });

@@ -19,18 +19,41 @@ function PanelShell({ children }: { children: React.ReactNode }) {
   return <aside className="w-full h-full border-l border-[#e4e3e0] bg-white flex flex-col overflow-hidden">{children}</aside>;
 }
 
+// Kind, title and close on top; the rest of the panel scrolls under it.
+function PanelHeader({ kind, title, subtitle, onClose, children }: {
+  kind: string; title: string; subtitle?: string; onClose: () => void; children?: React.ReactNode;
+}) {
+  return (
+    <div className="px-4 pt-3 pb-3 border-b border-[#ecebe7] shrink-0 flex flex-col gap-2">
+      <div className="flex items-start gap-2">
+        <div className="flex-1 min-w-0">
+          <p className="text-[11px] uppercase tracking-[0.14em] text-[#6b6b6b]">{kind}</p>
+          <h2 className="text-[15px] font-semibold text-[#111] leading-snug break-words">{title}</h2>
+          {subtitle && <p className="text-[11px] text-[#6b6b6b] mt-0.5">{subtitle}</p>}
+        </div>
+        <button onClick={onClose} aria-label="Close panel" title="Close"
+          className="shrink-0 w-7 h-7 -mr-1 flex items-center justify-center text-[16px] text-[#555] hover:text-black hover:bg-[#f2f1ed] transition-colors">
+          ✕
+        </button>
+      </div>
+      {children}
+    </div>
+  );
+}
+
 function SectionLabel({ children }: { children: React.ReactNode }) {
-  return <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold mb-2">{children}</p>;
+  return <p className="text-[11px] text-[#6b6b6b] uppercase tracking-wide font-semibold mb-2">{children}</p>;
 }
 
 export function EditField({
-  label, value, onCommit, singleLine, placeholder,
+  label, value, onCommit, singleLine, placeholder, rows = 3,
 }: {
   label: string;
   value: string;
   onCommit: (v: string) => void;
   singleLine?: boolean;
   placeholder?: string;
+  rows?: number;
 }) {
   const [draft, setDraft] = useState(value);
   const focused = useRef(false);
@@ -40,7 +63,7 @@ export function EditField({
     focused.current = false;
     if (draft !== value) onCommit(draft);
   };
-  const cls = "w-full text-[11px] text-[#333] bg-[#fafaf8] border border-transparent hover:border-[#e4e3e0] focus:border-[#888] rounded px-2 py-1 outline-none leading-relaxed resize-none placeholder-[#ccc] transition-colors";
+  const cls = "w-full text-[12px] text-[#222] bg-[#fafaf8] border border-transparent hover:border-[#e4e3e0] focus:border-[#555] rounded px-2 py-1 outline-none leading-relaxed placeholder-[#757575] transition-colors";
   const common = {
     className: cls,
     value: draft,
@@ -50,11 +73,11 @@ export function EditField({
   };
   return (
     <div>
-      <p className="text-[9px] font-semibold uppercase tracking-wide text-[#bbb] mb-0.5 px-2">{label}</p>
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-[#6b6b6b] mb-0.5 px-2">{label}</p>
       {singleLine ? (
         <input {...common} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
       ) : (
-        <textarea {...common} rows={3} onChange={(e) => setDraft(e.target.value)} />
+        <textarea {...common} rows={rows} onChange={(e) => setDraft(e.target.value)} className={`${cls} resize-y`} />
       )}
     </div>
   );
@@ -63,7 +86,7 @@ export function EditField({
 function RunButtons({ onRun, label }: { onRun: (a: ActionType) => void; label: string }) {
   return (
     <>
-      <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold px-1 pt-1 pb-0.5">{label}</p>
+      <p className="text-[11px] text-[#6b6b6b] uppercase tracking-wide font-semibold px-1 pt-1 pb-0.5">{label}</p>
       {ACTIONS.map((a) => (
         <button key={a.id} onClick={() => onRun(a.id)} title={a.description}
           className="w-full text-left text-[11px] px-3 py-1.5 rounded-lg hover:bg-blue-50 hover:text-[#2563eb] text-[#555] transition-colors">
@@ -79,9 +102,9 @@ function NodeChip({ node, onClick }: { node: IdeaNode; onClick: () => void }) {
   return (
     <button onClick={onClick} className="text-left px-2.5 py-2 rounded-lg border transition-colors hover:opacity-80"
       style={{ borderColor: s.border, background: s.bg }}>
-      <span className="text-[8px] font-semibold uppercase tracking-wide px-1 py-0.5 rounded mr-1.5"
+      <span className="text-[10px] font-semibold uppercase tracking-wide px-1 py-0.5 rounded mr-1.5"
         style={{ background: s.badgeBg, color: s.badgeText }}>{ROLE_LABEL[node.role]}</span>
-      <span className="text-[10px] font-medium text-[#333] leading-snug">{node.title}</span>
+      <span className="text-[11px] font-medium text-[#333] leading-snug">{node.title}</span>
     </button>
   );
 }
@@ -95,11 +118,11 @@ function SiblingImage({ node, onSelect, onZoom }: { node: IdeaNode; onSelect: ()
         <img src={url} alt={node.title} className="w-full h-full object-cover cursor-pointer" onClick={onSelect} />
       )}
       {url && (
-        <button className="absolute top-1 right-1 opacity-0 group-hover/img:opacity-100 transition-opacity bg-black/40 text-white text-[10px] px-1.5 py-0.5 rounded"
+        <button className="absolute top-1 right-1 opacity-0 group-hover/img:opacity-100 transition-opacity bg-black/40 text-white text-[11px] px-1.5 py-0.5 rounded"
           onClick={() => onZoom(url)} title="Zoom">⤢</button>
       )}
       <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/50 to-transparent px-1.5 py-1 opacity-0 group-hover/img:opacity-100 transition-opacity pointer-events-none">
-        <p className="text-white text-[8px] leading-tight truncate">{originLabel(node)}</p>
+        <p className="text-white text-[10px] leading-tight truncate">{originLabel(node)}</p>
       </div>
     </div>
   );
@@ -121,7 +144,7 @@ function RegionPreview({ node, region, onClick }: { node: IdeaNode; region: Regi
             style={{ top: `${box[0] / 10}%`, left: `${box[1] / 10}%`, height: `${(box[2] - box[0]) / 10}%`, width: `${(box[3] - box[1]) / 10}%` }} />
         )}
       </div>
-      <span className="text-[10px] text-[#666] group-hover:underline truncate">
+      <span className="text-[11px] text-[#666] group-hover:underline truncate">
         {node.title} · {box ? "this region" : "the whole image"}
       </span>
     </button>
@@ -185,37 +208,31 @@ export function NodePanel({
   return (
     <>
       <PanelShell>
-        <div className="px-4 py-3 border-b border-[#f0efec] shrink-0">
-          <div className="flex items-start justify-between gap-2 mb-2">
-            <div className="flex items-center gap-1" title="Change what this node is">
+        <PanelHeader kind={ROLE_LABEL[node.role]} title={node.title} subtitle={originLabel(node)} onClose={onClose}>
+          <div className="flex items-center gap-2">
+            <span id="type-label" className="text-[11px] text-[#6b6b6b]">Type</span>
+            <div role="radiogroup" aria-labelledby="type-label" className="flex flex-1 border border-[rgba(0,0,0,0.2)]">
               {ROLES.map((r) => {
                 const rs = ROLE_STYLE[r];
                 const active = node.role === r;
                 return (
-                  <button key={r} onClick={() => !active && retagNode(node.id, r)}
-                    className={`text-[9px] uppercase tracking-[0.12em] px-1.5 py-0.5 transition-colors ${styles.sq}`}
-                    style={active ? { background: rs.badgeBg, color: rs.badgeText } : { background: "rgba(0,0,0,0.06)", color: "rgba(0,0,0,0.35)" }}>
-                    {r}
+                  <button key={r} role="radio" aria-checked={active} onClick={() => !active && retagNode(node.id, r)}
+                    className="flex-1 text-[11px] py-1 transition-colors border-l first:border-l-0 border-[rgba(0,0,0,0.12)]"
+                    style={active ? { background: rs.badgeBg, color: rs.badgeText } : { color: "#444" }}>
+                    {ROLE_LABEL[r]}
                   </button>
                 );
               })}
             </div>
-            <div className="flex items-center gap-1.5 shrink-0 -mt-0.5">
-              <button onClick={() => { hideNode(node.id); onClose(); }} className="text-[11px] text-[#ccc] hover:text-red-400 transition-colors">✕ Remove</button>
-              <span className="text-[#e4e3e0]">|</span>
-              <button onClick={onClose} className="text-[11px] text-[#bbb] hover:text-[#555] transition-colors">Close</button>
-            </div>
           </div>
-          <p className="text-[12px] font-semibold text-[#222] leading-snug">{node.title}</p>
-          <p className="text-[10px] text-[#bbb] mt-0.5">{originLabel(node)}</p>
-        </div>
+        </PanelHeader>
 
         <div className="flex-1 overflow-y-auto">
           {imageUrl && (
             <div className="border-b border-[#f0efec]">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={imageUrl} alt={node.title} className="w-full object-cover cursor-zoom-in" onClick={() => setLightbox(imageUrl)} />
-              <p className="px-3 py-2 text-[9px] text-[#bbb]">Click to enlarge or crop a region</p>
+              <p className="px-3 py-2 text-[11px] text-[#6b6b6b]">Click to enlarge or crop a region</p>
             </div>
           )}
 
@@ -225,8 +242,8 @@ export function NodePanel({
               <div className="flex flex-col gap-1.5">
                 {exploredLink && project.nodes[exploredLink.from] && project.nodes[exploredLink.to] && (
                   <button onClick={() => setSelection([exploredLink.id])}
-                    className="text-left px-2.5 py-2 rounded-lg border border-dashed border-[#64748b] text-[10px] text-[#334155] hover:bg-[#f1f5f9]">
-                    <span className="uppercase tracking-wide text-[8px] font-semibold mr-1.5">Explored link</span>
+                    className="text-left px-2.5 py-2 rounded-lg border border-dashed border-[#64748b] text-[11px] text-[#334155] hover:bg-[#f1f5f9]">
+                    <span className="uppercase tracking-wide text-[10px] font-semibold mr-1.5">Explored link</span>
                     {project.nodes[exploredLink.from].title} ↔ {project.nodes[exploredLink.to].title}
                     {exploredLink.label && <span className="italic text-[#64748b]"> · {exploredLink.label}</span>}
                   </button>
@@ -284,9 +301,9 @@ export function NodePanel({
                   return (
                     <div key={e.id} className="flex items-center gap-2 text-[11px] text-[#444]">
                       <button className="flex-1 text-left truncate hover:underline" onClick={() => setSelection([e.id])}>
-                        {other.title}{e.label ? <span className="italic text-[#999]"> · {e.label}</span> : null}
+                        {other.title}{e.label ? <span className="italic text-[#6b6b6b]"> · {e.label}</span> : null}
                       </button>
-                      <button className="text-[#ccc] hover:text-red-400 text-[10px]" title="Remove link" onClick={() => hideEdge(e.id)}>✕</button>
+                      <button className="text-[#6b6b6b] hover:text-red-400 text-[11px]" title="Remove link" onClick={() => hideEdge(e.id)}>✕</button>
                     </div>
                   );
                 })}
@@ -302,6 +319,10 @@ export function NodePanel({
             <button onClick={onAddChild}
               className="w-full text-left text-[11px] px-3 py-1.5 rounded-lg hover:bg-[#f0f9f0] hover:text-green-700 text-[#555] transition-colors">
               + Add child node
+            </button>
+            <button onClick={() => { hideNode(node.id); onClose(); }}
+              className="w-full text-left text-[11px] px-3 py-1.5 rounded-lg hover:bg-red-50 text-red-700 transition-colors">
+              ✕ Remove node
             </button>
             <RunButtons onRun={onRun} label="Use this for" />
           </div>
@@ -358,17 +379,7 @@ export function LinkPanel({ edgeId, onClose, onRun }: { edgeId: EdgeId; onClose:
 
   return (
     <PanelShell>
-      <div className="px-4 py-3 border-b border-[#f0efec] shrink-0">
-        <div className="flex items-start justify-between gap-2 mb-2">
-          <span className={`text-[9px] uppercase tracking-[0.14em] px-1.5 py-0.5 bg-[#64748b] text-white ${styles.sq}`}>Link</span>
-          <div className="flex items-center gap-1.5 shrink-0 -mt-0.5">
-            <button onClick={() => { hideEdge(edge.id); onClose(); }} className="text-[11px] text-[#ccc] hover:text-red-400 transition-colors">✕ Remove</button>
-            <span className="text-[#e4e3e0]">|</span>
-            <button onClick={onClose} className="text-[11px] text-[#bbb] hover:text-[#555] transition-colors">Close</button>
-          </div>
-        </div>
-        <p className="text-[12px] font-semibold text-[#222] leading-snug">{from?.title} ↔ {to?.title}</p>
-      </div>
+      <PanelHeader kind="Link" title={`${from?.title} ↔ ${to?.title}`} onClose={onClose} />
       <div className="flex-1 overflow-y-auto">
         <div className="p-4 border-b border-[#f0efec] flex flex-col gap-3">
           <EditField label="What connects them" value={edge.label ?? ""} onCommit={(v) => labelEdge(edge.id, v)}
@@ -380,6 +391,10 @@ export function LinkPanel({ edgeId, onClose, onRun }: { edgeId: EdgeId; onClose:
         </div>
         <div className="p-3 flex flex-col gap-1">
           <RunButtons onRun={onRun} label="Explore this connection" />
+          <button onClick={() => { hideEdge(edge.id); onClose(); }}
+            className="w-full text-left text-[11px] px-3 py-1.5 mt-1 rounded-lg hover:bg-red-50 text-red-700 transition-colors">
+            ✕ Remove link
+          </button>
         </div>
       </div>
     </PanelShell>
@@ -394,13 +409,10 @@ export function BriefPanel({ onClose, onRun }: { onClose: () => void; onRun: (a:
   const setBrief = useProjectStore((s) => s.setBrief);
   return (
     <PanelShell>
-      <div className="px-4 py-3 border-b border-[#f0efec] shrink-0 flex items-start justify-between gap-2">
-        <span className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">Project brief</span>
-        <button onClick={onClose} className="text-[11px] text-[#bbb] hover:text-[#555] transition-colors shrink-0">Close</button>
-      </div>
+      <PanelHeader kind="Project brief" title={project.title} onClose={onClose} />
       <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
         <EditField label="Title" value={project.title} onCommit={setTitle} singleLine />
-        <EditField label="Brief" value={project.brief} onCommit={setBrief} placeholder="Describe your design challenge…" />
+        <EditField label="Brief" value={project.brief} onCommit={setBrief} placeholder="Describe your design challenge…" rows={10} />
         <div className="flex flex-col gap-1 -mx-1">
           <RunButtons onRun={onRun} label="Start from the brief" />
         </div>

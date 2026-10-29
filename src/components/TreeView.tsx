@@ -38,7 +38,7 @@ import {
   type EdgeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useProjectStore } from "@/store/projectStore";
+import { projectStore, useProjectStore } from "@/store/projectStore";
 import { ancestors, treeEdges, visibleLinks, visibleNodes } from "@/domain/graph";
 import { BRIEF_H, BRIEF_ID, BRIEF_W, computeTreeLayout, noteHeight } from "@/domain/treeLayout";
 import type { ActionType, Collection, IdeaNode, NodeId } from "@/domain/types";
@@ -58,6 +58,7 @@ type IdeaNodeData = {
   isHovered: boolean;
   isAncestor: boolean;      // ancestor of the hovered node
   isSourceOfSelected: boolean;
+  isNew: boolean;           // just made by a run; glows briefly
   collectionColors?: string[];
   connectMode: boolean;
   onRemove: (id: NodeId) => void;
@@ -115,7 +116,7 @@ function TextIdeaNode({ data }: { data: IdeaNodeData }) {
   const bg = data.isMultiSelected ? "#fafaf8" : data.isAncestor ? "#f5f4f0" : s.bg;
   const removeBtn = (
     <button
-      className={`absolute right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 flex items-center justify-center text-[rgba(0,0,0,0.3)] hover:text-black text-[9px] leading-none z-10 ${styles.centerY}`}
+      className={`absolute right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 flex items-center justify-center text-[#757575] hover:text-black text-[11px] leading-none z-10 ${styles.centerY}`}
       onClick={(e) => { e.stopPropagation(); onRemove(node.id); }}
       title="Remove"
     >✕</button>
@@ -169,12 +170,12 @@ function TextIdeaNode({ data }: { data: IdeaNodeData }) {
         <div className={`p-2.5 flex flex-col justify-center ${styles.noteBody}`} style={{ height: h }}>
           {node.role !== "note" && (
             <div className="flex items-center gap-1.5 pr-4">
-              <span className="text-[8px] uppercase tracking-[0.14em] shrink-0 text-[rgba(0,0,0,0.45)]">{ROLE_LABEL[node.role]}</span>
-              {picked && <span className="text-[9px] text-black shrink-0">✓</span>}
+              <span className="text-[10px] uppercase tracking-[0.14em] shrink-0 text-[#666]">{ROLE_LABEL[node.role]}</span>
+              {picked && <span className="text-[11px] text-black shrink-0">✓</span>}
             </div>
           )}
           <p className={`text-[11px] text-[#111] leading-tight flex-1${node.role === "note" ? "" : " line-clamp-2"}`}>{node.title}</p>
-          {node.role !== "note" && <p className="text-[9px] truncate text-[rgba(0,0,0,0.3)]">{originLabel(node)}</p>}
+          {node.role !== "note" && <p className="text-[11px] truncate text-[#757575]">{originLabel(node)}</p>}
         </div>
       </div>
       <Handle type="source" position={Position.Right} className={styles.handleDot} style={handleStyle(connectMode, "right")} />
@@ -196,15 +197,15 @@ function ImageIdeaNode({ data }: { data: IdeaNodeData }) {
       <Handle type="target" position={Position.Left} className={styles.handleDot} style={handleStyle(connectMode, "left")} />
       <div className={`relative group ${styles.visualNode}`} style={{ border: `1px solid ${border}`, boxShadow: shadow }}>
         <button
-          className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 text-[10px] leading-none z-20"
+          className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#6b6b6b] hover:text-red-400 hover:bg-red-50 text-[11px] leading-none z-20"
           onClick={(e) => { e.stopPropagation(); onRemove(node.id); }}
           title="Remove"
         >✕</button>
         <div className="absolute top-0 left-0 right-0 p-2 flex items-center gap-1.5 z-10 bg-gradient-to-b from-black/30 to-transparent">
-          <span className="text-[8px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0 text-white" style={{ background: node.role === "visual" ? "rgba(0,0,0,0.5)" : s.badgeBg }}>
+          <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0 text-white" style={{ background: node.role === "visual" ? "rgba(0,0,0,0.5)" : s.badgeBg }}>
             {ROLE_LABEL[node.role]}
           </span>
-          {picked && <span className="text-[9px] text-white shrink-0">✓</span>}
+          {picked && <span className="text-[11px] text-white shrink-0">✓</span>}
         </div>
         {url ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -216,14 +217,14 @@ function ImageIdeaNode({ data }: { data: IdeaNodeData }) {
           <div className="absolute inset-y-0 left-0 w-[3px] z-20" style={{ background: primary }} />
         ) : null}
         <div className="absolute bottom-0 left-0 right-0 px-2 py-1.5 bg-gradient-to-t from-black/80 via-black/50 to-transparent z-10">
-          <p className="text-[9px] text-white leading-tight truncate font-medium mb-1">{node.title}</p>
+          <p className="text-[11px] text-white leading-tight truncate font-medium mb-1">{node.title}</p>
           <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-            <p className="text-[7px] text-white/60 uppercase tracking-wider font-semibold mb-1">Use for →</p>
+            <p className="text-[10px] text-white/60 uppercase tracking-wider font-semibold mb-1">Use for →</p>
             <div className="flex gap-1 flex-wrap">
               {ACTIONS.map((a) => (
                 <button key={a.id} title={a.description}
                   onClick={(e) => { e.stopPropagation(); onQuickRun(node.id, a.id); }}
-                  className="text-[7px] bg-white/20 hover:bg-white/45 text-white px-1.5 py-0.5 rounded transition-colors whitespace-nowrap">
+                  className="text-[10px] bg-white/20 hover:bg-white/45 text-white px-1.5 py-0.5 rounded transition-colors whitespace-nowrap">
                   {a.label}
                 </button>
               ))}
@@ -238,7 +239,8 @@ function ImageIdeaNode({ data }: { data: IdeaNodeData }) {
 
 function IdeaFlowNode(props: NodeProps) {
   const data = props.data as unknown as IdeaNodeData;
-  return data.node.image ? <ImageIdeaNode data={data} /> : <TextIdeaNode data={data} />;
+  const inner = data.node.image ? <ImageIdeaNode data={data} /> : <TextIdeaNode data={data} />;
+  return data.isNew ? <div className={styles.newGlow}>{inner}</div> : inner;
 }
 
 // ── Brief node ────────────────────────────────────────────────────────────────
@@ -255,7 +257,7 @@ function BriefFlowNode(props: NodeProps) {
         </div>
         <p className="text-[13px] font-semibold text-[#111] truncate mb-1">{data.title}</p>
         <p className="text-[11px] text-[#555] leading-relaxed line-clamp-5 flex-1">
-          {data.brief || <span className="italic text-[#aaa]">Click to write your brief…</span>}
+          {data.brief || <span className="italic text-[#6b6b6b]">Click to write your brief…</span>}
         </p>
         <input ref={fileRef} type="file" accept="image/*" multiple className="hidden"
           onChange={(e) => { data.onUpload(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
@@ -294,7 +296,7 @@ function ProvenanceEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, ta
         <EdgeLabelRenderer>
           <div style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`, pointerEvents: "all" }} className="nodrag nopan">
             <button onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Remove connection"
-              className="w-5 h-5 rounded-full bg-white border border-[#ccc] text-[#888] hover:text-red-500 hover:border-red-300 flex items-center justify-center text-[10px] leading-none shadow-sm transition-colors">✕</button>
+              className="w-5 h-5 rounded-full bg-white border border-[#ccc] text-[#666] hover:text-red-500 hover:border-red-300 flex items-center justify-center text-[11px] leading-none shadow-sm transition-colors">✕</button>
           </div>
         </EdgeLabelRenderer>
       )}
@@ -315,7 +317,7 @@ function LinkEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPo
       {(label || hovered || selected) && (
         <EdgeLabelRenderer>
           <div style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`, pointerEvents: "none" }}
-            className={`text-[9px] px-1.5 py-0.5 bg-white border ${selected ? "border-[#2563eb] text-[#2563eb]" : "border-[#cbd5e1] text-[#64748b]"} ${styles.sq}`}>
+            className={`text-[11px] px-1.5 py-0.5 bg-white border ${selected ? "border-[#2563eb] text-[#2563eb]" : "border-[#cbd5e1] text-[#64748b]"} ${styles.sq}`}>
             {label || "link"}
           </div>
         </EdgeLabelRenderer>
@@ -388,6 +390,24 @@ export default function TreeView({
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const rfRef = useRef<ReactFlowInstance | null>(null);
 
+  // When a run finishes (or "Show" is pressed), bring its outputs and what
+  // they came from into view, and make them glow for a moment.
+  const focus = useProjectStore((s) => s.focus);
+  const [newIds, setNewIds] = useState<Set<NodeId>>(new Set());
+  useEffect(() => {
+    if (!focus?.nodeIds.length) return;
+    const ids = new Set(focus.nodeIds);
+    setNewIds(ids);
+    // Wait a frame so React Flow has measured the new nodes.
+    const fit = setTimeout(() => {
+      const withParents = new Set(ids);
+      for (const id of ids) for (const a of ancestors(projectStore.getState().project!, id)) withParents.add(a);
+      rfRef.current?.fitView({ nodes: [...withParents].map((id) => ({ id })), padding: 0.2, maxZoom: 1, duration: 400 });
+    }, 80);
+    const fade = setTimeout(() => setNewIds(new Set()), 2600);
+    return () => { clearTimeout(fit); clearTimeout(fade); };
+  }, [focus]);
+
   const layout = useMemo(() => computeTreeLayout(project), [project]);
   const shown = useMemo(() => visibleNodes(project), [project]);
   const provenance = useMemo(() => treeEdges(project), [project]);
@@ -444,6 +464,7 @@ export default function TreeView({
           isHovered: hoveredId === n.id,
           isAncestor: hoveredAncestors.has(n.id),
           isSourceOfSelected: selectedAncestors.has(n.id),
+          isNew: newIds.has(n.id),
           collectionColors: showColors ? collectionColors.get(n.id) : undefined,
           connectMode,
           onRemove: handleRemove,
@@ -456,7 +477,7 @@ export default function TreeView({
     }
     return nodes;
   }, [project.title, project.brief, layout, shown, briefOpen, connectMode, handleUpload, singleSelected, selection.length, selectedSet,
-    hoveredId, hoveredAncestors, selectedAncestors, showCollectionColors, exportColorsActive, collectionColors, handleRemove, handleQuickRun]);
+    hoveredId, hoveredAncestors, selectedAncestors, newIds, showCollectionColors, exportColorsActive, collectionColors, handleRemove, handleQuickRun]);
 
   const flowEdges = useMemo((): FlowEdge[] => {
     const edges: FlowEdge[] = [];
@@ -599,7 +620,7 @@ export default function TreeView({
   }, [exportWithColors, showCollectionColors, project.title]);
 
   const toolBtn = (active: boolean) => `border px-2.5 py-1.5 text-[11px] transition-colors flex items-center gap-1 ${styles.sq} ${
-    active ? "bg-black border-black text-white" : "bg-white border-[rgba(0,0,0,0.2)] text-[rgba(0,0,0,0.45)] hover:text-black hover:border-black"
+    active ? "bg-black border-black text-white" : "bg-white border-[rgba(0,0,0,0.25)] text-[#333] hover:text-black hover:border-black"
   }`;
 
   return (
@@ -616,9 +637,9 @@ export default function TreeView({
         onNodeMouseEnter={(_, n) => { if (n.id !== BRIEF_ID) setHoveredId(n.id); }}
         onNodeMouseLeave={() => setHoveredId(null)}
         onPaneClick={() => { clearSelection(); setConfirmingClear(false); }}
-        onInit={(instance) => { rfRef.current = instance; instance.fitView({ padding: 0.15 }); }}
+        onInit={(instance) => { rfRef.current = instance; instance.fitView({ padding: 0.15, maxZoom: 1 }); }}
         fitView
-        fitViewOptions={{ padding: 0.15 }}
+        fitViewOptions={{ padding: 0.15, maxZoom: 1 }}
         minZoom={0.2}
         maxZoom={2.0}
         onNodeDragStop={onNodeDragStop}
@@ -639,7 +660,7 @@ export default function TreeView({
 
         {shown.length === 0 && (
           <Panel position="top-center">
-            <div className={`mt-8 text-[12px] italic text-[rgba(0,0,0,0.35)] bg-white/80 border border-[rgba(0,0,0,0.1)] px-4 py-2.5 ${styles.sq}`}>
+            <div className={`mt-8 text-[12px] italic text-[#6b6b6b] bg-white/80 border border-[rgba(0,0,0,0.1)] px-4 py-2.5 ${styles.sq}`}>
               Write your brief, add images, then run Expand to start the tree
             </div>
           </Panel>
@@ -653,7 +674,7 @@ export default function TreeView({
               </button>
               {exportMenuOpen && (
                 <div className={`absolute top-full left-0 bg-white border border-[rgba(0,0,0,0.18)] px-2.5 py-1.5 z-50 ${styles.sq}`}>
-                  <label className="flex items-center gap-1.5 cursor-pointer whitespace-nowrap text-[10px] text-[rgba(0,0,0,0.55)] hover:text-black select-none">
+                  <label className="flex items-center gap-1.5 cursor-pointer whitespace-nowrap text-[11px] text-[rgba(0,0,0,0.55)] hover:text-black select-none">
                     <input type="checkbox" checked={exportWithColors} onChange={(e) => setExportWithColors(e.target.checked)} className="w-2.5 h-2.5 accent-black" />
                     Include collection colours
                   </label>
@@ -669,12 +690,12 @@ export default function TreeView({
               <span className="text-[12px] leading-none">⌥</span>{connectMode ? "Linking…" : "Link"}
             </button>
             {lassoMode && (
-              <span className={`text-[10px] italic text-[rgba(0,0,0,0.4)] bg-white border border-[rgba(0,0,0,0.15)] px-2 py-1 ${styles.sq}`}>
+              <span className={`text-[11px] italic text-[#666] bg-white border border-[rgba(0,0,0,0.15)] px-2 py-1 ${styles.sq}`}>
                 Drag to select · Shift+click to add · Middle-click to pan
               </span>
             )}
             {connectMode && (
-              <span className={`text-[10px] italic text-[rgba(0,0,0,0.4)] bg-white border border-[rgba(0,0,0,0.15)] px-2 py-1 ${styles.sq}`}>
+              <span className={`text-[11px] italic text-[#666] bg-white border border-[rgba(0,0,0,0.15)] px-2 py-1 ${styles.sq}`}>
                 Drag from a node's edge to another node
               </span>
             )}
@@ -694,13 +715,13 @@ export default function TreeView({
             )}
             {confirmingClear ? (
               <div className={`bg-white border border-red-200 px-2.5 py-1.5 flex items-center gap-2 ${styles.sq}`}>
-                <span className="text-[10px] text-red-500">Clear the tree?</span>
-                <button onClick={() => { clearTree(); setConfirmingClear(false); }} className="text-[10px] font-semibold text-red-600 hover:text-red-800">Yes</button>
-                <button onClick={() => setConfirmingClear(false)} className="text-[10px] text-[#aaa] hover:text-[#555]">No</button>
+                <span className="text-[11px] text-red-500">Clear the tree?</span>
+                <button onClick={() => { clearTree(); setConfirmingClear(false); }} className="text-[11px] font-semibold text-red-600 hover:text-red-800">Yes</button>
+                <button onClick={() => setConfirmingClear(false)} className="text-[11px] text-[#6b6b6b] hover:text-[#555]">No</button>
               </div>
             ) : (
               <button onClick={() => setConfirmingClear(true)} disabled={shown.length === 0}
-                className={`bg-white border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 text-[11px] text-[rgba(0,0,0,0.35)] hover:text-red-500 hover:border-red-300 transition-colors disabled:opacity-40 ${styles.sq}`}
+                className={`bg-white border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 text-[11px] text-[#333] hover:text-red-600 hover:border-red-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${styles.sq}`}
                 title="Remove every node from this project's tree. The project, brief and collections stay.">
                 Clear tree
               </button>
@@ -710,28 +731,28 @@ export default function TreeView({
 
         <Panel position="bottom-left">
           <div className={`mb-2 ml-2 bg-white border border-[rgba(0,0,0,0.12)] px-3 py-2.5 flex flex-col gap-2 ${styles.sq}`}>
-            <p className="text-[8px] uppercase tracking-[0.16em] text-[rgba(0,0,0,0.35)] mb-0.5">Node types</p>
+            <p className="text-[10px] uppercase tracking-[0.16em] text-[#6b6b6b] mb-0.5">Node types</p>
             <div className="flex items-center gap-2">
               <div className="w-[18px] h-[14px] shrink-0 bg-[#dde1f2]" style={{ border: "1px solid #8b96c8" }} />
-              <span className="text-[10px] text-[rgba(0,0,0,0.6)]">Concept</span>
+              <span className="text-[11px] text-[rgba(0,0,0,0.6)]">Concept</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="shrink-0" style={{ background: "#c8a055", padding: 1, clipPath: "polygon(5px 0%, calc(100% - 5px) 0%, 100% 5px, 100% calc(100% - 5px), calc(100% - 5px) 100%, 5px 100%, 0% calc(100% - 5px), 0% 5px)" }}>
                 <div style={{ width: 18, height: 14, background: "#fdf8ef", clipPath: "polygon(4.5px 0%, calc(100% - 4.5px) 0%, 100% 4.5px, 100% calc(100% - 4.5px), calc(100% - 4.5px) 100%, 4.5px 100%, 0% calc(100% - 4.5px), 0% 4.5px)" }} />
               </div>
-              <span className="text-[10px] text-[rgba(0,0,0,0.6)]">Motif</span>
+              <span className="text-[11px] text-[rgba(0,0,0,0.6)]">Motif</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-[18px] h-[14px] shrink-0 rounded-[4px] bg-[#f3f8f5]" style={{ border: "1px solid #7aab8a" }} />
-              <span className="text-[10px] text-[rgba(0,0,0,0.6)]">Note</span>
+              <span className="text-[11px] text-[rgba(0,0,0,0.6)]">Note</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-[18px] h-[14px] shrink-0 bg-[#fdf4f2]" style={{ border: "1px solid #c89088" }} />
-              <span className="text-[10px] text-[rgba(0,0,0,0.6)]">Visual</span>
+              <span className="text-[11px] text-[rgba(0,0,0,0.6)]">Visual</span>
             </div>
             <div className="flex items-center gap-2">
               <svg width="18" height="8"><line x1="0" y1="4" x2="18" y2="4" stroke="#64748b" strokeWidth="1.5" strokeDasharray="5 3" /></svg>
-              <span className="text-[10px] text-[rgba(0,0,0,0.6)]">Your link</span>
+              <span className="text-[11px] text-[rgba(0,0,0,0.6)]">Your link</span>
             </div>
           </div>
         </Panel>

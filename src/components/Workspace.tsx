@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useProjectStore } from "@/store/projectStore";
+import { useProjectStore, type Notice } from "@/store/projectStore";
 import type { ActionType, NodeId } from "@/domain/types";
 import TreeView from "./TreeView";
 import ClusterView from "./ClusterView";
@@ -22,31 +22,45 @@ function UsageBadge() {
   const usage = useProjectStore((s) => s.project?.usage);
   const calls = usage?.calls ?? 0;
   return (
-    <p className="ml-auto text-[11px] text-[rgba(0,0,0,0.45)] whitespace-nowrap" style={{ fontVariantNumeric: "tabular-nums" }}
+    <p className="ml-auto text-[11px] text-[#666] whitespace-nowrap" style={{ fontVariantNumeric: "tabular-nums" }}
       title={`Estimated from the tokens Gemini reports, at list prices checked ${PRICES_CHECKED}. Retries and failed calls are included.`}>
       {calls} {calls === 1 ? "call" : "calls"} · ≈ {formatUsd(usage?.costUsd ?? 0)}
     </p>
   );
 }
 
-function Notices() {
-  const notices = useProjectStore((s) => s.notices);
+// One message, with its own fade timer so new notices don't reset older ones.
+function NoticeRow({ notice }: { notice: Notice }) {
   const dismiss = useProjectStore((s) => s.dismissNotice);
   useEffect(() => {
-    if (notices.length === 0) return;
-    const timers = notices.map((n) => setTimeout(() => dismiss(n.id), 8000));
-    return () => timers.forEach(clearTimeout);
-  }, [notices, dismiss]);
+    if (notice.kind === "error") return;   // errors stay until dismissed
+    const t = setTimeout(() => dismiss(notice.id), 6000);
+    return () => clearTimeout(t);
+  }, [notice, dismiss]);
+  const isError = notice.kind === "error";
+  return (
+    <div role={isError ? "alert" : "status"}
+      className={`flex items-start gap-2 bg-white border px-3 py-2 text-[12px] shadow-sm ${isError ? "border-red-300" : "border-[rgba(0,0,0,0.2)]"} ${styles.sq}`}>
+      {isError && <span className="text-red-600 shrink-0" aria-hidden>⚠</span>}
+      <span className="text-[#222] flex-1 leading-snug">{notice.message}</span>
+      {notice.action && (
+        <button onClick={() => { notice.action!.run(); dismiss(notice.id); }}
+          className="shrink-0 font-semibold text-black underline underline-offset-2 hover:no-underline">
+          {notice.action.label}
+        </button>
+      )}
+      <button onClick={() => dismiss(notice.id)} className="text-[#777] hover:text-black shrink-0 leading-none" aria-label="Dismiss">✕</button>
+    </div>
+  );
+}
+
+// Top-right, under the canvas toolbar, so they never cover nodes or the selection bar.
+function Notices() {
+  const notices = useProjectStore((s) => s.notices);
   if (notices.length === 0) return null;
   return (
-    <div className="absolute left-3 bottom-[200px] z-20 flex flex-col gap-1.5 max-w-xs">
-      {notices.map((n) => (
-        <div key={n.id} role="alert" className={`flex items-start gap-2 bg-white border border-red-200 px-3 py-2 text-[11px] shadow-sm ${styles.sq}`}>
-          <span className="text-red-500 shrink-0 mt-px">⚠</span>
-          <span className="text-[#333] flex-1 leading-snug">{n.message}</span>
-          <button onClick={() => dismiss(n.id)} className="text-[#ccc] hover:text-[#555] shrink-0 ml-1 leading-none" aria-label="Dismiss">✕</button>
-        </div>
-      ))}
+    <div className="absolute right-3 top-14 z-20 flex flex-col gap-1.5 w-[min(22rem,calc(100%-1.5rem))]">
+      {notices.slice(-4).map((n) => <NoticeRow key={n.id} notice={n} />)}
     </div>
   );
 }
@@ -58,10 +72,11 @@ function RunProgress() {
   return (
     <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex flex-col gap-1">
       {list.map((r) => (
-        <div key={r.runId} className={`flex items-center gap-2 bg-white border border-[#111] px-3 py-2 text-[11px] text-[#555] ${styles.sq}`}>
-          <span className="inline-block w-3 h-3 border-2 border-[#555] border-t-transparent rounded-full animate-spin shrink-0" />
+        <div key={r.runId} role="status" className={`flex items-center gap-2 bg-white border border-[#111] px-3 py-2 text-[12px] text-[#333] ${styles.sq}`}
+          style={{ fontVariantNumeric: "tabular-nums" }}>
+          <span className="inline-block w-3 h-3 border-2 border-[#555] border-t-transparent rounded-full animate-spin shrink-0" aria-hidden />
           Running {ACTION_LABEL[r.action]}
-          {r.total > 1 && <span className="text-[#999]">· {r.total} outputs</span>}
+          {r.total > 1 && <span className="text-[#666]">· {r.done + r.failed} of {r.total}</span>}
         </div>
       ))}
     </div>
@@ -122,7 +137,7 @@ function SelectionBar({ onRun }: { onRun: (a: ActionType) => void }) {
                         }
                         if (e.key === "Escape") setPickerOpen(false);
                       }}
-                      className="w-full text-[10px] border border-[#e4e3e0] rounded-md px-1.5 py-1 outline-none focus:border-blue-400" />
+                      className="w-full text-[11px] border border-[#e4e3e0] rounded-md px-1.5 py-1 outline-none focus:border-blue-400" />
                   </div>
                 </div>
               )}
@@ -132,7 +147,7 @@ function SelectionBar({ onRun }: { onRun: (a: ActionType) => void }) {
         {selection.length > 0 && (
           <>
             <span className="text-[#ddd]">·</span>
-            <button onClick={clearSelection} className="text-[#aaa] hover:text-[#555] transition-colors px-1" title="Clear selection">✕ Clear</button>
+            <button onClick={clearSelection} className="text-[#6b6b6b] hover:text-[#555] transition-colors px-1" title="Clear selection">✕ Clear</button>
           </>
         )}
       </div>
@@ -180,14 +195,14 @@ export default function Workspace() {
   return (
     <main className="flex-1 min-w-0 h-screen flex flex-col overflow-hidden">
       <div className={`px-5 pt-2.5 pb-2.5 bg-white flex items-center gap-4 ${styles.toolbar}`}>
-        <Link href="/" className="text-[12px] text-[rgba(0,0,0,0.45)] hover:text-black transition-colors whitespace-nowrap">← Projects</Link>
+        <Link href="/" className="text-[12px] text-[#666] hover:text-black transition-colors whitespace-nowrap">← Projects</Link>
         <span className="text-[#ddd]">/</span>
         <p className="text-[13px] font-semibold text-[#111] truncate max-w-[30ch]" title={project.title}>{project.title}</p>
         <div className="flex items-center gap-1">
           {(["tree", "collections"] as const).map((v) => (
             <button key={v} onClick={() => setView(v)}
               className={`text-[12px] px-2.5 py-1 transition-colors capitalize tracking-wide ${styles.sq} ${
-                view === v ? "text-black border-b border-black" : "text-[rgba(0,0,0,0.35)] hover:text-black"}`}>
+                view === v ? "text-black border-b border-black" : "text-[#6b6b6b] hover:text-black"}`}>
               {v}
             </button>
           ))}

@@ -40,9 +40,9 @@ function InputRow({ node, onRemove }: { node: IdeaNode; onRemove: () => void }) 
       )}
       <div className="min-w-0 flex-1">
         <p className="text-[13px] text-black truncate">{node.title}</p>
-        <p className="text-[11px] italic text-[rgba(0,0,0,0.4)]">{ROLE_LABEL[node.role]}{node.image ? " · image" : ""}</p>
+        <p className="text-[11px] italic text-[#666]">{ROLE_LABEL[node.role]}{node.image ? " · image" : ""}</p>
       </div>
-      <button onClick={onRemove} className="text-[rgba(0,0,0,0.3)] hover:text-black text-[12px]" title="Leave out of this run">✕</button>
+      <button onClick={onRemove} className="text-[#757575] hover:text-black text-[12px]" title="Leave out of this run">✕</button>
     </div>
   );
 }
@@ -96,26 +96,26 @@ export default function RunComposer({ action, onClose }: { action: ActionType; o
           <div className="flex items-start justify-between gap-4">
             <div>
               <h2 className="text-[20px] text-black">{meta.label}</h2>
-              <p className="text-[13px] italic text-[rgba(0,0,0,0.45)] mt-0.5">{meta.description}</p>
+              <p className="text-[13px] italic text-[#666] mt-0.5">{meta.description}</p>
             </div>
-            <button onClick={onClose} className="text-[rgba(0,0,0,0.3)] hover:text-black text-2xl leading-none mt-0.5 transition-colors">×</button>
+            <button onClick={onClose} className="text-[#757575] hover:text-black text-2xl leading-none mt-0.5 transition-colors">×</button>
           </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-5 flex flex-col gap-5">
           <div>
-            <p className="text-[9px] uppercase tracking-[0.16em] text-[rgba(0,0,0,0.4)] mb-2">Brief</p>
+            <p className="text-[11px] uppercase tracking-[0.16em] text-[#666] mb-2">Brief</p>
             <div className={`bg-[#f5f4f0] border border-[rgba(0,0,0,0.2)] px-3 py-2.5 text-[14px] text-[#333232] max-h-20 overflow-y-auto leading-relaxed ${styles.sq}`}>
-              {project.brief || <span className="italic text-[rgba(0,0,0,0.3)]">No brief yet</span>}
+              {project.brief || <span className="italic text-[#757575]">No brief yet</span>}
             </div>
           </div>
 
           <div>
-            <p className="text-[9px] uppercase tracking-[0.16em] text-[rgba(0,0,0,0.4)] mb-2">
+            <p className="text-[11px] uppercase tracking-[0.16em] text-[#666] mb-2">
               Selected ({nodes.length + edges.length})
             </p>
             {nodes.length + edges.length === 0 ? (
-              <div className={`text-[12px] italic text-[rgba(0,0,0,0.35)] bg-[#f5f4f0] border border-[rgba(0,0,0,0.1)] px-3 py-2.5 ${styles.sq}`}>
+              <div className={`text-[12px] italic text-[#6b6b6b] bg-[#f5f4f0] border border-[rgba(0,0,0,0.1)] px-3 py-2.5 ${styles.sq}`}>
                 Nothing selected, so this runs on the brief alone. Select nodes on the canvas to use them.
               </div>
             ) : (
@@ -125,9 +125,9 @@ export default function RunComposer({ action, onClose }: { action: ActionType; o
                   <div key={e.id} className={`flex items-center gap-2.5 px-3 py-2 border border-black bg-[#f5f4f0] ${styles.sq}`}>
                     <div className="min-w-0 flex-1">
                       <p className="text-[13px] text-black truncate">{project.nodes[e.from]?.title} ↔ {project.nodes[e.to]?.title}</p>
-                      <p className="text-[11px] italic text-[rgba(0,0,0,0.4)]">Link{e.label ? ` · ${e.label}` : ""}</p>
+                      <p className="text-[11px] italic text-[#666]">Link{e.label ? ` · ${e.label}` : ""}</p>
                     </div>
-                    <button onClick={() => toggleSelected(e.id)} className="text-[rgba(0,0,0,0.3)] hover:text-black text-[12px]" title="Leave out of this run">✕</button>
+                    <button onClick={() => toggleSelected(e.id)} className="text-[#757575] hover:text-black text-[12px]" title="Leave out of this run">✕</button>
                   </div>
                 ))}
               </div>
@@ -136,7 +136,7 @@ export default function RunComposer({ action, onClose }: { action: ActionType; o
 
           {action === "expand" && (
             <div>
-              <p className="text-[9px] uppercase tracking-[0.16em] text-[rgba(0,0,0,0.4)] mb-2">How many to make</p>
+              <p className="text-[11px] uppercase tracking-[0.16em] text-[#666] mb-2">How many to make</p>
               <div className="flex flex-col gap-2">
                 <CountSlider id="count-concepts" label="Concepts" value={counts.concepts} min={0} max={MAX_COUNT}
                   onChange={(v) => setCounts((c) => ({ ...c, concepts: v }))} />
@@ -148,7 +148,7 @@ export default function RunComposer({ action, onClose }: { action: ActionType; o
 
           {action === "conceptual_variations" && (
             <div>
-              <p className="text-[9px] uppercase tracking-[0.16em] text-[rgba(0,0,0,0.4)] mb-2">How many to make</p>
+              <p className="text-[11px] uppercase tracking-[0.16em] text-[#666] mb-2">How many to make</p>
               <CountSlider id="images-per-idea" label="Images per idea" value={imagesPerIdea} min={1} max={MAX_IMAGES_PER_IDEA}
                 onChange={setImagesPerIdea} />
             </div>
@@ -157,7 +157,7 @@ export default function RunComposer({ action, onClose }: { action: ActionType; o
           {action === "visual_variations" && (
             <div>
               <div className="flex items-center justify-between mb-2">
-                <p className="text-[9px] uppercase tracking-[0.16em] text-[rgba(0,0,0,0.4)]">
+                <p className="text-[11px] uppercase tracking-[0.16em] text-[#666]">
                   Arnheim dimensions ({dimensionIds.length} selected)
                 </p>
                 <button onClick={() => setDimensionIds(allDims ? [] : DIMENSIONS.map((d) => d.id))}
@@ -183,7 +183,7 @@ export default function RunComposer({ action, onClose }: { action: ActionType; o
           )}
 
           <div>
-            <p className="text-[9px] uppercase tracking-[0.16em] text-[rgba(0,0,0,0.4)] mb-2">Additional instructions (optional)</p>
+            <p className="text-[11px] uppercase tracking-[0.16em] text-[#666] mb-2">Additional instructions (optional)</p>
             <textarea
               ref={textareaRef}
               value={instructions}
@@ -196,11 +196,11 @@ export default function RunComposer({ action, onClose }: { action: ActionType; o
         </div>
 
         <div className={`px-6 pb-6 pt-4 flex items-center justify-between gap-4 ${styles.footer}`}>
-          <button onClick={onClose} className="text-[14px] italic text-[rgba(0,0,0,0.45)] hover:text-black transition-colors">Cancel</button>
+          <button onClick={onClose} className="text-[14px] italic text-[#666] hover:text-black transition-colors">Cancel</button>
           {blocker ? (
             <span role="status" className="ml-auto text-[12px] italic text-red-600">{blocker}</span>
           ) : calls > 1 && (
-            <span className="ml-auto text-[12px] italic text-[rgba(0,0,0,0.4)]" style={{ fontVariantNumeric: "tabular-nums" }}>
+            <span className="ml-auto text-[12px] italic text-[#666]" style={{ fontVariantNumeric: "tabular-nums" }}>
               {calls} images, made 4 at a time
             </span>
           )}

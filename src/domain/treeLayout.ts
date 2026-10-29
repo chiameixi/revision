@@ -23,9 +23,9 @@ const PAD = 48;
 const COL_STRIDE = IMAGE_W + COL_GAP;
 
 export function chipHeight(title: string): number {
-  // ~22 chars per line at 10px in a 160px chip
-  const lines = Math.max(1, Math.ceil(title.length / 22));
-  return Math.max(32, lines * 18 + 8);
+  // ~18 chars per line at 12px in a 160px chip
+  const lines = Math.max(1, Math.ceil(title.length / 18));
+  return Math.max(34, lines * 17 + 12);
 }
 
 export function noteHeight(title: string): number {
