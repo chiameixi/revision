@@ -26,6 +26,7 @@ import {
   type ActionResponse,
   type ExpandResponse,
   type ImageResponse,
+  type Usage,
   type WireLink,
   type WireNode,
 } from "@/domain/wire";
@@ -242,7 +243,19 @@ export function readableError(raw: string): string {
   return msg.length > 200 ? `${msg.slice(0, 197)}…` : msg;
 }
 
-export type CallActionFn = (action: ActionType, req: ActionRequest) => Promise<ActionResponse>;
+export interface ActionResult {
+  result: ActionResponse;
+  usage?: Usage;
+}
+
+// A failed request, carrying whatever model use it still cost.
+export class ActionCallError extends Error {
+  constructor(message: string, readonly usage?: Usage) {
+    super(message);
+  }
+}
+
+export type CallActionFn = (action: ActionType, req: ActionRequest) => Promise<ActionResult>;
 
 export const callAction: CallActionFn = async (action, req) => {
   let res: Response;
@@ -253,14 +266,14 @@ export const callAction: CallActionFn = async (action, req) => {
       body: JSON.stringify(req),
     });
   } catch {
-    throw new Error("Couldn't reach the server. Check that it's running.");
+    throw new ActionCallError("Couldn't reach the server. Check that it's running.");
   }
   let reply: ActionReply;
   try {
     reply = await res.json();
   } catch {
-    throw new Error(`The server returned an unreadable response (${res.status}).`);
+    throw new ActionCallError(`The server returned an unreadable response (${res.status}).`);
   }
-  if ("error" in reply) throw new Error(readableError(reply.error));
-  return reply.result;
+  if ("error" in reply) throw new ActionCallError(readableError(reply.error), reply.usage);
+  return { result: reply.result, usage: reply.usage };
 };

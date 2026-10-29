@@ -96,6 +96,15 @@ export interface Collection {
   createdAt: string;
 }
 
+// Running total of Gemini use in a project, for the cost display.
+export interface ProjectUsage {
+  calls: number;           // model calls, including retries and failures
+  inputTokens: number;
+  outputTokens: number;
+  imageTokens: number;
+  costUsd: number;         // estimated at list prices when each call was made
+}
+
 // Everything about one project. Each Record is keyed by ID, so each fact is stored once.
 export interface ProjectState {
   id: ProjectId;
@@ -106,6 +115,7 @@ export interface ProjectState {
   nodes: Record<NodeId, IdeaNode>;
   edges: Record<EdgeId, Edge>;
   collections: Record<CollectionId, Collection>;
+  usage?: ProjectUsage;    // absent until the first model call
   views: {
     // Only positions the user has dragged; everything else is auto-laid-out.
     tree: { positions: Record<NodeId, XY> };
@@ -116,6 +126,8 @@ export interface ProjectState {
 // What a card in the projects grid shows. Derived from the project (see summarize()).
 export interface ProjectSummary extends Pick<ProjectState, "id" | "title" | "updatedAt" | "createdAt"> {
   briefExcerpt: string;
+  calls: number;
+  costUsd: number;
   nodeCount: number;          // visible nodes only
   imageCount: number;
   coverImageId?: ImageId;     // most recent visible image, for the thumbnail

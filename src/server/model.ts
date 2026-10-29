@@ -11,6 +11,9 @@
 
 import "server-only";
 import { getGeminiClient } from "@/lib/gemini/client";
+import { UsageMeter } from "./usage";
+
+export { UsageMeter };
 
 export const TEXT_MODEL = "gemini-3.5-flash";
 export const IMAGE_MODEL = "gemini-3-pro-image";
@@ -39,6 +42,7 @@ export async function callText<T>(
   prompt: string,
   images: string[],
   schema: unknown,
+  meter: UsageMeter,
 ): Promise<{ result: T; rawText: string }> {
   logPrompt(label, TEXT_MODEL, prompt, images.length);
   const response = await getGeminiClient().models.generateContent({
@@ -46,6 +50,7 @@ export async function callText<T>(
     contents: [{ role: "user", parts: parts(prompt, images) }],
     config: { responseMimeType: "application/json", responseJsonSchema: schema },
   });
+  meter.record(response.usageMetadata);
   const rawText = response.text ?? "";
   if (!rawText) throw new Error("The model returned an empty response.");
   return { result: JSON.parse(rawText) as T, rawText };
@@ -59,7 +64,7 @@ export interface ImageResult {
   attempts: number;
 }
 
-async function callImageOnce(prompt: string, images: string[]): Promise<Omit<ImageResult, "attempts">> {
+async function callImageOnce(prompt: string, images: string[], meter: UsageMeter): Promise<Omit<ImageResult, "attempts">> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set.");
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(IMAGE_MODEL)}:generateContent?key=${encodeURIComponent(apiKey)}`;
@@ -75,6 +80,7 @@ async function callImageOnce(prompt: string, images: string[]): Promise<Omit<Ima
   if (!res.ok) throw new Error(`Gemini API error (${res.status}): ${await res.text()}`);
 
   const rawResponse = await res.json();
+  meter.record(rawResponse?.usageMetadata);
   type Part = { text?: string; inlineData?: { data: string; mimeType: string } };
   const responseParts: Part[] = rawResponse?.candidates?.[0]?.content?.parts ?? [];
   const img = responseParts.find((p) => p.inlineData);
@@ -88,11 +94,11 @@ async function callImageOnce(prompt: string, images: string[]): Promise<Omit<Ima
 
 // The model sometimes answers with text only even when asked for an image;
 // retrying fixes most of those without changing the prompt.
-export async function callImage(label: string, prompt: string, images: string[]): Promise<ImageResult> {
+export async function callImage(label: string, prompt: string, images: string[], meter: UsageMeter): Promise<ImageResult> {
   logPrompt(label, IMAGE_MODEL, prompt, images.length);
   let last: Omit<ImageResult, "attempts"> | null = null;
   for (let attempt = 1; attempt <= IMAGE_ATTEMPTS; attempt++) {
-    last = await callImageOnce(prompt, images);
+    last = await callImageOnce(prompt, images, meter);
     if (last.imageData) return { ...last, attempts: attempt };
     if (attempt < IMAGE_ATTEMPTS) console.warn(`[${label}] no image on attempt ${attempt}/${IMAGE_ATTEMPTS}, retrying…`);
   }

@@ -16,6 +16,8 @@ import type {
   Role,
   XY,
 } from "./types";
+import type { Usage } from "./wire";
+import { costUsd } from "./pricing";
 
 export type NodePatch = Partial<Pick<IdeaNode, "title" | "body" | "details" | "image">>;
 export type CollectionPatch = Partial<Pick<Collection, "title" | "description" | "color">>;
@@ -143,6 +145,24 @@ export function moveToCollection(
   let next = from ? removeFromCollection(p, from, nodeId) : p;
   if (to) next = addToCollection(next, to, [nodeId]);
   return next;
+}
+
+// ── Usage ─────────────────────────────────────────────────────────────────────
+
+// Adds one request's model use to the project's running total.
+export function addUsage(p: ProjectState, u: Usage): ProjectState {
+  if (u.calls === 0) return p;
+  const prev = p.usage ?? { calls: 0, inputTokens: 0, outputTokens: 0, imageTokens: 0, costUsd: 0 };
+  return {
+    ...p,
+    usage: {
+      calls: prev.calls + u.calls,
+      inputTokens: prev.inputTokens + u.inputTokens,
+      outputTokens: prev.outputTokens + u.outputTokens,
+      imageTokens: prev.imageTokens + u.imageTokens,
+      costUsd: prev.costUsd + (costUsd(u) ?? 0),
+    },
+  };
 }
 
 // ── Layout ────────────────────────────────────────────────────────────────────

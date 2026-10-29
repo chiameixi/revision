@@ -78,10 +78,20 @@ export interface ActionContract {
 export type ActionRequest<A extends ActionType = ActionType> = ActionContract[A]["req"];
 export type ActionResponse<A extends ActionType = ActionType> = ActionContract[A]["res"];
 
+// Tokens one request used, summed over retries. Failed requests still report
+// what they used, since those calls are billed too.
+export interface Usage {
+  model: string;
+  calls: number;           // model calls, including retries
+  inputTokens: number;
+  outputTokens: number;    // text output, including thinking
+  imageTokens: number;     // image output
+}
+
 // What the route returns: the result, or an error message.
 export type ActionReply<A extends ActionType = ActionType> =
-  | { result: ActionResponse<A> }
-  | { error: string };
+  | { result: ActionResponse<A>; usage?: Usage }
+  | { error: string; usage?: Usage };
 
 export const DEFAULT_COUNTS = { concepts: 4, motifs: 4 } as const;
 export const MAX_COUNT = 10;

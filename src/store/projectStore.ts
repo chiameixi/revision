@@ -42,7 +42,9 @@ import { makeCollection, makeEdge, makeNode, type NewNodeInput } from "@/domain/
 import * as u from "@/domain/updates";
 import { repo as defaultRepo, type NewImage, type Repository } from "@/db";
 import { blobToDataUrl, dataUrlToImage } from "@/services/images";
-import { callAction as fetchAction, outputsFor, planRun, readableError, type CallActionFn, type RunOptions, type Selection } from "@/services/generate";
+import { ActionCallError, callAction as fetchAction, outputsFor, planRun, readableError, type CallActionFn, type RunOptions, type Selection } from "@/services/generate";
+import type { Usage } from "@/domain/wire";
+import { costUsd } from "@/domain/pricing";
 
 type View = "tree" | "cluster";
 type Ref = NodeId | EdgeId;
@@ -483,15 +485,29 @@ export function createProjectStore(
         const errors: string[] = [];
 
         // Each job's outputs land on the canvas as soon as that job finishes.
+        const used = { calls: 0, costUsd: 0 };
+        const countUsage = (usage?: Usage) => {
+          if (!usage) return;
+          used.calls += usage.calls;
+          used.costUsd += costUsd(usage) ?? 0;
+        };
+
         await inPool(jobs, MAX_PARALLEL, async (job) => {
           try {
-            const res = await callAction(job.action, job.req);
-            const out = outputsFor(job, res, runId);
+            const { result, usage } = await callAction(job.action, job.req);
+            const out = outputsFor(job, result, runId);
             for (const img of out.images) await getRepo().saveImage(dataUrlToImage(img.dataUrl), img.imageId);
-            await applyTo(p.id, (s) => u.addNodesAndEdges(s, out.nodes, out.edges));
+            await applyTo(p.id, (s) => {
+              const next = u.addNodesAndEdges(s, out.nodes, out.edges);
+              return usage ? u.addUsage(next, usage) : next;
+            });
+            countUsage(usage);
             outputIds.push(...out.nodes.map((n) => n.id));
             tick("done");
           } catch (err) {
+            const usage = err instanceof ActionCallError ? err.usage : undefined;
+            if (usage) await applyTo(p.id, (s) => u.addUsage(s, usage));
+            countUsage(usage);
             errors.push(`${job.label}: ${readableError(err instanceof Error ? err.message : String(err))}`);
             tick("failed");
           }
@@ -504,10 +520,10 @@ export function createProjectStore(
           // Same message from every job (e.g. a bad key) is only worth showing once.
           const first = errors[0].slice(errors[0].indexOf(": ") + 2);
           notify(jobs.length === 1 || errors.every((e) => e.endsWith(first)) ? first : `All ${jobs.length} outputs failed. ${errors[0]}`);
-          log("run.failed", { runId, errors: errors.slice(0, 5) }, { actor: "model", projectId: p.id });
+          log("run.failed", { runId, errors: errors.slice(0, 5), ...used }, { actor: "model", projectId: p.id });
         } else {
           if (errors.length) notify(`${errors.length} of ${jobs.length} outputs failed. ${errors[0]}`);
-          log("run.done", { runId, outputIds, failed: errors.length, errors: errors.slice(0, 5) }, { actor: "model", projectId: p.id });
+          log("run.done", { runId, outputIds, failed: errors.length, errors: errors.slice(0, 5), ...used }, { actor: "model", projectId: p.id });
         }
         return runId;
       },

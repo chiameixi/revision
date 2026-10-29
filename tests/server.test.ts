@@ -179,3 +179,15 @@ describe("links and regions in prompts", () => {
     expect(() => validateRequest("expand", { ...meta, inputs: [], links: "nope", counts: { concepts: 1, motifs: 0 } })).toThrow(RequestError);
   });
 });
+
+describe("usage meter", () => {
+  it("adds up calls and splits image from text output, counting thinking as output", async () => {
+    const { UsageMeter } = await import("@/server/usage");
+    const m = new UsageMeter("gemini-3-pro-image");
+    m.record({ promptTokenCount: 100, candidatesTokenCount: 30 });                                   // a retry with text only
+    m.record({ promptTokenCount: 100, candidatesTokenCount: 1150, thoughtsTokenCount: 20,
+      candidatesTokensDetails: [{ modality: "IMAGE", tokenCount: 1120 }, { modality: "TEXT", tokenCount: 30 }] });
+    m.record(undefined);                                                                          // no usage reported
+    expect(m.usage).toEqual({ model: "gemini-3-pro-image", calls: 3, inputTokens: 200, outputTokens: 80, imageTokens: 1120 });
+  });
+});

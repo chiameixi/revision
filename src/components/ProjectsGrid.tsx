@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { useProjectStore } from "@/store/projectStore";
 import type { ProjectSummary } from "@/domain/types";
 import { useImageUrl } from "./useImageUrl";
+import { formatUsd, PRICES_CHECKED } from "@/domain/pricing";
 import styles from "./Workspace.module.css";
 
 function timeAgo(iso: string): string {
@@ -63,6 +64,8 @@ function ProjectCard({ p }: { p: ProjectSummary }) {
           <span>·</span>
           <span>{p.imageCount} {p.imageCount === 1 ? "image" : "images"}</span>
           <span>·</span>
+          <span title={`${p.calls} model ${p.calls === 1 ? "call" : "calls"}, estimated cost`}>≈ {formatUsd(p.costUsd)}</span>
+          <span>·</span>
           <span title={new Date(p.updatedAt).toLocaleString()}>{timeAgo(p.updatedAt)}</span>
         </div>
         <div className="flex items-center gap-3 text-[11px] pt-1">
@@ -91,6 +94,7 @@ export default function ProjectsGrid() {
   const createProject = useProjectStore((s) => s.createProject);
   const [loaded, setLoaded] = useState(false);
   const [creating, setCreating] = useState(false);
+  const totals = projects.reduce((t, p) => ({ calls: t.calls + p.calls, costUsd: t.costUsd + p.costUsd }), { calls: 0, costUsd: 0 });
 
   useEffect(() => { loadProjects().then(() => setLoaded(true)); }, [loadProjects]);
 
@@ -110,6 +114,12 @@ export default function ProjectsGrid() {
               ? "No projects yet. Start one with a brief, then expand it into concepts, motifs and visuals."
               : "Each project has its own brief, tree and collections."}
           </p>
+          {totals.calls > 0 && (
+            <p className="text-[12px] text-[rgba(0,0,0,0.45)] mt-2" style={{ fontVariantNumeric: "tabular-nums" }}
+              title={`Estimated from the tokens Gemini reports, at list prices checked ${PRICES_CHECKED}. Retries and failed calls are included. Deleted projects aren't counted.`}>
+              Gemini use across all projects: {totals.calls} {totals.calls === 1 ? "call" : "calls"} · ≈ {formatUsd(totals.costUsd)}
+            </p>
+          )}
         </header>
 
         <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(240px,1fr))]">

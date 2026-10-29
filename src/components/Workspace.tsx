@@ -14,7 +14,20 @@ import RunComposer from "./RunComposer";
 import AddNodeModal from "./AddNodeModal";
 import { BriefPanel, LinkPanel, NodePanel } from "./DetailPanel";
 import { ACTIONS, ACTION_LABEL, COLLECTION_COLORS } from "./nodeStyle";
+import { formatUsd, PRICES_CHECKED } from "@/domain/pricing";
 import styles from "./Workspace.module.css";
+
+// Calls and estimated cost for this project.
+function UsageBadge() {
+  const usage = useProjectStore((s) => s.project?.usage);
+  const calls = usage?.calls ?? 0;
+  return (
+    <p className="ml-auto text-[11px] text-[rgba(0,0,0,0.45)] whitespace-nowrap" style={{ fontVariantNumeric: "tabular-nums" }}
+      title={`Estimated from the tokens Gemini reports, at list prices checked ${PRICES_CHECKED}. Retries and failed calls are included.`}>
+      {calls} {calls === 1 ? "call" : "calls"} · ≈ {formatUsd(usage?.costUsd ?? 0)}
+    </p>
+  );
+}
 
 function Notices() {
   const notices = useProjectStore((s) => s.notices);
@@ -179,8 +192,9 @@ export default function Workspace() {
             </button>
           ))}
         </div>
+        <UsageBadge />
         {saveError && (
-          <p role="alert" className="ml-auto text-[11px] text-red-600">Couldn&apos;t save: {saveError}. Your changes are kept in this tab; try again before closing it.</p>
+          <p role="alert" className="text-[11px] text-red-600">Couldn&apos;t save: {saveError}. Your changes are kept in this tab; try again before closing it.</p>
         )}
       </div>
 

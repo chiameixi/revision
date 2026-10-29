@@ -2,7 +2,9 @@ import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DexieRepository } from "@/db/dexie";
 import { createProjectStore } from "@/store/projectStore";
-import type { CallActionFn } from "@/services/generate";
+import { ActionCallError, type ActionResult, type CallActionFn } from "@/services/generate";
+import type { ActionRequest, ActionResponse } from "@/domain/wire";
+import type { ActionType } from "@/domain/types";
 import { treeEdges, visibleLinks, visibleNodes } from "@/domain/graph";
 
 let repo: DexieRepository;
@@ -192,7 +194,13 @@ describe("runs", () => {
   const PNG = "data:image/png;base64,iVBORw0KGgo=";
   type Call = { action: string; req: Record<string, unknown> };
 
-  function runStore(callAction: CallActionFn) {
+  // Fakes return either a bare result or { result, usage }.
+  type Fake = (action: ActionType, req: ActionRequest) => Promise<ActionResponse | ActionResult>;
+  function runStore(fake: Fake) {
+    const callAction: CallActionFn = async (action, req) => {
+      const out = await fake(action, req);
+      return "result" in out ? out : { result: out };
+    };
     return createProjectStore(() => repo, { saveDelayMs: 0, callAction });
   }
 
@@ -356,5 +364,30 @@ describe("projects grid", () => {
     const before = p();
     await s().openProject(before.id);
     expect(p()).toBe(before);
+  });
+});
+
+describe("usage", () => {
+  const imageUsage = { model: "gemini-3-pro-image", calls: 1, inputTokens: 300, outputTokens: 20, imageTokens: 1120 };
+
+  it("adds each request's usage to the project, including failed ones", async () => {
+    const fake: CallActionFn = async (_a, req) => {
+      if ((req as { dimensionId: string }).dimensionId === "color") {
+        throw new ActionCallError("No image came back after 3 attempts.", { ...imageUsage, calls: 3, imageTokens: 0 });
+      }
+      return { result: { imageDataUrl: "data:image/png;base64,iVBORw0KGgo=", text: "" }, usage: imageUsage };
+    };
+    store = createProjectStore(() => repo, { saveDelayMs: 0, callAction: fake });
+    await s().createProject("Costs");
+    const draft = (await s().addImageNode({ blob: new Blob([new Uint8Array([1])]), mimeType: "image/png" }, { role: "visual", title: "d" }))!;
+    s().setSelection([draft]);
+    await s().runAction("visual_variations", { dimensionIds: ["balance", "color"] });
+    expect(p().usage).toMatchObject({ calls: 4, imageTokens: 1120 });
+    expect(p().usage!.costUsd).toBeGreaterThan(0.13);
+    await new Promise((r) => setTimeout(r, 5));
+    const done = (await repo.listEvents(p().id)).find((e) => e.type === "run.done")!;
+    expect(done.payload).toMatchObject({ calls: 4 });
+    await s().loadProjects();
+    expect(s().projects[0]).toMatchObject({ calls: 4 });
   });
 });

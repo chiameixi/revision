@@ -27,6 +27,8 @@ export function summarize(p: ProjectState): ProjectSummary {
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
     briefExcerpt: brief.length > 140 ? `${brief.slice(0, 139)}…` : brief,
+    calls: p.usage?.calls ?? 0,
+    costUsd: p.usage?.costUsd ?? 0,
     nodeCount: nodes.length,
     imageCount: withImage.length,
     coverImageId: withImage[0]?.image?.imageId,
