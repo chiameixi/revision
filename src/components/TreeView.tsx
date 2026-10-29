@@ -34,6 +34,7 @@ import {
   type EdgeProps,
   type Connection,
   type NodeChange,
+  type FinalConnectionState,
   type EdgeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -555,6 +556,16 @@ export default function TreeView({
     addLink(c.source, c.target);
   }, [addLink]);
 
+  // React Flow only connects when the drag ends on the target's small handle.
+  // Dropping anywhere on a node is what people expect, so handle that too.
+  const onConnectEnd = useCallback((event: MouseEvent | TouchEvent, state: FinalConnectionState) => {
+    if (state.isValid || !state.fromNode) return;
+    const point = "changedTouches" in event ? event.changedTouches[0] : event;
+    const target = document.elementFromPoint(point.clientX, point.clientY)?.closest(".react-flow__node")?.getAttribute("data-id");
+    if (!target || target === BRIEF_ID || state.fromNode.id === BRIEF_ID || target === state.fromNode.id) return;
+    addLink(state.fromNode.id, target);
+  }, [addLink]);
+
   const exportPng = useCallback(async () => {
     const rf = rfRef.current;
     if (!rf) return;
@@ -615,6 +626,7 @@ export default function TreeView({
         connectOnClick={false}
         nodesConnectable={connectMode}
         onConnect={onConnect}
+        onConnectEnd={onConnectEnd}
         deleteKeyCode={["Delete", "Backspace"]}
         selectionOnDrag={lassoMode}
         panOnDrag={lassoMode ? [1, 2] : true}
@@ -623,7 +635,7 @@ export default function TreeView({
       >
         {showCollectionColors && <CollectionHalos collections={collections} />}
         <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="rgba(0,0,0,0.15)" />
-        <Controls showInteractive={false} />
+        <Controls showInteractive={false} position="bottom-right" />
 
         {shown.length === 0 && (
           <Panel position="top-center">

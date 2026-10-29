@@ -16,6 +16,7 @@ import type {
   ConceptualVariationRequest,
   ExpandRequest,
   VisualVariationRequest,
+  WireLink,
   WireNode,
 } from "@/domain/wire";
 
@@ -74,6 +75,23 @@ const images = (nodes: WireNode[]) => nodes.flatMap((n) => (n.imageDataUrl ? [n.
 
 const TITLE_RULE = `title (2–5 words: plain, direct label for the idea — no poetic flourishes, no metaphors, no adjective stacking; e.g. "Controlled Uncertainty" not "Whispers of Elegant Tension")`;
 
+export function describeLink(l: WireLink): string {
+  return `"${l.from.title}" (${l.from.role}) ↔ "${l.to.title}" (${l.to.role})${l.label?.trim() ? ` — the designer sees them as connected by: ${l.label.trim()}` : ""}`;
+}
+
+function linksSection(links: WireLink[] = []): string {
+  if (!links.length) return "";
+  return `\nConnections to explore (the designer drew these between two ideas):\n${links.map((l, i) => `${i + 1}. ${describeLink(l)}`).join("\n")}
+For these, generate ideas that sit between the two ends — what links them, what combining them would mean, what a third idea bridging them could be — rather than ideas about either end alone.\n`;
+}
+
+// Asked only when images are sent, so outputs can point back to where they came from.
+function regionFields(imageCount: number): string {
+  return `
+- sourceImage (optional: the number of the image this comes from, 1 to ${imageCount}, if it comes mainly from one image)
+- box (optional: [ymin, xmin, ymax, xmax] on a 0–1000 scale around the part of that image it comes from; leave it out if it's about the whole image)`;
+}
+
 export function buildExpandPrompt(
   req: ExpandRequest,
   system: { unpackBrief: string; analyze: string },
@@ -81,9 +99,10 @@ export function buildExpandPrompt(
   const withImages = req.inputs.filter((n) => n.imageDataUrl);
   const hasImages = withImages.length > 0;
   const { concepts, motifs } = req.counts;
+  const regions = hasImages ? regionFields(withImages.length) : "";
 
   const intro = hasImages
-    ? `${system.analyze} Examine the provided images to extract both concept-level interpretations and visual motifs.\n\nYou are looking at ${withImages.length} image(s), in this order: ${withImages.map((n) => `"${n.title}"`).join(", ")}.`
+    ? `${system.analyze} Examine the provided images to extract both concept-level interpretations and visual motifs.\n\nYou are looking at ${withImages.length} image(s), in this order: ${withImages.map((n, i) => `${i + 1}. "${n.title}"`).join(", ")}.`
     : system.unpackBrief;
 
   const asks: string[] = [];
@@ -93,7 +112,7 @@ export function buildExpandPrompt(
       : "abstract concept directions — core design tensions, underlying values, emotional registers, and meaningful ambiguities"}. Each concept has:
 - ${TITLE_RULE}
 - description (1–2 sentences: the abstract design intention — its meaning, tension, or emotional register — not a prescription for colors, shapes, or layouts)
-- rationale (1–2 sentences: why this conceptual direction is worth pursuing)
+- rationale (1–2 sentences: why this conceptual direction is worth pursuing)${regions}
 ${concepts === 1
   ? "Generate exactly 1 concept that names an idea, not a visual recipe."
   : `Generate exactly ${concepts} distinct concepts that name ideas, not visual recipes.`}`);
@@ -105,7 +124,7 @@ ${concepts === 1
 - title (2–5 words)
 - visualQuality (1–2 sentences: what it looks like, how it manifests visually)
 - howItConveysIdea (1–2 sentences: what concept, feeling, or meaning this quality communicates)
-- category (one of: color, texture, form, composition, subject, style, typography)
+- category (one of: color, texture, form, composition, subject, style, typography)${regions}
 ${motifs === 1
   ? "Generate exactly 1 motif."
   : `Generate exactly ${motifs} distinct motifs covering different visual dimensions.`}`);
@@ -114,7 +133,7 @@ ${motifs === 1
   const prompt = `${intro}
 
 Design brief: ${req.brief || "(none provided)"}
-${contextSections(req.inputs)}${instructionsLine(req.instructions)}
+${contextSections(req.inputs)}${linksSection(req.links)}${instructionsLine(req.instructions)}
 Return a JSON object with ${asks.length === 2 ? "two arrays" : "one array"}:
 
 ${asks.join("\n\n")}`;
@@ -122,7 +141,10 @@ ${asks.join("\n\n")}`;
   return { prompt, images: images(withImages) };
 }
 
-export function expandSchema(counts: ExpandRequest["counts"]) {
+export function expandSchema(counts: ExpandRequest["counts"], withRegions = false) {
+  const regionProps = withRegions
+    ? { sourceImage: { type: Type.INTEGER }, box: { type: Type.ARRAY, items: { type: Type.NUMBER } } }
+    : {};
   const properties: Record<string, unknown> = {};
   const required: string[] = [];
   if (counts.concepts > 0) {
@@ -132,7 +154,7 @@ export function expandSchema(counts: ExpandRequest["counts"]) {
       items: {
         type: Type.OBJECT,
         required: ["title", "description", "rationale"],
-        properties: { title: { type: Type.STRING }, description: { type: Type.STRING }, rationale: { type: Type.STRING } },
+        properties: { title: { type: Type.STRING }, description: { type: Type.STRING }, rationale: { type: Type.STRING }, ...regionProps },
       },
     };
   }
@@ -148,6 +170,7 @@ export function expandSchema(counts: ExpandRequest["counts"]) {
           visualQuality: { type: Type.STRING },
           howItConveysIdea: { type: Type.STRING },
           category: { type: Type.STRING },
+          ...regionProps,
         },
       },
     };
@@ -184,13 +207,30 @@ export const APPROACHES = [
   "Push the composition and medium somewhere bold.",
 ];
 
+function ideaLines(n: WireNode): string[] {
+  const d = n.details ?? {};
+  const lines = n.role === "motif"
+    ? [`Motif: "${n.title}"`, n.body && `Visual quality: ${n.body}`, d.howItConveysIdea && `How it conveys the idea: ${d.howItConveysIdea}`]
+    : n.role === "concept"
+    ? [`Concept: "${n.title}"`, n.body && `Description: ${n.body}`, d.rationale && `Rationale: ${d.rationale}`]
+    : [`${n.role === "visual" ? "Visual" : "Note"}: "${n.title}"`, n.body];
+  return lines.filter((l): l is string => !!l);
+}
+
+// Renders one idea, or a link as "one end expressed through the other".
 export function buildConceptualVariationPrompt(req: ConceptualVariationRequest, basePrompt: string): BuiltPrompt {
-  const { idea, base } = req;
-  const kind = idea.role === "motif" ? "motif" : "concept";
-  const d = idea.details ?? {};
-  const ideaLines = idea.role === "motif"
-    ? [`Motif: "${idea.title}"`, idea.body && `Visual quality: ${idea.body}`, d.howItConveysIdea && `How it conveys the idea: ${d.howItConveysIdea}`]
-    : [`Concept: "${idea.title}"`, idea.body && `Description: ${idea.body}`, d.rationale && `Rationale: ${d.rationale}`];
+  const { idea, link, base } = req;
+  const subject = idea
+    ? ideaLines(idea).join("\n")
+    : `Connection to express: ${describeLink(link!)}
+
+${ideaLines(link!.from).join("\n")}
+
+${ideaLines(link!.to).join("\n")}
+
+Make one image where "${link!.from.title}" is expressed through "${link!.to.title}": both should be present, and the connection between them should be the point of the image.`;
+  const kind = idea ? (idea.role === "motif" ? "motif" : "concept") : "connection";
+  const own = idea ? [idea] : [link!.from, link!.to];
 
   const sent: string[] = [];
   const notes: string[] = [];
@@ -198,9 +238,10 @@ export function buildConceptualVariationPrompt(req: ConceptualVariationRequest, 
     sent.push(base.imageDataUrl);
     notes.push(`Image ${sent.length} is the base design: keep its medium and overall style, and re-imagine it to express this ${kind}.`);
   }
-  if (idea.imageDataUrl) {
-    sent.push(idea.imageDataUrl);
-    notes.push(`Image ${sent.length} is how the ${kind} itself was captured; use it as a reference for what the ${kind} means.`);
+  for (const n of own) {
+    if (!n.imageDataUrl) continue;
+    sent.push(n.imageDataUrl);
+    notes.push(`Image ${sent.length} is how "${n.title}" was captured; use it as a reference for what it means.`);
   }
   const refs = images(req.context);
   if (refs.length) {
@@ -210,7 +251,7 @@ export function buildConceptualVariationPrompt(req: ConceptualVariationRequest, 
 
   const prompt = `${basePrompt}
 
-${ideaLines.filter(Boolean).join("\n")}
+${subject}
 
 Overall design brief: ${req.brief || "(none provided)"}
 ${contextSections(req.context)}${notes.length ? `\n${notes.join("\n")}\n` : ""}${

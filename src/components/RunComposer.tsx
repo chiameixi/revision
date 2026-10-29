@@ -62,10 +62,8 @@ export default function RunComposer({ action, onClose }: { action: ActionType; o
   const meta = ACTIONS.find((a) => a.id === action)!;
   const { nodes, edges } = useMemo(() => resolveSelection(project, selection), [project, selection]);
   const allDims = dimensionIds.length === DIMENSIONS.length;
-  const ideaCount = useMemo(() => {
-    const ids = new Set([...nodes.map((n) => n.id), ...edges.flatMap((e) => [e.from, e.to])]);
-    return [...ids].filter((id) => ["concept", "motif"].includes(project.nodes[id]?.role)).length;
-  }, [nodes, edges, project.nodes]);
+  // Conceptual variations render each selected concept or motif, and each selected link.
+  const ideaCount = nodes.filter((n) => n.role === "concept" || n.role === "motif").length + edges.length;
 
   // How many model calls this run will make, so cost and wait are visible up front.
   const calls = action === "expand" ? 1
@@ -82,7 +80,7 @@ export default function RunComposer({ action, onClose }: { action: ActionType; o
     : action === "expand" && nodes.length + edges.length === 0 && !project.brief.trim() ? "Write a brief or select something to expand."
     : action === "visual_variations" && !hasImage ? "Select an image to vary."
     : action === "visual_variations" && dimensionIds.length === 0 ? "Choose at least one dimension."
-    : action === "conceptual_variations" && ideaCount === 0 ? "Select at least one concept or motif to visualize."
+    : action === "conceptual_variations" && ideaCount === 0 ? "Select at least one concept, motif or link to visualize."
     : null;
 
   function send() {

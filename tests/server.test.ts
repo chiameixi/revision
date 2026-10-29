@@ -46,7 +46,7 @@ describe("expand prompt", () => {
   it("analyzes selected images and sends them in order", () => {
     const { prompt, images } = buildExpandPrompt({ ...meta, inputs: [image, concept], counts: { concepts: 1, motifs: 1 } }, SYSTEM);
     expect(prompt.startsWith("ANALYZE-SYSTEM")).toBe(true);
-    expect(prompt).toContain(`1 image(s), in this order: "draft.png"`);
+    expect(prompt).toContain(`1 image(s), in this order: 1. "draft.png"`);
     expect(prompt).toContain("Generate exactly 1 concept that names an idea, not a visual recipe.");
     expect(prompt).toContain("Generate exactly 1 motif.");
     expect(images).toEqual([PNG]);
@@ -137,5 +137,45 @@ describe("request validation", () => {
     expect(() => validateRequest("conceptual_variations", ok)).not.toThrow();
     expect(() => validateRequest("conceptual_variations", { ...ok, idea: note })).toThrow(RequestError);
     expect(() => validateRequest("conceptual_variations", { ...ok, variant: 3 })).toThrow(RequestError);
+  });
+});
+
+describe("links and regions in prompts", () => {
+  const link = { id: "e1", from: concept, to: motif, label: "both pull back" };
+
+  it("asks expand for ideas between the two ends of a link", () => {
+    const { prompt } = buildExpandPrompt({ ...meta, inputs: [concept, motif], links: [link], counts: { concepts: 2, motifs: 0 } }, SYSTEM);
+    expect(prompt).toContain(`Connections to explore`);
+    expect(prompt).toContain(`1. "Ebb" (concept) ↔ "Waves" (motif) — the designer sees them as connected by: both pull back`);
+    expect(prompt).toContain("sit between the two ends");
+  });
+
+  it("asks where each idea came from only when images are sent", () => {
+    const withImg = buildExpandPrompt({ ...meta, inputs: [image, image], counts: { concepts: 1, motifs: 1 } }, SYSTEM).prompt;
+    expect(withImg).toContain("sourceImage (optional: the number of the image this comes from, 1 to 2");
+    expect(withImg).toContain("box (optional: [ymin, xmin, ymax, xmax] on a 0–1000 scale");
+    expect(buildExpandPrompt({ ...meta, inputs: [concept], counts: { concepts: 1, motifs: 1 } }, SYSTEM).prompt).not.toContain("sourceImage");
+    const schema = expandSchema({ concepts: 1, motifs: 1 }, true) as { properties: Record<string, { items: { properties: Record<string, unknown>; required: string[] } }> };
+    expect(Object.keys(schema.properties.motifs.items.properties)).toContain("box");
+    expect(schema.properties.motifs.items.required).not.toContain("box");
+  });
+
+  it("renders a link as one end expressed through the other, with both ends' images", () => {
+    const withImages = { ...link, from: { ...concept, imageDataUrl: PNG }, to: { ...motif, imageDataUrl: PNG } };
+    const { prompt, images } = buildConceptualVariationPrompt({ ...meta, link: withImages, context: [], variant: 1, of: 1 }, "BASE");
+    expect(prompt).toContain(`Make one image where "Ebb" is expressed through "Waves"`);
+    expect(prompt).toContain(`Concept: "Ebb"`);
+    expect(prompt).toContain(`Motif: "Waves"`);
+    expect(prompt).toContain(`Image 1 is how "Ebb" was captured`);
+    expect(images).toEqual([PNG, PNG]);
+  });
+
+  it("validates links and needs exactly one of idea or link", () => {
+    const base = { ...meta, context: [], variant: 1, of: 1 };
+    expect(() => validateRequest("conceptual_variations", { ...base, link })).not.toThrow();
+    expect(() => validateRequest("conceptual_variations", { ...base, link, idea: concept })).toThrow(RequestError);
+    expect(() => validateRequest("conceptual_variations", base)).toThrow(RequestError);
+    expect(() => validateRequest("conceptual_variations", { ...base, link: { ...link, to: { id: "x" } } })).toThrow(RequestError);
+    expect(() => validateRequest("expand", { ...meta, inputs: [], links: "nope", counts: { concepts: 1, motifs: 0 } })).toThrow(RequestError);
   });
 });

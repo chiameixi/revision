@@ -105,6 +105,29 @@ function SiblingImage({ node, onSelect, onZoom }: { node: IdeaNode; onSelect: ()
   );
 }
 
+// An input image with the part an output came from outlined.
+function RegionPreview({ node, region, onClick }: { node: IdeaNode; region: Region | "whole"; onClick: () => void }) {
+  const url = useImageUrl(node.image?.imageId);
+  const box = region === "whole" ? null : region.box;
+  return (
+    <button onClick={onClick} className="text-left flex flex-col gap-1 group" title={`Open "${node.title}"`}>
+      <div className="relative w-full bg-[#f7f6f3] overflow-hidden rounded">
+        {url && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={url} alt={node.title} className="w-full block" />
+        )}
+        {url && box && (
+          <div className="absolute border-2 border-[#2563eb] bg-[#2563eb]/10 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]"
+            style={{ top: `${box[0] / 10}%`, left: `${box[1] / 10}%`, height: `${(box[2] - box[0]) / 10}%`, width: `${(box[3] - box[1]) / 10}%` }} />
+        )}
+      </div>
+      <span className="text-[10px] text-[#666] group-hover:underline truncate">
+        {node.title} · {box ? "this region" : "the whole image"}
+      </span>
+    </button>
+  );
+}
+
 // ── Node panel ────────────────────────────────────────────────────────────────
 
 export function NodePanel({
@@ -130,6 +153,17 @@ export function NodePanel({
   const [cropping, setCropping] = useState(false);
 
   const parents = useMemo(() => (node ? visibleParents(project, node.id).map((id) => project.nodes[id]) : []), [project, node]);
+  // Where in a parent image this node came from, if the model said.
+  const regions = useMemo(() => {
+    const map = new Map<NodeId, Region | "whole">();
+    for (const e of Object.values(project.edges)) {
+      if (e.kind === "derived_from" && e.to === nodeId && !e.hidden && e.region) map.set(e.from, e.region);
+    }
+    return map;
+  }, [project.edges, nodeId]);
+  const exploredLink = node?.origin.kind === "generated" && node.origin.params?.sourceEdgeId
+    ? project.edges[node.origin.params.sourceEdgeId]
+    : undefined;
   const siblings = useMemo(() => {
     if (!node || node.origin.kind !== "generated") return [];
     const runId = node.origin.runId;
@@ -185,11 +219,24 @@ export function NodePanel({
             </div>
           )}
 
-          {parents.length > 0 && (
+          {(parents.length > 0 || exploredLink) && (
             <div className="px-4 py-3 border-b border-[#f0efec]">
               <SectionLabel>Came from</SectionLabel>
               <div className="flex flex-col gap-1.5">
-                {parents.map((p) => <NodeChip key={p.id} node={p} onClick={() => setSelection([p.id])} />)}
+                {exploredLink && project.nodes[exploredLink.from] && project.nodes[exploredLink.to] && (
+                  <button onClick={() => setSelection([exploredLink.id])}
+                    className="text-left px-2.5 py-2 rounded-lg border border-dashed border-[#64748b] text-[10px] text-[#334155] hover:bg-[#f1f5f9]">
+                    <span className="uppercase tracking-wide text-[8px] font-semibold mr-1.5">Explored link</span>
+                    {project.nodes[exploredLink.from].title} ↔ {project.nodes[exploredLink.to].title}
+                    {exploredLink.label && <span className="italic text-[#64748b]"> · {exploredLink.label}</span>}
+                  </button>
+                )}
+                {parents.map((p) => {
+                  const region = regions.get(p.id);
+                  return p.image && region
+                    ? <RegionPreview key={p.id} node={p} region={region} onClick={() => setSelection([p.id])} />
+                    : <NodeChip key={p.id} node={p} onClick={() => setSelection([p.id])} />;
+                })}
               </div>
             </div>
           )}

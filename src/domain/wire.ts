@@ -2,7 +2,7 @@
 // browser (services/generate.ts) and the server (server/registry.ts).
 // One request produces one output (or one batch of text ideas, for expand).
 
-import type { ActionType, NodeId, Role, RoleDetails, RunId } from "./types";
+import type { ActionType, EdgeId, NodeId, Role, RoleDetails, RunId } from "./types";
 
 // A node as sent to the server: its text, plus its image inlined if it has one.
 export interface WireNode {
@@ -14,6 +14,15 @@ export interface WireNode {
   imageDataUrl?: string;
 }
 
+// A user-drawn link sent as an input in its own right: the two ends plus
+// the user's label for what connects them.
+export interface WireLink {
+  id: EdgeId;
+  from: WireNode;
+  to: WireNode;
+  label?: string;
+}
+
 interface RunMeta {
   runId: RunId;
   brief: string;
@@ -22,12 +31,21 @@ interface RunMeta {
 
 export interface ExpandRequest extends RunMeta {
   inputs: WireNode[];
+  links?: WireLink[];        // connections to explore: ideas that sit between the two ends
   counts: { concepts: number; motifs: number };
 }
 
+// Where in the input images an idea came from. Only asked for when images are
+// sent. sourceImage is 1-based, in the order the images were sent; box is
+// [ymin, xmin, ymax, xmax] on a 0–1000 scale, absent for the whole image.
+interface FromImage {
+  sourceImage?: number;
+  box?: number[];
+}
+
 export interface ExpandResponse {
-  concepts: { title: string; description: string; rationale: string }[];
-  motifs: { title: string; visualQuality: string; howItConveysIdea: string; category: string }[];
+  concepts: ({ title: string; description: string; rationale: string } & FromImage)[];
+  motifs: ({ title: string; visualQuality: string; howItConveysIdea: string; category: string } & FromImage)[];
 }
 
 export interface VisualVariationRequest extends RunMeta {
@@ -36,8 +54,10 @@ export interface VisualVariationRequest extends RunMeta {
   dimensionId: string;
 }
 
+// Renders either one idea, or a link as "one end expressed through the other".
 export interface ConceptualVariationRequest extends RunMeta {
-  idea: WireNode;            // the concept or motif to render
+  idea?: WireNode;           // the concept or motif to render…
+  link?: WireLink;           // …or a connection between two nodes (exactly one of the two)
   base?: WireNode;           // optional image to build on
   context: WireNode[];
   variant: number;           // 1-based: which of `of` images this is

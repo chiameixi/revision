@@ -42,7 +42,7 @@ import { makeCollection, makeEdge, makeNode, type NewNodeInput } from "@/domain/
 import * as u from "@/domain/updates";
 import { repo as defaultRepo, type NewImage, type Repository } from "@/db";
 import { blobToDataUrl, dataUrlToImage } from "@/services/images";
-import { callAction as fetchAction, outputsFor, planRun, readableError, type CallActionFn, type RunOptions } from "@/services/generate";
+import { callAction as fetchAction, outputsFor, planRun, readableError, type CallActionFn, type RunOptions, type Selection } from "@/services/generate";
 
 type View = "tree" | "cluster";
 type Ref = NodeId | EdgeId;
@@ -441,11 +441,15 @@ export function createProjectStore(
         const p = get().project;
         if (!p) return null;
 
-        // Selected links count as their two end nodes.
-        const sel = resolveSelection(p, get().selection);
+        // Links stay links: actions can explore the connection itself.
+        const resolved = resolveSelection(p, get().selection);
+        const sel: Selection = {
+          nodes: resolved.nodes,
+          links: resolved.edges.filter((e) => e.kind === "link").map((edge) => ({ edge, from: p.nodes[edge.from], to: p.nodes[edge.to] })),
+        };
         const inputs: IdeaNode[] = [];
-        for (const n of [...sel.nodes, ...sel.edges.flatMap((e) => [p.nodes[e.from], p.nodes[e.to]])]) {
-          if (n && !inputs.includes(n)) inputs.push(n);
+        for (const n of [...sel.nodes, ...sel.links.flatMap((l) => [l.from, l.to])]) {
+          if (!inputs.includes(n)) inputs.push(n);
         }
 
         const images: Record<ImageId, string> = {};
@@ -456,13 +460,13 @@ export function createProjectStore(
         }
 
         const runId = newId("run");
-        const plan = planRun(action, inputs, p.brief, images, runId, opts);
+        const plan = planRun(action, sel, p.brief, images, runId, opts);
         if (!plan.ok) {
           notify(plan.error);
           return null;
         }
 
-        const inputIds = inputs.map((n) => n.id);
+        const inputIds = [...sel.nodes.map((n) => n.id), ...sel.links.map((l) => l.edge.id)];
         const { jobs } = plan;
         set({ runs: { ...get().runs, [runId]: { runId, action, inputs: inputIds, total: jobs.length, done: 0, failed: 0, startedAt: now() } } });
         log("run.started", {

@@ -46,7 +46,7 @@ const expand: ActionDef<"expand"> = {
       analyze: getPrompt("ANALYZE"),
     });
     log.write("request.json", { model: TEXT_MODEL, imageCount: images.length, counts: req.counts, prompt });
-    const { result, rawText } = await callText<Partial<ExpandResponse>>("expand", prompt, images, expandSchema(req.counts));
+    const { result, rawText } = await callText<Partial<ExpandResponse>>("expand", prompt, images, expandSchema(req.counts, images.length > 0));
     log.write("response.json", { rawText });
     const out: ExpandResponse = {
       concepts: (result.concepts ?? []).slice(0, req.counts.concepts),
@@ -66,11 +66,14 @@ const visualVariations: ActionDef<"visual_variations"> = {
   },
 };
 
+const subjectName = (req: ActionRequest<"conceptual_variations">) =>
+  req.idea ? req.idea.title : `${req.link!.from.title} + ${req.link!.to.title}`;
+
 const conceptualVariations: ActionDef<"conceptual_variations"> = {
-  item: (req) => `${req.idea.title}_${req.variant}of${req.of}`,
+  item: (req) => `${subjectName(req)}_${req.variant}of${req.of}`,
   run(req, log) {
     const { prompt, images } = buildConceptualVariationPrompt(req, getPrompt("CONCEPTUAL_VARIATIONS"));
-    return imageCall(`conceptual_variations ["${req.idea.title}" ${req.variant}/${req.of}]`, prompt, images, log);
+    return imageCall(`conceptual_variations ["${subjectName(req)}" ${req.variant}/${req.of}]`, prompt, images, log);
   },
 };
 

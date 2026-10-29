@@ -9,6 +9,7 @@ import {
   type ConceptualVariationRequest,
   type ExpandRequest,
   type VisualVariationRequest,
+  type WireLink,
   type WireNode,
 } from "@/domain/wire";
 import { DIMENSION_MAP } from "@/lib/dimensions";
@@ -45,6 +46,15 @@ function nodes(v: unknown, name: string): WireNode[] {
   return v.map((n, i) => node(n, `${name}[${i}]`));
 }
 
+function link(v: unknown, name: string): WireLink {
+  if (!isObj(v)) fail(`${name} is missing.`);
+  if (typeof v.id !== "string") fail(`${name} needs an id.`);
+  node(v.from, `${name}.from`);
+  node(v.to, `${name}.to`);
+  if (v.label !== undefined && typeof v.label !== "string") fail(`${name}.label must be text.`);
+  return v as unknown as WireLink;
+}
+
 function meta(b: Record<string, unknown>) {
   if (typeof b.runId !== "string" || !b.runId) fail("runId is missing.");
   if (typeof b.brief !== "string") fail("brief must be text.");
@@ -54,6 +64,10 @@ function meta(b: Record<string, unknown>) {
 function expand(b: Record<string, unknown>): ExpandRequest {
   meta(b);
   const inputs = nodes(b.inputs, "inputs");
+  if (b.links !== undefined) {
+    if (!Array.isArray(b.links)) fail("links must be a list.");
+    b.links.forEach((l, i) => link(l, `links[${i}]`));
+  }
   if (!isObj(b.counts)) fail("counts is missing.");
   const concepts = int(b.counts.concepts, "counts.concepts", 0, MAX_COUNT);
   const motifs = int(b.counts.motifs, "counts.motifs", 0, MAX_COUNT);
@@ -73,8 +87,13 @@ function visualVariations(b: Record<string, unknown>): VisualVariationRequest {
 
 function conceptualVariations(b: Record<string, unknown>): ConceptualVariationRequest {
   meta(b);
-  const idea = node(b.idea, "idea");
-  if (idea.role !== "concept" && idea.role !== "motif") fail("Only concepts and motifs can be visualized.");
+  if ((b.idea === undefined) === (b.link === undefined)) fail("Send exactly one of idea or link.");
+  if (b.idea !== undefined) {
+    const idea = node(b.idea, "idea");
+    if (idea.role !== "concept" && idea.role !== "motif") fail("Only concepts and motifs can be visualized.");
+  } else {
+    link(b.link, "link");
+  }
   if (b.base !== undefined && !node(b.base, "base").imageDataUrl) fail("The base needs an image.");
   nodes(b.context, "context");
   const of = int(b.of, "of", 1, MAX_IMAGES_PER_IDEA);
