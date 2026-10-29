@@ -9,9 +9,26 @@ import { useProjectStore } from "@/store/projectStore";
 import { resolveSelection } from "@/domain/graph";
 import type { ActionType, IdeaNode } from "@/domain/types";
 import { DIMENSIONS } from "@/lib/dimensions";
+import { DEFAULT_COUNTS, DEFAULT_IMAGES_PER_IDEA, MAX_COUNT, MAX_IMAGES_PER_IDEA } from "@/domain/wire";
 import { useImageUrl } from "./useImageUrl";
 import { ACTIONS, ROLE_LABEL } from "./nodeStyle";
 import styles from "./RunComposer.module.css";
+
+function CountSlider({ id, label, value, min, max, onChange }: {
+  id: string; label: string; value: number; min: number; max: number; onChange: (v: number) => void;
+}) {
+  return (
+    <div className="grid grid-cols-[7rem_1fr_2rem] items-center gap-3">
+      <label htmlFor={id} className="text-[13px] text-[#333]">{label}</label>
+      <input id={id} type="range" min={min} max={max} step={1} value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-full accent-black cursor-pointer" />
+      <output htmlFor={id} className="text-[13px] text-black text-right" style={{ fontVariantNumeric: "tabular-nums" }}>
+        {value}
+      </output>
+    </div>
+  );
+}
 
 function InputRow({ node, onRemove }: { node: IdeaNode; onRemove: () => void }) {
   const url = useImageUrl(node.image?.imageId);
@@ -37,15 +54,39 @@ export default function RunComposer({ action, onClose }: { action: ActionType; o
   const runAction = useProjectStore((s) => s.runAction);
   const [instructions, setInstructions] = useState("");
   const [dimensionIds, setDimensionIds] = useState<string[]>(DIMENSIONS.map((d) => d.id));
+  const [counts, setCounts] = useState<{ concepts: number; motifs: number }>({ ...DEFAULT_COUNTS });
+  const [imagesPerIdea, setImagesPerIdea] = useState(DEFAULT_IMAGES_PER_IDEA);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { textareaRef.current?.focus(); }, []);
 
   const meta = ACTIONS.find((a) => a.id === action)!;
   const { nodes, edges } = useMemo(() => resolveSelection(project, selection), [project, selection]);
   const allDims = dimensionIds.length === DIMENSIONS.length;
+  const ideaCount = useMemo(() => {
+    const ids = new Set([...nodes.map((n) => n.id), ...edges.flatMap((e) => [e.from, e.to])]);
+    return [...ids].filter((id) => ["concept", "motif"].includes(project.nodes[id]?.role)).length;
+  }, [nodes, edges, project.nodes]);
+
+  // How many model calls this run will make, so cost and wait are visible up front.
+  const calls = action === "expand" ? 1
+    : action === "visual_variations" ? dimensionIds.length
+    : ideaCount * imagesPerIdea;
+  const hasImage = useMemo(() => {
+    const ids = new Set([...nodes.map((n) => n.id), ...edges.flatMap((e) => [e.from, e.to])]);
+    return [...ids].some((id) => !!project.nodes[id]?.image);
+  }, [nodes, edges, project.nodes]);
+
+  // Say what's missing before the user presses Run, not after.
+  const blocker =
+    action === "expand" && counts.concepts + counts.motifs === 0 ? "Ask for at least one concept or motif."
+    : action === "expand" && nodes.length + edges.length === 0 && !project.brief.trim() ? "Write a brief or select something to expand."
+    : action === "visual_variations" && !hasImage ? "Select an image to vary."
+    : action === "visual_variations" && dimensionIds.length === 0 ? "Choose at least one dimension."
+    : action === "conceptual_variations" && ideaCount === 0 ? "Select at least one concept or motif to visualize."
+    : null;
 
   function send() {
-    runAction(action, { instructions: instructions.trim() || undefined, dimensionIds });
+    runAction(action, { instructions: instructions.trim() || undefined, dimensionIds, counts, imagesPerIdea });
     onClose();
   }
 
@@ -95,6 +136,26 @@ export default function RunComposer({ action, onClose }: { action: ActionType; o
             )}
           </div>
 
+          {action === "expand" && (
+            <div>
+              <p className="text-[9px] uppercase tracking-[0.16em] text-[rgba(0,0,0,0.4)] mb-2">How many to make</p>
+              <div className="flex flex-col gap-2">
+                <CountSlider id="count-concepts" label="Concepts" value={counts.concepts} min={0} max={MAX_COUNT}
+                  onChange={(v) => setCounts((c) => ({ ...c, concepts: v }))} />
+                <CountSlider id="count-motifs" label="Motifs" value={counts.motifs} min={0} max={MAX_COUNT}
+                  onChange={(v) => setCounts((c) => ({ ...c, motifs: v }))} />
+              </div>
+            </div>
+          )}
+
+          {action === "conceptual_variations" && (
+            <div>
+              <p className="text-[9px] uppercase tracking-[0.16em] text-[rgba(0,0,0,0.4)] mb-2">How many to make</p>
+              <CountSlider id="images-per-idea" label="Images per idea" value={imagesPerIdea} min={1} max={MAX_IMAGES_PER_IDEA}
+                onChange={setImagesPerIdea} />
+            </div>
+          )}
+
           {action === "visual_variations" && (
             <div>
               <div className="flex items-center justify-between mb-2">
@@ -138,7 +199,15 @@ export default function RunComposer({ action, onClose }: { action: ActionType; o
 
         <div className={`px-6 pb-6 pt-4 flex items-center justify-between gap-4 ${styles.footer}`}>
           <button onClick={onClose} className="text-[14px] italic text-[rgba(0,0,0,0.45)] hover:text-black transition-colors">Cancel</button>
-          <button onClick={send} className={`bg-black text-white text-[15px] px-6 py-2.5 hover:opacity-75 transition-opacity ${styles.sq}`}>
+          {blocker ? (
+            <span role="status" className="ml-auto text-[12px] italic text-red-600">{blocker}</span>
+          ) : calls > 1 && (
+            <span className="ml-auto text-[12px] italic text-[rgba(0,0,0,0.4)]" style={{ fontVariantNumeric: "tabular-nums" }}>
+              {calls} images, made 4 at a time
+            </span>
+          )}
+          <button onClick={send} disabled={!!blocker}
+            className={`bg-black text-white text-[15px] px-6 py-2.5 hover:opacity-75 transition-opacity disabled:opacity-30 ${styles.sq}`}>
             Run →
           </button>
         </div>

@@ -36,14 +36,13 @@ import type {
   RunInProgress,
   XY,
 } from "@/domain/types";
-import type { GenerateRequest, GenerateResponse } from "@/types";
 import { emptyProject, resolveSelection } from "@/domain/graph";
 import { newId, now } from "@/domain/ids";
 import { makeCollection, makeEdge, makeNode, type NewNodeInput } from "@/domain/builders";
 import * as u from "@/domain/updates";
 import { repo as defaultRepo, type NewImage, type Repository } from "@/db";
 import { blobToDataUrl, dataUrlToImage } from "@/services/images";
-import { buildLegacyRequest, legacyCardsToOutputs, readableError, type LegacyOptions } from "@/services/legacyGenerate";
+import { callAction as fetchAction, outputsFor, planRun, readableError, type CallActionFn, type RunOptions } from "@/services/generate";
 
 type View = "tree" | "cluster";
 type Ref = NodeId | EdgeId;
@@ -108,29 +107,29 @@ export interface ProjectStore {
 
   // Runs: generate from the current selection. Returns the run ID, or null if
   // the selection doesn't suit the action (a notice explains why).
-  runAction(action: ActionType, opts?: LegacyOptions): Promise<RunId | null>;
+  runAction(action: ActionType, opts?: RunOptions): Promise<RunId | null>;
   dismissNotice(id: string): void;
 }
 
-export type GenerateFn = (body: GenerateRequest) => Promise<GenerateResponse>;
+// How many requests of one run go to the server at once.
+const MAX_PARALLEL = 4;
 
-async function fetchGenerate(body: GenerateRequest): Promise<GenerateResponse> {
-  const res = await fetch("/api/generate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  return res.json();
+async function inPool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>) {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) await fn(items[next++]);
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
 
 export interface StoreOptions {
   saveDelayMs?: number;
-  generate?: GenerateFn;   // tests pass a fake
+  callAction?: CallActionFn;   // tests pass a fake
 }
 
 export function createProjectStore(
   getRepo: () => Repository = defaultRepo,
-  { saveDelayMs = 400, generate = fetchGenerate }: StoreOptions = {},
+  { saveDelayMs = 400, callAction = fetchAction }: StoreOptions = {},
 ): StoreApi<ProjectStore> {
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -456,37 +455,55 @@ export function createProjectStore(
           if (rec) images[n.image.imageId] = await blobToDataUrl(rec.blob, rec.mimeType);
         }
 
-        const built = buildLegacyRequest(action, inputs, p.brief, images, opts);
-        if (!built.ok) {
-          notify(built.error);
+        const runId = newId("run");
+        const plan = planRun(action, inputs, p.brief, images, runId, opts);
+        if (!plan.ok) {
+          notify(plan.error);
           return null;
         }
 
-        const runId = newId("run");
         const inputIds = inputs.map((n) => n.id);
-        const total = action === "visual_variations" ? built.body.dimensionIds.length
-          : action === "conceptual_variations" ? built.body.conceptCards?.length ?? 1
-          : 1;
-        set({ runs: { ...get().runs, [runId]: { runId, action, inputs: inputIds, total, done: 0, failed: 0, startedAt: now() } } });
-        log("run.started", { runId, action, inputIds, dimensionIds: opts.dimensionIds, hasInstructions: !!opts.instructions });
+        const { jobs } = plan;
+        set({ runs: { ...get().runs, [runId]: { runId, action, inputs: inputIds, total: jobs.length, done: 0, failed: 0, startedAt: now() } } });
+        log("run.started", {
+          runId, action, inputIds, jobs: jobs.length,
+          counts: opts.counts, dimensionIds: opts.dimensionIds, imagesPerIdea: opts.imagesPerIdea,
+          hasInstructions: !!opts.instructions,
+        });
 
-        try {
-          const res = await generate(built.body);
-          if (res.error && !res.cards?.length) throw new Error(res.error);
-          const out = legacyCardsToOutputs(res.cards ?? [], action, runId, inputs);
-          for (const img of out.images) await getRepo().saveImage(dataUrlToImage(img.dataUrl), img.imageId);
-          await applyTo(p.id, (s) => u.addNodesAndEdges(s, out.nodes, out.edges));
-          log("run.done", { runId, outputIds: out.nodes.map((n) => n.id), failed: out.failed.length }, { actor: "model", projectId: p.id });
-          if (out.failed.length === 1) notify(`1 output failed: ${out.failed[0]}`);
-          else if (out.failed.length > 1) notify(`${out.failed.length} outputs failed.`);
-          if (res.error) notify(readableError(res.error));
-        } catch (err) {
-          const message = readableError(err instanceof Error ? err.message : "The request failed.");
-          notify(message);
-          log("run.failed", { runId, message }, { actor: "model", projectId: p.id });
-        } finally {
-          const { [runId]: _done, ...rest } = get().runs;
-          set({ runs: rest });
+        const tick = (field: "done" | "failed") => {
+          const r = get().runs[runId];
+          if (r) set({ runs: { ...get().runs, [runId]: { ...r, [field]: r[field] + 1 } } });
+        };
+        const outputIds: NodeId[] = [];
+        const errors: string[] = [];
+
+        // Each job's outputs land on the canvas as soon as that job finishes.
+        await inPool(jobs, MAX_PARALLEL, async (job) => {
+          try {
+            const res = await callAction(job.action, job.req);
+            const out = outputsFor(job, res, runId);
+            for (const img of out.images) await getRepo().saveImage(dataUrlToImage(img.dataUrl), img.imageId);
+            await applyTo(p.id, (s) => u.addNodesAndEdges(s, out.nodes, out.edges));
+            outputIds.push(...out.nodes.map((n) => n.id));
+            tick("done");
+          } catch (err) {
+            errors.push(`${job.label}: ${readableError(err instanceof Error ? err.message : String(err))}`);
+            tick("failed");
+          }
+        });
+
+        const { [runId]: _finished, ...rest } = get().runs;
+        set({ runs: rest });
+
+        if (errors.length === jobs.length) {
+          // Same message from every job (e.g. a bad key) is only worth showing once.
+          const first = errors[0].slice(errors[0].indexOf(": ") + 2);
+          notify(jobs.length === 1 || errors.every((e) => e.endsWith(first)) ? first : `All ${jobs.length} outputs failed. ${errors[0]}`);
+          log("run.failed", { runId, errors: errors.slice(0, 5) }, { actor: "model", projectId: p.id });
+        } else {
+          if (errors.length) notify(`${errors.length} of ${jobs.length} outputs failed. ${errors[0]}`);
+          log("run.done", { runId, outputIds, failed: errors.length, errors: errors.slice(0, 5) }, { actor: "model", projectId: p.id });
         }
         return runId;
       },

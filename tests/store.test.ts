@@ -1,7 +1,8 @@
 import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DexieRepository } from "@/db/dexie";
-import { createProjectStore, type GenerateFn } from "@/store/projectStore";
+import { createProjectStore } from "@/store/projectStore";
+import type { CallActionFn } from "@/services/generate";
 import { treeEdges, visibleLinks, visibleNodes } from "@/domain/graph";
 
 let repo: DexieRepository;
@@ -189,25 +190,31 @@ describe("clear tree", () => {
 
 describe("runs", () => {
   const PNG = "data:image/png;base64,iVBORw0KGgo=";
+  type Call = { action: string; req: Record<string, unknown> };
 
-  function runStore(generate: GenerateFn) {
-    return createProjectStore(() => repo, { saveDelayMs: 0, generate });
+  function runStore(callAction: CallActionFn) {
+    return createProjectStore(() => repo, { saveDelayMs: 0, callAction });
   }
 
-  it("adds outputs with provenance from the selection and logs start and finish", async () => {
-    const calls: unknown[] = [];
-    store = runStore(async (body) => {
-      calls.push(body);
-      return { cards: [{ id: "x", type: "concept", title: "Undertow", description: "d", rationale: "r", createdAt: "t" }] };
+  const imageReply = async () => ({ imageDataUrl: PNG, text: "analysis" });
+
+  it("expands the selection into concepts and motifs with provenance, and logs start and finish", async () => {
+    const calls: Call[] = [];
+    store = runStore(async (action, req) => {
+      calls.push({ action, req: req as unknown as Record<string, unknown> });
+      return { concepts: [{ title: "Undertow", description: "d", rationale: "r" }], motifs: [{ title: "Foam", visualQuality: "v", howItConveysIdea: "h", category: "texture" }] };
     });
     await s().createProject("Run");
     const a = s().addNode({ role: "concept", title: "Ebb" })!;
     s().setSelection([a]);
-    const runId = await s().runAction("expand");
-    expect(runId).toBeTruthy();
-    expect(calls).toHaveLength(1);
-    const out = visibleNodes(p()).find((n) => n.title === "Undertow")!;
+    const runId = await s().runAction("expand", { counts: { concepts: 1, motifs: 1 } });
+    expect(calls.map((c) => c.action)).toEqual(["expand"]);
+    expect(calls[0].req.counts).toEqual({ concepts: 1, motifs: 1 });
+    const titles = visibleNodes(p()).map((n) => `${n.role}:${n.title}`);
+    expect(titles).toEqual(expect.arrayContaining(["concept:Undertow", "motif:Foam"]));
+    const out = visibleNodes(p()).find((n) => n.title === "Foam")!;
     expect(out.origin).toMatchObject({ kind: "generated", action: "expand", runId });
+    expect(out.details).toEqual({ howItConveysIdea: "h", category: "texture" });
     expect(treeEdges(p())).toContainEqual({ from: a, to: out.id, bridged: false });
     expect(s().runs).toEqual({});
     await new Promise((r) => setTimeout(r, 5));
@@ -215,24 +222,47 @@ describe("runs", () => {
     expect(events.map((e) => [e.type, e.actor])).toContainEqual(["run.done", "model"]);
   });
 
-  it("sends selected images and saves returned ones", async () => {
-    let sent: string[] = [];
-    store = runStore(async (body) => {
-      sent = body.draftDataUrls;
-      return { cards: [{ id: "v", type: "visual", title: "Balance", dimensionLabel: "Balance", analysisText: "", imageDataUrl: PNG, createdAt: "t" }] };
-    });
+  it("sends one request per dimension and saves each returned image", async () => {
+    const calls: Call[] = [];
+    store = runStore(async (action, req) => { calls.push({ action, req: req as unknown as Record<string, unknown> }); return imageReply(); });
     await s().createProject("Images");
     const draft = (await s().addImageNode({ blob: new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }), mimeType: "image/png" }, { role: "visual", title: "draft" }))!;
     s().setSelection([draft]);
-    await s().runAction("visual_variations", { dimensionIds: ["balance"] });
-    expect(sent).toEqual(["data:image/png;base64,AQID"]);
-    const out = visibleNodes(p()).find((n) => n.title === "Balance")!;
-    expect((await repo.getImage(out.image!.imageId))?.blob.size).toBeGreaterThan(0);
+    await s().runAction("visual_variations", { dimensionIds: ["balance", "color"] });
+    expect(calls.map((c) => c.req.dimensionId)).toEqual(["balance", "color"]);
+    expect((calls[0].req.base as { imageDataUrl: string }).imageDataUrl).toBe("data:image/png;base64,AQID");
+    const outs = visibleNodes(p()).filter((n) => n.title.endsWith("variation"));
+    expect(outs.map((n) => n.title).sort()).toEqual(["Balance variation", "Color variation"]);
+    expect((await repo.getImage(outs[0].image!.imageId))?.blob.size).toBeGreaterThan(0);
+  });
+
+  it("shows partial results and reports the failures together", async () => {
+    store = runStore(async (_a, req) => {
+      if ((req as { dimensionId: string }).dimensionId === "color") throw new Error("Timed out");
+      return imageReply();
+    });
+    await s().createProject("Partial");
+    const draft = (await s().addImageNode({ blob: new Blob([new Uint8Array([1])]), mimeType: "image/png" }, { role: "visual", title: "d" }))!;
+    s().setSelection([draft]);
+    await s().runAction("visual_variations", { dimensionIds: ["balance", "color", "shape"] });
+    expect(visibleNodes(p()).filter((n) => n.origin.kind === "generated")).toHaveLength(2);
+    expect(s().notices.map((n) => n.message)).toEqual(["1 of 3 outputs failed. Color variation: Timed out"]);
+  });
+
+  it("shows one plain message when every request fails the same way", async () => {
+    store = runStore(async () => { throw new Error('{"error":{"message":"API key not valid."}}'); });
+    await s().createProject("Fail");
+    const draft = (await s().addImageNode({ blob: new Blob([new Uint8Array([1])]), mimeType: "image/png" }, { role: "visual", title: "d" }))!;
+    s().setSelection([draft]);
+    await s().runAction("visual_variations", { dimensionIds: ["balance", "color"] });
+    expect(s().notices.map((n) => n.message)).toEqual(["API key not valid."]);
+    await new Promise((r) => setTimeout(r, 5));
+    expect((await repo.listEvents(p().id)).map((e) => e.type)).toContain("run.failed");
   });
 
   it("explains why a selection doesn't suit the action, without calling the server", async () => {
     let called = false;
-    store = runStore(async () => { called = true; return { cards: [] }; });
+    store = runStore(async () => { called = true; return imageReply(); });
     await s().createProject("Empty");
     expect(await s().runAction("visual_variations")).toBeNull();
     expect(called).toBe(false);
@@ -241,26 +271,20 @@ describe("runs", () => {
     expect(s().notices).toEqual([]);
   });
 
-  it("turns a server error into a notice and a run.failed event", async () => {
-    store = runStore(async () => ({ cards: [], error: "Quota exceeded" }));
-    await s().createProject("Fail");
-    s().setBrief("Tides");
-    await s().runAction("expand");
-    expect(s().notices.map((n) => n.message)).toEqual(["Quota exceeded"]);
-    expect(s().runs).toEqual({});
-    await new Promise((r) => setTimeout(r, 5));
-    expect((await repo.listEvents(p().id)).map((e) => e.type)).toContain("run.failed");
-  });
-
-  it("shows the run while it's in progress", async () => {
-    let release!: () => void;
-    store = runStore(() => new Promise((res) => { release = () => res({ cards: [] }); }));
+  it("counts progress while the run is going", async () => {
+    const releases: (() => void)[] = [];
+    store = runStore(() => new Promise((res) => { releases.push(() => res({ imageDataUrl: PNG, text: "" })); }));
     await s().createProject("Slow");
-    s().setBrief("Tides");
-    const pending = s().runAction("expand");
+    const idea = s().addNode({ role: "concept", title: "Ebb" })!;
+    s().setSelection([idea]);
+    const pending = s().runAction("conceptual_variations", { imagesPerIdea: 2 });
     await new Promise((r) => setTimeout(r, 5));
-    expect(Object.values(s().runs).map((r) => r.action)).toEqual(["expand"]);
-    release();
+    expect(Object.values(s().runs)[0]).toMatchObject({ total: 2, done: 0 });
+    releases[0]();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(Object.values(s().runs)[0]).toMatchObject({ done: 1 });
+    expect(visibleNodes(p()).filter((n) => n.origin.kind === "generated")).toHaveLength(1);
+    releases[1]();
     await pending;
     expect(s().runs).toEqual({});
   });
@@ -268,7 +292,7 @@ describe("runs", () => {
   it("saves outputs into the right project if the user switched away mid-run", async () => {
     let release!: () => void;
     store = runStore(() => new Promise((res) => {
-      release = () => res({ cards: [{ id: "x", type: "concept", title: "Late", description: "", rationale: "", createdAt: "t" }] });
+      release = () => res({ concepts: [{ title: "Late", description: "", rationale: "" }], motifs: [] });
     }));
     const first = await s().createProject("First");
     s().setBrief("Tides");
@@ -283,15 +307,15 @@ describe("runs", () => {
   });
 
   it("counts a selected link as its two end nodes", async () => {
-    let context: string[] = [];
-    store = runStore(async (body) => { context = [...body.typedContext.concepts, ...body.typedContext.motifs]; return { cards: [] }; });
+    let inputs: { title: string }[] = [];
+    store = runStore(async (_a, req) => { inputs = (req as { inputs: { title: string }[] }).inputs; return { concepts: [], motifs: [] }; });
     await s().createProject("Link");
     const a = s().addNode({ role: "concept", title: "Ebb" })!;
     const b = s().addNode({ role: "motif", title: "Waves" })!;
     const link = s().addLink(a, b)!;
     s().setSelection([link]);
     await s().runAction("expand");
-    expect(context.map((c) => c.split("\n")[0])).toEqual(["[concept] Ebb", "[motif] Waves"]);
+    expect(inputs.map((n) => n.title)).toEqual(["Ebb", "Waves"]);
   });
 });
 
