@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { costUsd, formatUsd } from "@/domain/pricing";
+import { aboutUsd, costUsd, formatUsd } from "@/domain/pricing";
 import { addUsage } from "@/domain/updates";
 import { summarize } from "@/domain/graph";
 import { project } from "./helpers";
@@ -39,5 +39,13 @@ describe("project usage", () => {
   it("ignores reports with no calls", () => {
     const p = project();
     expect(addUsage(p, { model: "x", calls: 0, inputTokens: 0, outputTokens: 0, imageTokens: 0 })).toBe(p);
+  });
+});
+
+describe("aboutUsd", () => {
+  it("reads naturally in a sentence", () => {
+    expect(aboutUsd(0)).toBe("$0");
+    expect(aboutUsd(0.003)).toBe("under $0.01");
+    expect(aboutUsd(1.234)).toBe("about $1.23");
   });
 });

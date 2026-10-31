@@ -45,6 +45,7 @@ import { blobToDataUrl, dataUrlToImage } from "@/services/images";
 import { ActionCallError, callAction as fetchAction, outputsFor, planRun, readableError, type CallActionFn, type Job, type RunOptions, type Selection } from "@/services/generate";
 import type { Usage } from "@/domain/wire";
 import { costUsd } from "@/domain/pricing";
+import { buildStudyLog, type StudyLog } from "@/services/exportLog";
 
 type View = "tree" | "cluster";
 type Ref = NodeId | EdgeId;
@@ -91,6 +92,9 @@ export interface ProjectStore {
   closeProject(): Promise<void>;
   deleteProject(id: ProjectId): Promise<void>;
   renameProject(id: ProjectId, title: string): Promise<void>;
+  // Study log for one project, or for all of them. Saves pending edits first.
+  exportStudyLog(id: ProjectId): Promise<StudyLog | null>;
+  exportAllStudyLogs(): Promise<StudyLog[]>;
   flush(): Promise<void>;
   setTitle(title: string): void;
   setBrief(brief: string): void;
@@ -361,6 +365,22 @@ export function createProjectStore(
           log("project.renamed", { title }, { projectId: id });
         }
         await get().loadProjects();
+      },
+
+      async exportStudyLog(id) {
+        await flush();
+        const p = await getRepo().loadProject(id);
+        return p ? buildStudyLog(p, await getRepo().listEvents(id), now()) : null;
+      },
+
+      async exportAllStudyLogs() {
+        await flush();
+        const logs: StudyLog[] = [];
+        for (const summary of await getRepo().listProjects()) {
+          const log = await get().exportStudyLog(summary.id);
+          if (log) logs.push(log);
+        }
+        return logs;
       },
 
       flush,

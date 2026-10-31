@@ -6,10 +6,11 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Plus } from "lucide-react";
+import { Download, Plus } from "lucide-react";
 import { useProjectStore } from "@/store/projectStore";
 import type { ProjectSummary } from "@/domain/types";
-import { formatUsd, PRICES_CHECKED } from "@/domain/pricing";
+import { aboutUsd, PRICES_CHECKED } from "@/domain/pricing";
+import { downloadJson, exportFileName } from "@/services/exportLog";
 import { useImageUrl } from "./useImageUrl";
 import { Menu } from "./ui";
 
@@ -28,6 +29,7 @@ function timeAgo(iso: string): string {
 function ProjectCard({ p }: { p: ProjectSummary }) {
   const renameProject = useProjectStore((s) => s.renameProject);
   const deleteProject = useProjectStore((s) => s.deleteProject);
+  const exportStudyLog = useProjectStore((s) => s.exportStudyLog);
   const cover = useImageUrl(p.coverImageId);
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState(p.title);
@@ -69,7 +71,7 @@ function ProjectCard({ p }: { p: ProjectSummary }) {
           {p.briefExcerpt || <span className="italic text-muted">No brief yet</span>}
         </p>
         <p className="text-[12px] text-muted mt-auto pt-2 tabular-nums" title={`Last edited ${new Date(p.updatedAt).toLocaleString()}`}>
-          {p.nodeCount} {p.nodeCount === 1 ? "node" : "nodes"}, {p.imageCount} {p.imageCount === 1 ? "image" : "images"}, about {formatUsd(p.costUsd)}. Edited {timeAgo(p.updatedAt)}.
+          {p.nodeCount} {p.nodeCount === 1 ? "node" : "nodes"}, {p.imageCount} {p.imageCount === 1 ? "image" : "images"}, {aboutUsd(p.costUsd)}. Edited {timeAgo(p.updatedAt)}.
         </p>
         {confirmDelete && (
           <div role="alert" className="relative z-10 mt-2 flex items-center gap-2 rounded-md bg-danger-soft px-2.5 py-2">
@@ -83,6 +85,10 @@ function ProjectCard({ p }: { p: ProjectSummary }) {
         <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
           <Menu label={`Actions for ${p.title}`} items={[
             { label: "Rename", onSelect: () => setRenaming(true) },
+            { label: "Export study log (JSON)", onSelect: async () => {
+              const log = await exportStudyLog(p.id);
+              if (log) downloadJson(log, exportFileName(p.title, new Date()));
+            } },
             { label: "Delete", onSelect: () => setConfirmDelete(true), danger: true },
           ]} />
         </div>
@@ -96,12 +102,21 @@ export default function ProjectsGrid() {
   const projects = useProjectStore((s) => s.projects);
   const loadProjects = useProjectStore((s) => s.loadProjects);
   const createProject = useProjectStore((s) => s.createProject);
+  const exportAllStudyLogs = useProjectStore((s) => s.exportAllStudyLogs);
   const [loaded, setLoaded] = useState(false);
   const [creating, setCreating] = useState(false);
   const totals = projects.reduce((t, p) => ({ calls: t.calls + p.calls, costUsd: t.costUsd + p.costUsd }), { calls: 0, costUsd: 0 });
 
   useEffect(() => { loadProjects().then(() => setLoaded(true)); }, [loadProjects]);
   useEffect(() => { document.title = "Projects | Design Workspace"; }, []);
+
+  // One file with every project's log, for analysis across participants.
+  async function exportAll() {
+    const logs = await exportAllStudyLogs();
+    const now = new Date();
+    downloadJson({ format: "design-workspace/study-logs@1", exportedAt: now.toISOString(), projects: logs },
+      `all-study-logs_${now.toISOString().slice(0, 10)}.json`);
+  }
 
   async function newProject() {
     setCreating(true);
@@ -112,20 +127,23 @@ export default function ProjectsGrid() {
   return (
     <main className="min-h-screen">
       <div className="max-w-6xl mx-auto px-6 py-12 flex flex-col gap-8">
-        <header className="flex flex-wrap items-end gap-x-6 gap-y-2">
-          <div className="flex-1 min-w-64">
+        <header className="flex flex-wrap items-end justify-between gap-4">
+          <div className="min-w-64">
             <h1 className="text-[28px] font-semibold tracking-tight text-ink">Projects</h1>
             <p className="text-[14px] text-ink-2 mt-1">
               {loaded && projects.length === 0
                 ? "No projects yet. Start one with a brief, then expand it into concepts, motifs and visuals."
                 : "Each project has its own brief, tree and collections."}
             </p>
+            {totals.calls > 0 && (
+              <p className="text-[13px] text-muted mt-1 tabular-nums"
+                title={`Estimated from the tokens Gemini reports, at list prices checked ${PRICES_CHECKED}. Retries and failed calls are included. Deleted projects aren't counted.`}>
+                Gemini use across all projects: {totals.calls} {totals.calls === 1 ? "call" : "calls"}, {aboutUsd(totals.costUsd)}
+              </p>
+            )}
           </div>
-          {totals.calls > 0 && (
-            <p className="text-[13px] text-muted tabular-nums"
-              title={`Estimated from the tokens Gemini reports, at list prices checked ${PRICES_CHECKED}. Retries and failed calls are included. Deleted projects aren't counted.`}>
-              Gemini use across all projects: {totals.calls} {totals.calls === 1 ? "call" : "calls"}, about {formatUsd(totals.costUsd)}
-            </p>
+          {projects.length > 0 && (
+            <button className="btn" onClick={exportAll}><Download size={15} aria-hidden /> Export all study logs</button>
           )}
         </header>
 

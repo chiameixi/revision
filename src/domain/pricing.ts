@@ -29,3 +29,10 @@ export function formatUsd(usd: number): string {
   if (usd < 0.01) return "<$0.01";
   return `$${usd.toFixed(2)}`;
 }
+
+// For running text: "about $1.23", "under $0.01", "$0".
+export function aboutUsd(usd: number): string {
+  if (usd === 0) return "$0";
+  if (usd < 0.01) return "under $0.01";
+  return `about $${usd.toFixed(2)}`;
+}

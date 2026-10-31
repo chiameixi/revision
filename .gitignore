@@ -4,3 +4,7 @@ logs/
 .env*.local
 .DS_Store
 dragon cafe/
+redesign.md 
+DATAFLOW.md 
+GUIDE.md 
+IO_PATHS.md

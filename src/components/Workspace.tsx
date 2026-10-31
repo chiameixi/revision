@@ -7,15 +7,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, ChevronLeft, FolderPlus, Loader2, X } from "lucide-react";
-import { useProjectStore, type Notice } from "@/store/projectStore";
+import { projectStore, useProjectStore, type Notice } from "@/store/projectStore";
+import { downloadJson, exportFileName } from "@/services/exportLog";
 import type { ActionType, NodeId } from "@/domain/types";
-import { formatUsd, PRICES_CHECKED } from "@/domain/pricing";
+import { aboutUsd, PRICES_CHECKED } from "@/domain/pricing";
 import TreeView from "./TreeView";
 import ClusterView from "./ClusterView";
 import RunComposer from "./RunComposer";
 import AddNodeModal from "./AddNodeModal";
 import { BriefPanel, LinkPanel, NodePanel } from "./DetailPanel";
 import { ACTIONS, ACTION_LABEL, COLLECTION_COLORS } from "./nodeStyle";
+import { Menu } from "./ui";
 import { whyUnavailable } from "./availability";
 import { ACTION_ICON } from "./actionIcons";
 
@@ -26,7 +28,7 @@ function UsageBadge() {
   return (
     <p className="text-[12px] text-muted whitespace-nowrap tabular-nums"
       title={`Estimated from the tokens Gemini reports, at list prices checked ${PRICES_CHECKED}. Retries and failed calls are included.`}>
-      {calls} {calls === 1 ? "call" : "calls"}, about {formatUsd(usage?.costUsd ?? 0)}
+      {calls} {calls === 1 ? "call" : "calls"}, {aboutUsd(usage?.costUsd ?? 0)}
     </p>
   );
 }
@@ -160,6 +162,11 @@ function SelectionBar({ onRun }: { onRun: (a: ActionType) => void }) {
   );
 }
 
+async function exportLog(id: string, title: string) {
+  const log = await projectStore.getState().exportStudyLog(id);
+  if (log) downloadJson(log, exportFileName(title, new Date()));
+}
+
 export default function Workspace() {
   const project = useProjectStore((s) => s.project)!;
   const selection = useProjectStore((s) => s.selection);
@@ -225,6 +232,9 @@ export default function Workspace() {
             </p>
           )}
           <UsageBadge />
+          <Menu label="Project actions" items={[
+            { label: "Export study log (JSON)", onSelect: () => exportLog(project.id, project.title) },
+          ]} />
         </div>
       </header>
 
