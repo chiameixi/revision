@@ -2,6 +2,18 @@ import "server-only";
 import fs from "fs";
 import path from "path";
 
+/**
+ * Debug log of every model call, for inspecting prompts and raw responses.
+ * (The study's event log is separate and lives with the project data.)
+ *
+ * One folder per run, one subfolder per request in that run:
+ *   logs/<date>_<runId>_<action>/<item>/
+ *     request.json, response_raw.json, result.json, timing.json, output.png, error.json
+ *
+ * The runId matches the run.started / run.done events and the nodes'
+ * origin.runId, so a node can be traced back to the exact prompt.
+ */
+
 const LOG_ROOT = path.join(process.cwd(), "logs");
 
 export function nowIso(): string {
@@ -9,7 +21,6 @@ export function nowIso(): string {
 }
 
 // Scrub large base64 blobs from objects — keeps log files readable
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function scrubBase64(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(scrubBase64);
   if (v && typeof v === "object") {
@@ -26,72 +37,39 @@ export function scrubBase64(v: unknown): unknown {
   return v;
 }
 
-function writeJson(p: string, data: unknown): void {
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, JSON.stringify(data, null, 2), "utf-8");
+function safeName(s: string): string {
+  return s.replace(/[^\w.-]+/g, "_").slice(0, 60) || "item";
 }
 
-function writeImageFile(p: string, base64: string): void {
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, Buffer.from(base64, "base64"));
-}
+export class RunLogger {
+  readonly dir: string;
+  private readonly startedAt = nowIso();
 
-/**
- * One BatchLogger per API request. All log files for that request land under
- * logs/<timestamp>_<action>_<rand>/
- *
- * For single-call actions the files go directly in batchDir:
- *   meta.json, request.json, response.json, result.json, timing.json
- *
- * For visual variations each dimension gets a named subdirectory:
- *   <dim_id>/request.json, response_raw.json, result.json, timing.json, output.png
- */
-export class BatchLogger {
-  readonly batchDir: string;
-  private readonly startedAt: string;
+  constructor(action: string, runId: string, item: string, meta: Record<string, unknown> = {}) {
+    const day = this.startedAt.slice(0, 10);
+    const runDir = path.join(LOG_ROOT, `${day}_${safeName(runId)}_${action}`);
+    this.dir = path.join(runDir, safeName(item));
+    fs.mkdirSync(this.dir, { recursive: true });
+    // Same for every request in the run; later writes just overwrite it.
+    fs.writeFileSync(path.join(runDir, "meta.json"), JSON.stringify({ action, runId, ...meta }, null, 2));
+  }
 
-  constructor(action: string, brief: string) {
-    const ts = nowIso().slice(0, 19).replace(/[T:]/g, "-");
-    const rand = Math.random().toString(36).slice(2, 8);
-    this.batchDir = path.join(LOG_ROOT, `${ts}_${action}_${rand}`);
-    this.startedAt = nowIso();
-    fs.mkdirSync(this.batchDir, { recursive: true });
+  write(name: string, data: unknown): void {
+    fs.writeFileSync(path.join(this.dir, name), JSON.stringify(data, null, 2), "utf-8");
+  }
 
-    writeJson(path.join(this.batchDir, "meta.json"), {
-      action,
-      brief: brief.slice(0, 500),
+  writeImage(name: string, base64: string): void {
+    fs.writeFileSync(path.join(this.dir, name), Buffer.from(base64, "base64"));
+  }
+
+  finish(status: "ok" | "error", extra: Record<string, unknown> = {}): void {
+    const endedAt = nowIso();
+    this.write("timing.json", {
       startedAt: this.startedAt,
-    });
-  }
-
-  /** Resolve a path relative to batchDir (creates parent dirs). */
-  resolve(...parts: string[]): string {
-    return path.join(this.batchDir, ...parts);
-  }
-
-  /** Create a named subdirectory and return its absolute path. */
-  subdir(name: string): string {
-    const p = path.join(this.batchDir, name);
-    fs.mkdirSync(p, { recursive: true });
-    return p;
-  }
-
-  /** Write JSON to a path relative to batchDir. */
-  write(relPath: string, data: unknown): void {
-    writeJson(this.resolve(relPath), data);
-  }
-
-  /** Save a raw base64 string as a binary image file. */
-  writeImage(relPath: string, base64: string): void {
-    writeImageFile(this.resolve(relPath), base64);
-  }
-
-  /** Write summary.json when the batch finishes. */
-  finalize(opts: { cardCount: number; error?: string }): void {
-    writeJson(this.resolve("summary.json"), {
-      startedAt: this.startedAt,
-      finishedAt: nowIso(),
-      ...opts,
+      endedAt,
+      durationSeconds: Math.round((Date.parse(endedAt) - Date.parse(this.startedAt)) / 10) / 100,
+      status,
+      ...extra,
     });
   }
 }

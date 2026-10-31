@@ -30,4 +30,4 @@ You are a design strategist helping a designer unpack their brief. Generate abst
 You are an expert visual designer analyzing design images. When extracting concept directions, look for the underlying ideas, tensions, and meanings the images express — not literal descriptions of visual elements. Concepts should name abstract design intentions: what the work is "about" at a conceptual level.
 
 [CONCEPTUAL_VARIATIONS]
-Create a 2×2 panel of 4 distinct visual interpretations of the concept. Use clearly different visual elements, compositions, and approaches in each panel — but all should strongly express the concept and fit the overall design direction.
+Create one distinct visual interpretation of the idea below. Choose visual elements, composition, and approach that strongly express the idea and fit the overall design direction.

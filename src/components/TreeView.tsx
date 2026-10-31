@@ -1,748 +1,237 @@
 "use client";
 
+// The tree view: nodes laid out in columns by where they came from.
+// Reads the open project from the store; every change goes through store
+// actions. Side panels, the run composer and the selection bar live in
+// Workspace so both views share them.
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toPng } from "html-to-image";
-import type { ReactFlowInstance } from "@xyflow/react";
 import {
   ReactFlow,
   Background,
   Controls,
   Handle,
-  Panel,
   Position,
   BackgroundVariant,
   MarkerType,
   BaseEdge,
   EdgeLabelRenderer,
   getBezierPath,
+  getSmoothStepPath,
   applyNodeChanges,
-  applyEdgeChanges,
   useNodes,
   useViewport,
   getNodesBounds,
   getViewportForBounds,
   SelectionMode,
-  type Node,
-  type Edge as RFEdge,
+  type ReactFlowInstance,
+  type Node as FlowNode,
+  type Edge as FlowEdge,
   type EdgeTypes,
   type NodeTypes,
   type NodeProps,
   type EdgeProps,
   type Connection,
   type NodeChange,
+  type FinalConnectionState,
   type EdgeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import type { Asset, Collection, Generation, ManualEdge, ResultCard, ActionType, VisualCard, ConceptCard, MotifCard, NoteCard } from "@/types";
+import { Check, ChevronDown, ChevronUp, ImagePlus, Lasso, MousePointer2, Plus, Spline, X } from "lucide-react";
+import { projectStore, useProjectStore } from "@/store/projectStore";
+import { ancestors, treeEdges, visibleLinks, visibleNodes } from "@/domain/graph";
+import { BRIEF_H, BRIEF_ID, BRIEF_W, computeTreeLayout } from "@/domain/treeLayout";
+import type { ActionType, Collection, IdeaNode, NodeId } from "@/domain/types";
+import { fileToImage } from "@/services/images";
+import { useImageUrl } from "./useImageUrl";
+import { ROLE_STYLE, ROLES, ROLE_LABEL } from "./nodeStyle";
+import { Menu, RoleBadge } from "./ui";
 import styles from "./TreeView.module.css";
 
-// ── Layout constants ──────────────────────────────────────────────────────────
-// Chip nodes (concept / motif): fixed width, height wraps with text
-const CHIP_W = 160;
-const CHIP_H_MIN = 32;
-function chipHeight(title: string): number {
-  // ~22 chars per line at 10px medium in 160px chip (paddings ~32px)
-  const lines = Math.max(1, Math.ceil(title.length / 22));
-  return Math.max(CHIP_H_MIN, lines * 18 + 8);
-}
-// Note cards: standard rectangle
-const NODE_W = 140;
-const NODE_H = 44;
-function noteHeight(title: string): number {
-  // ~17 chars per line at 11px in 140px card (20px h-padding = p-2.5 × 2)
-  const lines = Math.max(1, Math.ceil(title.length / 17));
-  return Math.max(NODE_H, lines * 14 + 20);
-}
-// Visual image cards
-const VISUAL_NODE_W = 320;
-const VISUAL_NODE_H = 200;
-const COL_GAP = 96;
-const ROW_GAP = 16;
-const PAD = 48;
-const COL_STRIDE = VISUAL_NODE_W + COL_GAP;
+const ACCENT = "var(--color-accent)";
+type Tool = "select" | "lasso" | "link";
 
-// ── Input node constants ──────────────────────────────────────────────────────
-const INPUT_NODE_W = VISUAL_NODE_W;
-const BRIEF_NODE_H = 200;
-const ASSET_NODE_H = 92;
-const INPUT_X_OFFSET = INPUT_NODE_W + COL_GAP;
+// ── Node data ─────────────────────────────────────────────────────────────────
 
-// ── Node size helper ──────────────────────────────────────────────────────────
-function nodeDims(card: ResultCard): { w: number; h: number } {
-  if (card.type === "visual" && (card as VisualCard).imageDataUrl) return { w: VISUAL_NODE_W, h: VISUAL_NODE_H };
-  if (card.type === "concept" || card.type === "motif") return { w: CHIP_W, h: chipHeight(card.title) };
-  return { w: NODE_W, h: noteHeight(card.title) };
-}
-
-// ── Styling maps ──────────────────────────────────────────────────────────────
-const TYPE_STYLE: Record<string, {
-  bg: string; border: string; selectedBorder: string;
-  badgeBg: string; badgeText: string; line: string;
-}> = {
-  concept: { bg: "#dde1f2", border: "#8b96c8", selectedBorder: "#3c4a8a", badgeBg: "#3c4a8a", badgeText: "#ffffff", line: "rgba(60,74,138,0.45)" },
-  motif:   { bg: "#fdf8ef", border: "#c8a055", selectedBorder: "#8b6410", badgeBg: "#8b6410", badgeText: "#ffffff", line: "rgba(139,100,16,0.45)" },
-  visual:  { bg: "#fdf4f2", border: "#c89088", selectedBorder: "#8b4035", badgeBg: "#8b4035", badgeText: "#ffffff", line: "rgba(139,64,53,0.40)" },
-  note:    { bg: "#f3f8f5", border: "#7aab8a", selectedBorder: "#2e6e45", badgeBg: "#2e6e45", badgeText: "#ffffff", line: "rgba(46,110,69,0.40)" },
-};
-
-const TYPE_LABEL: Record<string, string> = {
-  concept: "Concept",
-  motif: "Motif",
-  visual: "Visual",
-  note: "Note",
-  draft: "Draft",
-  reference: "Reference",
-};
-
-const ACTION_LABEL: Record<string, string> = {
-  unpack_brief: "Unpack Brief",
-  analyze: "Analyze",
-  visual_variations: "Visual Variations",
-  conceptual_variations: "Conceptual Vars",
-  user_added: "Your Idea",
-};
-
-const BRANCH_ACTIONS: { id: ActionType; label: string; title: string }[] = [
-  {
-    id: "unpack_brief",
-    label: "Unpack Brief",
-    title: "Out: 5–8 ConceptCards (title · description · rationale)\nUses: brief text only — no images needed.",
-  },
-  {
-    id: "analyze",
-    label: "Analyze",
-    title: "Out: ConceptCards + MotifCards extracted from your selected images in one pass.\nUses: draft and/or reference images + brief as context.",
-  },
-  {
-    id: "visual_variations",
-    label: "Visual Variations",
-    title: "Out: one VisualCard per Arnheim dimension — a 5×3 variation panel that strengthens that dimension.\nUses: one draft image (primary) + brief as the concept.",
-  },
-  {
-    id: "conceptual_variations",
-    label: "Conceptual Variations",
-    title: "Out: one VisualCard per selected ConceptCard — a 2×2 panel of 4 image interpretations.\nSelect ConceptCards to render; MotifCards constrain the visual language.",
-  },
-];
-
-const PICKER_COLORS = [
-  "#c9a84c", // warm gold
-  "#7a9e5e", // sage green
-  "#c14f58", // muted rose
-  "#4a7a9b", // slate blue
-  "#8b6b4a", // warm brown
-  "#7b6b8e", // muted violet
-  "#4a8b7a", // teal
-  "#9b4a4a", // terracotta
-];
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-interface LayoutNode {
-  card: ResultCard;
-  genId: string;
-  actionType: ActionType;
-  parentCardIds: string[];
-  includedDraftIds: string[];
-  includedReferenceIds: string[];
-  x: number;
-  y: number;
-}
-
-interface GraphEdge {
-  fromId: string;
-  toId: string;
-  toType: string;
-}
-
-type CardNodeData = {
-  card: ResultCard;
-  genId: string;
-  actionType: ActionType;
-  parentCardIds: string[];
-  includedDraftIds: string[];
-  includedReferenceIds: string[];
-  cardIds: Set<string>;
-  isSelected: boolean;
+type IdeaNodeData = {
+  node: IdeaNode;
+  isSelected: boolean;      // selected, alone or with others
   isHovered: boolean;
-  isAncestor: boolean;
+  isAncestor: boolean;      // ancestor of the hovered node
   isSourceOfSelected: boolean;
-  isSaved: boolean;
-  isMultiSelected: boolean;
+  isNew: boolean;           // just made by a run; glows briefly
   collectionColors?: string[];
-  connectMode: boolean;
-  onRemove: (genId: string, cardId: string) => void;
-  onQuickBranch: (action: ActionType) => void;
+  linking: boolean;
+  onRemove: (id: NodeId) => void;
 };
 
 type BriefNodeData = {
   title: string;
   brief: string;
-  onTitleChange: (v: string) => void;
-  onBriefChange: (v: string) => void;
-  onAddDraftFile: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  onAddReferenceFile: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  connectMode: boolean;
   isSelected: boolean;
+  onUpload: (files: File[]) => void;
 };
 
-type AssetNodeData = {
-  asset: Asset;
-  onRemove: (id: string) => void;
-  connectMode: boolean;
-  isSelected: boolean;
-};
-
-// ── Layout algorithm ──────────────────────────────────────────────────────────
-function computeLayout(generations: Generation[], allGenerations: Generation[]): {
-  nodes: LayoutNode[];
-  edges: GraphEdge[];
-  width: number;
-  height: number;
-} {
-  interface Entry {
-    card: ResultCard;
-    genId: string;
-    actionType: ActionType;
-    parentCardIds: string[];
-    includedDraftIds: string[];
-    includedReferenceIds: string[];
-  }
-
-  const entries: Entry[] = [];
-  for (const gen of [...generations].reverse()) {
-    for (const card of gen.cards) {
-      entries.push({
-        card,
-        genId: gen.id,
-        actionType: gen.actionType,
-        parentCardIds: gen.sourceCardIds ?? [],
-        includedDraftIds: gen.includedDraftIds ?? [],
-        includedReferenceIds: gen.includedReferenceIds ?? [],
-      });
-    }
-  }
-
-  if (entries.length === 0) return { nodes: [], edges: [], width: 0, height: 0 };
-
-  const cardIds = new Set(entries.map((e) => e.card.id));
-
-  // Build a full ancestry map from all generations (including dismissed cards)
-  // so we can bridge edges through removed nodes.
-  const allCardParents = new Map<string, string[]>();
-  for (const gen of allGenerations) {
-    for (const card of gen.cards) {
-      allCardParents.set(card.id, gen.sourceCardIds ?? []);
-    }
-  }
-
-  const depthMap = new Map<string, number>();
-  const roots = entries.filter((e) =>
-    e.parentCardIds.length === 0 || e.parentCardIds.every((pid) => !cardIds.has(pid))
-  );
-  for (const r of roots) depthMap.set(r.card.id, 0);
-
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const e of entries) {
-      if (depthMap.has(e.card.id)) continue;
-      const known = e.parentCardIds.filter((pid) => depthMap.has(pid));
-      if (known.length > 0) {
-        depthMap.set(e.card.id, Math.max(...known.map((pid) => depthMap.get(pid)!)) + 1);
-        changed = true;
-      }
-    }
-  }
-  for (const e of entries) if (!depthMap.has(e.card.id)) depthMap.set(e.card.id, 0);
-
-  const byDepth = new Map<number, Entry[]>();
-  for (const e of entries) {
-    const d = depthMap.get(e.card.id)!;
-    if (!byDepth.has(d)) byDepth.set(d, []);
-    byDepth.get(d)!.push(e);
-  }
-
-  const maxDepth = Math.max(...byDepth.keys(), 0);
-
-  function colHeight(col: Entry[]): number {
-    if (col.length === 0) return 0;
-    return col.reduce((sum, e) => sum + nodeDims(e.card).h, 0) + (col.length - 1) * ROW_GAP;
-  }
-  const maxColH = Math.max(...[...byDepth.values()].map(colHeight), 1);
-
-  const posMap = new Map<string, { x: number; y: number }>();
-  for (const [d, col] of byDepth) {
-    const thisH = colHeight(col);
-    const startY = PAD + (maxColH - thisH) / 2;
-    let y = startY;
-    for (const e of col) {
-      posMap.set(e.card.id, { x: PAD + d * COL_STRIDE, y });
-      y += nodeDims(e.card).h + ROW_GAP;
-    }
-  }
-
-  const nodes: LayoutNode[] = entries.map((e) => ({
-    ...e,
-    x: posMap.get(e.card.id)!.x,
-    y: posMap.get(e.card.id)!.y,
-  }));
-
-  // Walk up the ancestry chain through dismissed (invisible) parents to find
-  // the nearest visible ancestors. Prevents disconnected nodes when a parent is removed.
-  function resolveVisibleAncestors(cardId: string, visited = new Set<string>()): string[] {
-    if (visited.has(cardId)) return [];
-    visited.add(cardId);
-    if (posMap.has(cardId)) return [cardId];
-    const parents = allCardParents.get(cardId) ?? [];
-    return parents.flatMap((pid) => resolveVisibleAncestors(pid, visited));
-  }
-
-  const edges: GraphEdge[] = [];
-  const edgeSet = new Set<string>();
-  for (const e of entries) {
-    for (const pid of e.parentCardIds) {
-      const sources = posMap.has(pid) ? [pid] : resolveVisibleAncestors(pid);
-      for (const src of sources) {
-        const key = `${src}→${e.card.id}`;
-        if (!edgeSet.has(key)) {
-          edgeSet.add(key);
-          edges.push({ fromId: src, toId: e.card.id, toType: e.card.type });
-        }
-      }
-    }
-  }
-
-  return {
-    nodes,
-    edges,
-    width: PAD + (maxDepth + 1) * COL_STRIDE + PAD,
-    height: PAD + maxColH + PAD,
-  };
+function handleStyle(linking: boolean): React.CSSProperties {
+  return { opacity: linking ? 1 : 0, pointerEvents: linking ? "auto" : "none", background: "var(--color-ink-2)" };
 }
 
-// ── Custom node components ────────────────────────────────────────────────────
-function TextCardNode(props: NodeProps) {
-  const data = props.data as unknown as CardNodeData;
-  const { card, isSelected, isHovered, isAncestor, isSourceOfSelected, isMultiSelected, isSaved, collectionColors, connectMode, onRemove, genId, actionType } = data;
-  const handleStyle = (pos: "left" | "right"): React.CSSProperties => ({
-    opacity: connectMode ? 1 : 0,
-    pointerEvents: connectMode ? "auto" : "none",
-    background: pos === "right" ? "#64748b" : "#94a3b8",
-  });
-  const s = TYPE_STYLE[card.type] ?? TYPE_STYLE.concept;
-  const primaryColor = collectionColors?.[0];
-  const isChip = card.type === "concept" || card.type === "motif";
+// Outline and ring for each interaction state, shared by every node shape.
+function outline(d: IdeaNodeData) {
+  const base = ROLE_STYLE[d.node.role].border;
+  if (d.isSelected) return { color: ACCENT, ring: `0 0 0 2px ${ACCENT}` };
+  if (d.isSourceOfSelected) return { color: "var(--color-ink-2)", ring: "0 0 0 1.5px var(--color-ink-2)" };
+  if (d.isAncestor || d.isHovered) return { color: "var(--color-ink-2)", ring: "none" };
+  return { color: d.collectionColors?.[0] ?? base, ring: "none" };
+}
 
-  // Editorial gold for source-of-selected; subtle gray for hover-ancestor
-  const SOURCE_COLOR = "#2d4f8a";
+function CollectionDots({ colors }: { colors?: string[] }) {
+  if (!colors?.length) return null;
+  return (
+    <span className="flex gap-0.5" aria-hidden>
+      {colors.map((c) => <span key={c} className="w-1.5 h-1.5 rounded-full" style={{ background: c }} />)}
+    </span>
+  );
+}
 
-  const borderColor = isMultiSelected ? primaryColor ?? "#000"
-    : isSelected ? "#000"
-    : isSourceOfSelected ? SOURCE_COLOR
-    : isAncestor ? "rgba(0,0,0,0.4)"
-    : primaryColor ?? s.border;
-  const shadow = isMultiSelected ? `0 0 0 2px ${primaryColor ?? "rgba(0,0,0,0.4)"}`
-    : isSelected ? "2px 2px 0px #000"
-    : isSourceOfSelected ? `0 0 0 2px ${SOURCE_COLOR}`
-    : isAncestor ? "0 0 0 1px rgba(0,0,0,0.2)"
-    : isHovered ? "1px 1px 0px #888"
-    : "none";
-  // drop-shadow follows clip-path shape; box-shadow does not
-  const motifFilter = card.type === "motif"
-    ? (isMultiSelected ? `drop-shadow(0 0 3px ${primaryColor ?? "rgba(0,0,0,0.5)"})`
-      : isSelected ? "drop-shadow(2px 2px 0px #000)"
-      : isSourceOfSelected ? `drop-shadow(0 0 0 2px ${SOURCE_COLOR})`
-      : isAncestor ? "drop-shadow(0 0 2px rgba(0,0,0,0.2))"
-      : isHovered ? "drop-shadow(1px 1px 2px rgba(0,0,0,0.3))"
-      : undefined)
-    : undefined;
-  const bgColor = isMultiSelected ? "#fafaf8"
-    : isAncestor ? "#f5f4f0"
-    : s.bg;
+function RemoveButton({ id, onRemove, onImage }: { id: NodeId; onRemove: (id: NodeId) => void; onImage?: boolean }) {
+  return (
+    <button aria-label="Remove node" title="Remove"
+      onClick={(e) => { e.stopPropagation(); onRemove(id); }}
+      className={`nodrag absolute top-1 right-1 w-6 h-6 rounded-md flex items-center justify-center opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity ${
+        onImage ? "bg-white/90 text-ink-2 hover:text-danger" : "text-muted hover:text-danger hover:bg-white/70"}`}>
+      <X size={13} />
+    </button>
+  );
+}
 
-  // ── Chip (concept / motif) ──────────────────────────────────────────────────
-  if (isChip) {
-    const chipContent = (
-      <>
-        {collectionColors && collectionColors.length > 0 && !isMultiSelected && !isSelected && (
-          <div className="flex gap-[1px] shrink-0">
-            {collectionColors.map((c) => (
-              <div key={c} className="w-[3px] h-[3px] rounded-full" style={{ background: c }} />
-            ))}
-          </div>
-        )}
-        <p className={styles.chipText}>{card.title}</p>
-        {(isMultiSelected || isSelected) && <span className={styles.chipCheck}>✓</span>}
-        {isSaved && !isSelected && !isMultiSelected && <span className={styles.chipStar}>★</span>}
-        <button
-          className={`absolute right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 flex items-center justify-center text-[rgba(0,0,0,0.3)] hover:text-black text-[9px] leading-none ${styles.centerY}`}
-          onClick={(e) => { e.stopPropagation(); onRemove(genId, card.id); }}
-          title="Remove from tree"
-        >✕</button>
-      </>
-    );
+// ── Text node: concept and note rectangles, motif octagon, visual without image ─
 
-    if (card.type === "motif") {
-      // Wrapper provides the octagon border: clip-path + border-color bg + 1px padding
-      return (
-        <>
-          <Handle type="target" position={Position.Left} className={styles.handleDot} style={handleStyle("left")} />
-          <div className={styles.chipMotif} style={{ background: borderColor, filter: motifFilter }}>
-            <div className={`relative group ${styles.chipMotifInner}`} style={{ background: bgColor, paddingLeft: 10 }}>
-              {chipContent}
-            </div>
-          </div>
-          <Handle type="source" position={Position.Right} className={styles.handleDot} style={handleStyle("right")} />
-        </>
-      );
-    }
+function TextIdeaNode({ data }: { data: IdeaNodeData }) {
+  const { node, linking, onRemove } = data;
+  const s = ROLE_STYLE[node.role];
+  const o = outline(data);
+  const body = (
+    <div className="relative group flex flex-col gap-1 px-3 py-2 pr-7 min-h-[34px] justify-center">
+      {node.role !== "concept" && node.role !== "motif" && (
+        <div className="flex items-center gap-1.5"><RoleBadge role={node.role} /><CollectionDots colors={data.collectionColors} /></div>
+      )}
+      <div className="flex items-start gap-1.5">
+        {(node.role === "concept" || node.role === "motif") && <span className="mt-1.5"><CollectionDots colors={data.collectionColors} /></span>}
+        <p className="idea text-[14px] leading-[1.25] text-ink flex-1 break-words">{node.title}</p>
+      </div>
+      {!linking && <RemoveButton id={node.id} onRemove={onRemove} />}
+    </div>
+  );
 
-    // Concept chip — uniform border
-    return (
-      <>
-        <Handle type="target" position={Position.Left} className={styles.handleDot} style={handleStyle("left")} />
-        <div
-          className={`relative group ${styles.chipNode}`}
-          style={{
-            background: bgColor,
-            border: `1px solid ${borderColor}`,
-            boxShadow: shadow,
-            paddingLeft: 9,
-          }}
-        >
-          {chipContent}
-        </div>
-        <Handle type="source" position={Position.Right} className={styles.handleDot} style={handleStyle("right")} />
-      </>
-    );
-  }
-
-  // ── Note card ───────────────────────────────────────────────────────────────
   return (
     <>
-      <Handle type="target" position={Position.Left} className={styles.handleDot} style={handleStyle("left")} />
-      <div
-        className={`relative group ${styles.noteNode}`}
-        style={{
-          background: bgColor,
-          border: `1px solid ${borderColor}`,
-          boxShadow: shadow,
-          height: noteHeight(card.title),
-        }}
-      >
-        {collectionColors && collectionColors.length > 0 && !isMultiSelected && !isSelected && (
-          <div className="absolute top-1.5 left-1.5 flex gap-[1px]">
-            {collectionColors.map((c) => (
-              <div key={c} className="w-[3px] h-[3px] rounded-full shrink-0" style={{ background: c }} />
-            ))}
-          </div>
-        )}
-        {!connectMode && (
-          <button
-            className={`absolute right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 flex items-center justify-center text-[rgba(0,0,0,0.3)] hover:text-black text-[9px] leading-none z-10 ${styles.centerY}`}
-            onClick={(e) => { e.stopPropagation(); onRemove(genId, card.id); }}
-            title="Remove from tree"
-          >✕</button>
-        )}
-        <div className={`p-2.5 flex flex-col justify-center ${styles.noteBody}`}
-          style={{ height: noteHeight(card.title) }}
-        >
-          {card.type !== "note" && (
-            <div className="flex items-center gap-1.5 pr-4">
-              <span className="text-[8px] uppercase tracking-[0.14em] shrink-0 text-[rgba(0,0,0,0.45)]">
-                {TYPE_LABEL[card.type]}
-              </span>
-              {(isMultiSelected || isSelected) && <span className="text-[9px] text-black shrink-0">✓</span>}
-              {isSaved && <span className="text-[10px] shrink-0 text-[rgba(0,0,0,0.5)]" title="Saved">★</span>}
-            </div>
-          )}
-          <p className={`text-[11px] text-[#111] leading-tight flex-1${card.type === "note" ? "" : " line-clamp-2"}`}>
-            {card.title}
-          </p>
-          {card.type !== "note" && (
-            <p className="text-[9px] truncate text-[rgba(0,0,0,0.3)]">
-              {ACTION_LABEL[actionType] ?? actionType}
-            </p>
-          )}
+      <Handle type="target" position={Position.Left} className={styles.handleDot} style={handleStyle(linking)} />
+      {node.role === "motif" ? (
+        <div className={styles.motif} style={{ background: o.color, filter: o.ring !== "none" ? `drop-shadow(0 0 1.5px ${ACCENT})` : undefined }}>
+          <div className={styles.motifInner} style={{ background: s.fill, width: 157 }}>{body}</div>
         </div>
-      </div>
-      <Handle type="source" position={Position.Right} className={styles.handleDot} style={handleStyle("right")} />
+      ) : (
+        <div className={`border ${node.role === "concept" ? "rounded-md w-[160px]" : "rounded-lg w-[140px]"}`}
+          style={{ background: s.fill, borderColor: o.color, boxShadow: o.ring }}>
+          {body}
+        </div>
+      )}
+      <Handle type="source" position={Position.Right} className={styles.handleDot} style={handleStyle(linking)} />
     </>
   );
 }
 
-const VISUAL_QUICK_ACTIONS: { id: ActionType; label: string; title: string }[] = [
-  {
-    id: "analyze",
-    label: "Analyze",
-    title: "Out: ConceptCards + MotifCards extracted from this image.",
-  },
-  {
-    id: "visual_variations",
-    label: "Variations",
-    title: "Out: 5×3 variation panel per Arnheim dimension, using this image as the draft.",
-  },
-  {
-    id: "conceptual_variations",
-    label: "Concepts",
-    title: "Out: 2×2 image panel per selected ConceptCard, using this image as a style reference.",
-  },
-];
+// ── Image node (any role with an image) ───────────────────────────────────────
 
-function VisualCardNode(props: NodeProps) {
-  const data = props.data as unknown as CardNodeData;
-  const { card, isSelected, isHovered, isAncestor, isSourceOfSelected, isMultiSelected, isSaved, collectionColors, connectMode, onRemove, onQuickBranch, genId } = data;
-  const handleStyle = (pos: "left" | "right"): React.CSSProperties => ({
-    opacity: connectMode ? 1 : 0,
-    pointerEvents: connectMode ? "auto" : "none",
-    background: pos === "right" ? "#64748b" : "#94a3b8",
-  });
-  const s = TYPE_STYLE.visual;
-  const visualCard = card as VisualCard;
-  const primaryColor = collectionColors?.[0];
-  const SOURCE_COLOR = "#2d4f8a";
-
-  const borderColor = isMultiSelected ? primaryColor ?? "#000"
-    : isSelected ? "#000"
-    : isSourceOfSelected ? SOURCE_COLOR
-    : isAncestor ? "rgba(0,0,0,0.4)"
-    : primaryColor ?? s.border;
-  const shadow = isMultiSelected ? `0 0 0 2px ${primaryColor ?? "rgba(0,0,0,0.4)"}`
-    : isSelected ? "2px 2px 0px #000"
-    : isSourceOfSelected ? `0 0 0 2px ${SOURCE_COLOR}`
-    : isAncestor ? "0 0 0 1px rgba(0,0,0,0.2)"
-    : isHovered ? "1px 1px 0px #888"
-    : "none";
-
+function ImageIdeaNode({ data }: { data: IdeaNodeData }) {
+  const { node, linking, onRemove } = data;
+  const url = useImageUrl(node.image?.imageId);
+  const o = outline(data);
   return (
     <>
-      <Handle type="target" position={Position.Left} className={styles.handleDot} style={handleStyle("left")} />
-      <div
-        className={`relative group ${styles.visualNode}`}
-        style={{
-          border: `1px solid ${borderColor}`,
-          boxShadow: shadow,
-        }}
-      >
-        <button
-          className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 text-[10px] leading-none z-20"
-          onClick={(e) => { e.stopPropagation(); onRemove(genId, card.id); }}
-          title="Remove from tree"
-        >✕</button>
-
-        <div className="absolute top-0 left-0 right-0 p-2 flex items-center gap-1.5 z-10 bg-gradient-to-b from-black/30 to-transparent">
-          <span className="text-[8px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0 bg-black/50 text-white">
-            {TYPE_LABEL[card.type]}
+      <Handle type="target" position={Position.Left} className={styles.handleDot} style={handleStyle(linking)} />
+      <div className="relative group w-[320px] h-[200px] rounded-lg overflow-hidden border bg-subtle"
+        style={{ borderColor: o.color, boxShadow: o.ring }}>
+        {url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={url} alt={node.title} className="w-full h-full object-cover" />
+        ) : <div className="w-full h-full bg-line/60" />}
+        <div className="absolute top-2 left-2 flex items-center gap-1.5">
+          <RoleBadge role={node.role} onImage />
+          <CollectionDots colors={data.collectionColors} />
+        </div>
+        {data.isSelected && (
+          <span className="absolute top-2 right-9 w-6 h-6 rounded-md bg-white/90 flex items-center justify-center" aria-hidden>
+            <Check size={14} style={{ color: ACCENT }} />
           </span>
-          {(isMultiSelected || isSelected) && <span className="text-[9px] text-white shrink-0">✓</span>}
-          {isSaved && <span className="text-[9px] text-white/80 shrink-0">★</span>}
-        </div>
-
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={visualCard.imageDataUrl}
-          alt={card.title}
-          className="w-full h-full object-cover"
-        />
-
-        {collectionColors && collectionColors.length > 0 && !isMultiSelected && !isSelected && (
-          <div className="absolute inset-y-0 left-0 w-[3px] z-20" style={{ background: primaryColor }} />
         )}
-        <div className="absolute bottom-0 left-0 right-0 px-2 py-1.5 bg-gradient-to-t from-black/80 via-black/50 to-transparent z-10 transition-all duration-150">
-          <p className="text-[9px] text-white leading-tight truncate font-medium mb-1">
-            {card.title}
-          </p>
-          <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-            <p className="text-[7px] text-white/60 uppercase tracking-wider font-semibold mb-1">Use for →</p>
-            <div className="flex gap-1 flex-wrap">
-              {VISUAL_QUICK_ACTIONS.map((a) => (
-                <button
-                  key={a.id}
-                  onClick={(e) => { e.stopPropagation(); onQuickBranch(a.id); }}
-                  title={a.title}
-                  className="text-[7px] bg-white/20 hover:bg-white/45 text-white px-1.5 py-0.5 rounded transition-colors whitespace-nowrap"
-                >
-                  {a.label}
-                </button>
-              ))}
-            </div>
-          </div>
+        <div className="absolute inset-x-0 bottom-0 px-3 pt-6 pb-2 bg-gradient-to-t from-black/70 to-transparent">
+          <p className="idea text-[14px] leading-tight text-white truncate">{node.title}</p>
         </div>
+        {!linking && <RemoveButton id={node.id} onRemove={onRemove} onImage />}
       </div>
-      <Handle type="source" position={Position.Right} className={styles.handleDot} style={handleStyle("right")} />
+      <Handle type="source" position={Position.Right} className={styles.handleDot} style={handleStyle(linking)} />
     </>
   );
+}
+
+function IdeaFlowNode(props: NodeProps) {
+  const data = props.data as unknown as IdeaNodeData;
+  const inner = data.node.image ? <ImageIdeaNode data={data} /> : <TextIdeaNode data={data} />;
+  return data.isNew ? <div className={styles.newGlow}>{inner}</div> : inner;
 }
 
 // ── Brief node ────────────────────────────────────────────────────────────────
-function BriefNode(props: NodeProps) {
+
+function BriefFlowNode(props: NodeProps) {
   const data = props.data as unknown as BriefNodeData;
-  const draftInputRef = useRef<HTMLInputElement>(null);
-  const refInputRef = useRef<HTMLInputElement>(null);
-  const { isSelected } = data;
-
+  const fileRef = useRef<HTMLInputElement>(null);
   return (
     <>
-      <div className={styles.briefNode} style={{ boxShadow: isSelected ? "2px 2px 0px #000" : "none" }}>
-        <div className={styles.briefRow}>
-          <p className={styles.briefLabel}>Project Brief</p>
-          {isSelected && <span className={styles.briefCheck}>✓</span>}
-        </div>
-        <input
-          className={`nodrag nopan ${styles.briefTitleInput}`}
-          value={data.title}
-          onChange={(e) => data.onTitleChange(e.target.value)}
-          placeholder="Project title"
-        />
-        <textarea
-          className={`nodrag nopan ${styles.briefTextarea}`}
-          value={data.brief}
-          onChange={(e) => data.onBriefChange(e.target.value)}
-          placeholder="Describe your design challenge…"
-          rows={4}
-        />
-        <input
-          ref={draftInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          className="hidden"
-          onChange={data.onAddDraftFile}
-        />
-        <input
-          ref={refInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          className="hidden"
-          onChange={data.onAddReferenceFile}
-        />
-        <div className={styles.briefBtnRow}>
-          <button
-            className={`nodrag nopan ${styles.briefUploadBtn}`}
-            onClick={(e) => { e.stopPropagation(); draftInputRef.current?.click(); }}
-          >
-            + Draft
-          </button>
-          <button
-            className={`nodrag nopan ${styles.briefUploadBtn}`}
-            onClick={(e) => { e.stopPropagation(); refInputRef.current?.click(); }}
-          >
-            + References
-          </button>
-        </div>
+      <div className="w-[320px] h-[200px] rounded-lg border bg-surface px-4 py-3 flex flex-col gap-1.5 cursor-pointer"
+        style={{ borderColor: data.isSelected ? ACCENT : "var(--color-line-strong)", boxShadow: data.isSelected ? `0 0 0 2px ${ACCENT}` : "var(--shadow-float)" }}>
+        <p className="text-[12px] font-medium text-muted">Project brief</p>
+        <p className="idea text-[18px] leading-tight text-ink truncate">{data.title}</p>
+        <p className="idea text-[14px] leading-snug text-ink-2 line-clamp-4 flex-1">
+          {data.brief || <span className="italic text-muted">Click to write your brief</span>}
+        </p>
+        <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" aria-label="Add images"
+          onChange={(e) => { data.onUpload(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
+        <button className="nodrag nopan btn btn-sm self-start" onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}>
+          <ImagePlus size={14} aria-hidden /> Add images
+        </button>
       </div>
-      <Handle
-        type="source"
-        position={Position.Right}
-        className={styles.handleDot}
-        style={{
-          opacity: data.connectMode ? 1 : 0,
-          pointerEvents: data.connectMode ? "auto" : "none",
-          background: "#64748b",
-        }}
-      />
+      <Handle type="source" position={Position.Right} className={styles.handleDot} style={{ opacity: 0, pointerEvents: "none" }} />
     </>
   );
 }
 
-// ── Asset node ────────────────────────────────────────────────────────────────
-function AssetNode(props: NodeProps) {
-  const data = props.data as unknown as AssetNodeData;
-  const { asset, onRemove, isSelected } = data;
-  const isDraft = asset.type === "draft";
-  const handleStyle: React.CSSProperties = {
-    opacity: data.connectMode ? 1 : 0,
-    pointerEvents: data.connectMode ? "auto" : "none",
-    background: "#64748b",
-  };
+const nodeTypes: NodeTypes = { idea: IdeaFlowNode, brief: BriefFlowNode };
 
-  if (isDraft) {
-    return (
-      <>
-        <Handle type="target" position={Position.Left} className={styles.handleDot} style={handleStyle} />
-        <div
-          className={`group ${styles.assetDraftNode}`}
-          style={{
-            border: `1px solid ${isSelected ? "#000" : "rgba(0,0,0,0.3)"}`,
-            boxShadow: isSelected ? "2px 2px 0px #000" : "none",
-          }}
-        >
-          <button
-            className="nodrag nopan absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 text-[10px] leading-none z-20"
-            onClick={(e) => { e.stopPropagation(); onRemove(asset.id); }}
-            title="Remove"
-          >✕</button>
-          <div className="absolute top-0 left-0 right-0 p-2 flex items-center gap-1.5 z-10 bg-gradient-to-b from-black/30 to-transparent">
-            <span className={styles.draftBadge}>✎ Draft</span>
-            {isSelected && <span className={styles.draftCheckBadge}>✓</span>}
-          </div>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={asset.dataUrl} alt={asset.fileName} className="w-full h-full object-cover" />
-          <div className="absolute bottom-0 left-0 right-0 px-2 py-1.5 bg-gradient-to-t from-black/70 via-black/40 to-transparent z-10">
-            <p className="text-[9px] text-white truncate m-0">{asset.fileName}</p>
-          </div>
-        </div>
-        <Handle type="source" position={Position.Right} className={styles.handleDot} style={handleStyle} />
-      </>
-    );
-  }
-
-  return (
-    <>
-      <Handle type="target" position={Position.Left} className={styles.handleDot} style={handleStyle} />
-      <div
-        className={`group ${styles.assetRefNode}`}
-        style={{
-          border: `1px solid ${isSelected ? "#000" : "rgba(0,0,0,0.3)"}`,
-          boxShadow: isSelected ? "2px 2px 0px #000" : "none",
-        }}
-      >
-        <button
-          className="nodrag nopan absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 text-[10px] leading-none z-20"
-          onClick={(e) => { e.stopPropagation(); onRemove(asset.id); }}
-          title="Remove"
-        >✕</button>
-        <div className="absolute top-0 left-0 right-0 p-2 flex items-center gap-1.5 z-10 bg-gradient-to-b from-black/30 to-transparent">
-          <span className={styles.draftBadge}>◈ Reference</span>
-          {isSelected && <span className={styles.draftCheckBadge}>✓</span>}
-        </div>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={asset.dataUrl} alt={asset.fileName} className="w-full h-full object-cover" />
-        <div className="absolute bottom-0 left-0 right-0 px-2 py-1.5 bg-gradient-to-t from-black/70 via-black/40 to-transparent z-10">
-          <p className="text-[9px] text-white truncate m-0">{asset.fileName}</p>
-        </div>
-      </div>
-      <Handle type="source" position={Position.Right} className={styles.handleDot} style={handleStyle} />
-    </>
-  );
-}
-
-const nodeTypes: NodeTypes = {
-  textCard: TextCardNode,
-  visualCard: VisualCardNode,
-  briefNode: BriefNode,
-  assetNode: AssetNode,
-};
+// ── Edges ─────────────────────────────────────────────────────────────────────
 
 function ProvenanceEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, data, selected }: EdgeProps) {
-  const [edgePath, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
-  const { onDelete, color, dashed, isSourceEdge } = (data ?? {}) as { onDelete?: () => void; color?: string; dashed?: boolean; isSourceEdge?: boolean };
-  const stroke = selected ? "#000" : (color ?? "#94a3b8");
-  const strokeWidth = isSourceEdge ? 2.5 : selected ? 2 : 1.5;
-  const strokeOpacity = isSourceEdge ? 0.85 : selected ? 0.9 : 0.45;
+  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
+  const { onDelete, color, dashed, emphasis } = (data ?? {}) as { onDelete?: () => void; color?: string; dashed?: boolean; emphasis?: boolean };
   return (
     <>
-      <path d={edgePath} fill="none" stroke="transparent" strokeWidth={20} style={{ cursor: "pointer" }} />
-      <BaseEdge path={edgePath} markerEnd={markerEnd}
-        style={{ stroke, strokeWidth, strokeOpacity, strokeDasharray: dashed ? "5 4" : undefined, transition: "stroke 0.15s, stroke-opacity 0.15s, stroke-width 0.15s" }} />
+      <path d={path} fill="none" stroke="transparent" strokeWidth={20} style={{ cursor: onDelete ? "pointer" : "default" }} />
+      <BaseEdge path={path} markerEnd={markerEnd}
+        style={{
+          stroke: selected ? ACCENT : color,
+          strokeWidth: emphasis || selected ? 2 : 1.5,
+          strokeOpacity: emphasis || selected ? 0.95 : 0.6,
+          strokeDasharray: dashed ? "5 4" : undefined,
+          transition: "stroke 0.15s, stroke-opacity 0.15s",
+        }} />
       {selected && onDelete && (
         <EdgeLabelRenderer>
-          <div style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`, pointerEvents: "all" }}
-            className="nodrag nopan">
-            <button onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Remove connection"
-              className="w-5 h-5 rounded-full bg-white border border-[#ccc] text-[#888] hover:text-red-500 hover:border-red-300 flex items-center justify-center text-[10px] leading-none shadow-sm transition-colors">
-              ✕
+          <div style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`, pointerEvents: "all" }} className="nodrag nopan">
+            <button onClick={(e) => { e.stopPropagation(); onDelete(); }} aria-label="Remove connection"
+              className="w-6 h-6 rounded-full bg-surface border border-line shadow-[var(--shadow-float)] text-ink-2 hover:text-danger flex items-center justify-center">
+              <X size={12} />
             </button>
           </div>
         </EdgeLabelRenderer>
@@ -751,75 +240,52 @@ function ProvenanceEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, ta
   );
 }
 
-function ManualEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, data, selected }: EdgeProps) {
-  const [hovered, setHovered] = useState(false);
-  const [edgePath, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
-  const { onDelete } = (data ?? {}) as { onDelete?: () => void };
-  const stroke = selected ? "#2563eb" : "#64748b";
+// User links bend around the column instead of cutting through the nodes in it,
+// and always show a label or a dot to click.
+function LinkEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, data, selected }: EdgeProps) {
+  const [path, labelX, labelY] = getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, borderRadius: 14, offset: 28 });
+  const { label } = (data ?? {}) as { label?: string };
+  const stroke = selected ? ACCENT : "var(--color-ink-2)";
   return (
     <>
-      {/* Invisible wide hit-area so the thin dashed line is easy to click */}
-      <path
-        d={edgePath}
-        fill="none"
-        stroke="transparent"
-        strokeWidth={20}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        style={{ cursor: "pointer" }}
-      />
-      <BaseEdge
-        path={edgePath}
-        markerEnd={markerEnd}
-        style={{ stroke, strokeWidth: 1.5, strokeDasharray: "5 3", transition: "stroke 0.1s" }}
-      />
-      {(hovered || selected) && onDelete && (
-        <EdgeLabelRenderer>
-          <div
-            style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`, pointerEvents: "all" }}
-            className="nodrag nopan"
-          >
-            <button
-              onClick={(e) => { e.stopPropagation(); onDelete(); }}
-              title="Remove connection"
-              className="w-5 h-5 rounded-full bg-white border border-[#ccc] text-[#888] hover:text-red-500 hover:border-red-300 flex items-center justify-center text-[10px] leading-none shadow-sm transition-colors"
-            >
-              ✕
-            </button>
-          </div>
-        </EdgeLabelRenderer>
-      )}
+      <path d={path} fill="none" stroke="transparent" strokeWidth={24} style={{ cursor: "pointer" }} />
+      <BaseEdge path={path} markerEnd={markerEnd} style={{ stroke, strokeWidth: selected ? 2 : 1.5, strokeDasharray: "5 3" }} />
+      <EdgeLabelRenderer>
+        <div style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`, pointerEvents: "none" }}>
+          {label ? (
+            <span className="block px-2 py-0.5 rounded-full bg-surface border text-[12px] max-w-40 truncate"
+              style={{ borderColor: stroke, color: selected ? ACCENT : "var(--color-ink-2)" }}>{label}</span>
+          ) : (
+            <span className="block w-2.5 h-2.5 rounded-full border-2 bg-surface" style={{ borderColor: stroke }} />
+          )}
+        </div>
+      </EdgeLabelRenderer>
     </>
   );
 }
 
-const edgeTypes: EdgeTypes = { manualEdge: ManualEdge, provenanceEdge: ProvenanceEdge };
+const edgeTypes: EdgeTypes = { provenance: ProvenanceEdge, link: LinkEdge };
 
-// Reads positions from ReactFlow's internal store (sync with drag frames, no lag)
+// Soft colour halos behind nodes that belong to collections. Reads live node
+// positions from React Flow so they follow drags without lag.
 function CollectionHalos({ collections }: { collections: Collection[] }) {
   const nodes = useNodes();
   const { x, y, zoom } = useViewport();
   return (
-    <svg
-      className="absolute inset-0 pointer-events-none"
-      style={{ width: "100%", height: "100%", zIndex: -1, overflow: "visible", mixBlendMode: "multiply" }}
-    >
+    <svg className="absolute inset-0 pointer-events-none" aria-hidden
+      style={{ width: "100%", height: "100%", zIndex: -1, overflow: "visible", mixBlendMode: "multiply" }}>
       <defs>
-        <filter id="halo-blur" x="-200%" y="-200%" width="500%" height="500%">
-          <feGaussianBlur stdDeviation="34" />
-        </filter>
+        <filter id="halo-blur" x="-200%" y="-200%" width="500%" height="500%"><feGaussianBlur stdDeviation="34" /></filter>
       </defs>
       <g transform={`translate(${x},${y}) scale(${zoom})`}>
         {collections.map((col) => (
           <g key={col.id}>
-            {col.cardIds.flatMap((cid) => {
-              const rn = nodes.find((n) => n.id === cid);
+            {col.nodeIds.flatMap((id) => {
+              const rn = nodes.find((n) => n.id === id);
               if (!rn) return [];
-              const cx = rn.position.x + ((rn.measured?.width ?? rn.width ?? NODE_W) / 2);
-              const cy = rn.position.y + ((rn.measured?.height ?? rn.height ?? NODE_H) / 2);
-              return [
-                <circle key={cid} cx={cx} cy={cy} r={95} fill={col.color} opacity={0.38} filter="url(#halo-blur)" />,
-              ];
+              const cx = rn.position.x + (rn.measured?.width ?? rn.width ?? 140) / 2;
+              const cy = rn.position.y + (rn.measured?.height ?? rn.height ?? 44) / 2;
+              return [<circle key={id} cx={cx} cy={cy} r={95} fill={col.color} opacity={0.38} filter="url(#halo-blur)" />];
             })}
           </g>
         ))}
@@ -828,1860 +294,419 @@ function CollectionHalos({ collections }: { collections: Collection[] }) {
   );
 }
 
-// Walk parentCardIds recursively to collect all ancestor IDs (BFS)
-function getAllAncestorIds(startId: string, nodes: LayoutNode[], cardIds: Set<string>): Set<string> {
-  const result = new Set<string>();
-  const queue = [...(nodes.find((n) => n.card.id === startId)?.parentCardIds ?? [])];
-  while (queue.length > 0) {
-    const pid = queue.shift()!;
-    if (cardIds.has(pid) && !result.has(pid)) {
-      result.add(pid);
-      const pNode = nodes.find((n) => n.card.id === pid);
-      if (pNode) queue.push(...pNode.parentCardIds);
-    }
-  }
-  return result;
+// ── Canvas chrome ─────────────────────────────────────────────────────────────
+
+function ToolSwitch({ tool, onChange }: { tool: Tool; onChange: (t: Tool) => void }) {
+  const tools: { id: Tool; label: string; hint: string; Icon: typeof MousePointer2 }[] = [
+    { id: "select", label: "Select", hint: "Click to select, shift-click to add, drag to pan", Icon: MousePointer2 },
+    { id: "lasso", label: "Lasso", hint: "Drag to select several nodes", Icon: Lasso },
+    { id: "link", label: "Link", hint: "Drag from a node to another node to link them", Icon: Spline },
+  ];
+  return (
+    <div role="radiogroup" aria-label="Canvas tool" className="inline-flex p-0.5 rounded-md bg-surface border border-line shadow-[var(--shadow-float)]">
+      {tools.map(({ id, label, hint, Icon }) => (
+        <button key={id} role="radio" aria-checked={tool === id} title={hint} onClick={() => onChange(id)}
+          className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-[5px] text-[13px] font-medium transition-colors ${
+            tool === id ? "bg-ink text-white" : "text-ink-2 hover:bg-subtle hover:text-ink"}`}>
+          <Icon size={14} aria-hidden /> {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// Open while the tree is empty; tucks itself away once there are nodes, so it
+// doesn't crowd the selection bar. The user can reopen it.
+function Legend({ hasNodes }: { hasNodes: boolean }) {
+  const [open, setOpen] = useState(!hasNodes);
+  useEffect(() => { if (hasNodes) setOpen(false); }, [hasNodes]);
+  return (
+    <div className="floating text-[12px] overflow-hidden w-36">
+      <button onClick={() => setOpen((v) => !v)} aria-expanded={open}
+        className="w-full flex items-center gap-2 px-3 h-8 text-ink-2 font-medium hover:bg-subtle">
+        Key {open ? <ChevronUp size={14} className="ml-auto" aria-hidden /> : <ChevronDown size={14} className="ml-auto" aria-hidden />}
+      </button>
+      {open && (
+        <ul className="px-3 pb-2.5 flex flex-col gap-1.5 text-ink-2">
+          {ROLES.map((r) => (
+            <li key={r} className="flex items-center gap-2">
+              {r === "motif" ? (
+                <svg width="16" height="12" viewBox="0 0 16 12" aria-hidden>
+                  <polygon points="3.5,0.5 12.5,0.5 15.5,3.5 15.5,8.5 12.5,11.5 3.5,11.5 0.5,8.5 0.5,3.5"
+                    fill={ROLE_STYLE[r].fill} stroke={ROLE_STYLE[r].border} />
+                </svg>
+              ) : (
+                <span className={`w-4 h-3 border ${r === "concept" ? "rounded-[3px]" : "rounded-[5px]"}`}
+                  style={{ background: ROLE_STYLE[r].fill, borderColor: ROLE_STYLE[r].border }} aria-hidden />
+              )}
+              {ROLE_LABEL[r]}
+            </li>
+          ))}
+          <li className="flex items-center gap-2">
+            <svg width="16" height="8" aria-hidden><line x1="0" y1="4" x2="16" y2="4" stroke="var(--color-ink-2)" strokeWidth="1.5" strokeDasharray="4 3" /></svg>
+            Your link
+          </li>
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// Shown until the first run, so a first-time participant knows the order of things.
+function GetStarted({ hasBrief, hasImage, onOpenBrief, onRun }: {
+  hasBrief: boolean; hasImage: boolean; onOpenBrief: () => void; onRun: (a: ActionType) => void;
+}) {
+  const Step = ({ done, children }: { done: boolean; children: React.ReactNode }) => (
+    <li className="flex items-center gap-2.5">
+      <span className={`w-5 h-5 shrink-0 rounded-full flex items-center justify-center border ${done ? "bg-ink border-ink text-white" : "border-line-strong"}`}>
+        {done && <Check size={12} aria-hidden />}
+        <span className="sr-only">{done ? "Done:" : "To do:"}</span>
+      </span>
+      <span className={done ? "text-muted" : "text-ink"}>{children}</span>
+    </li>
+  );
+  return (
+    <section aria-label="Get started" className="floating w-80 px-4 py-3">
+      <h2 className="text-[15px] font-semibold text-ink mb-2.5">Get started</h2>
+      <ol className="flex flex-col gap-2 text-[13px]">
+        <Step done={hasBrief}>
+          <button className="underline underline-offset-2 hover:no-underline" onClick={onOpenBrief}>Write your brief</button>
+        </Step>
+        <Step done={hasImage}>Add images of your draft or references <span className="text-muted">(optional)</span></Step>
+        <Step done={false}>
+          <button className="underline underline-offset-2 hover:no-underline disabled:no-underline disabled:text-muted" disabled={!hasBrief}
+            onClick={() => onRun("expand")}>Run Expand</button>{" "}to turn them into concepts and motifs
+        </Step>
+      </ol>
+    </section>
+  );
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-interface Props {
-  generations: Generation[];
-  allGenerations: Generation[];
-  isGenerating: boolean;
-  generatingAction: ActionType | null;
-  assets: Asset[];
-  brief: string;
-  title: string;
-  hoveredSourceIds: Set<string>;
-  onHoverSources: (cardIds: Set<string>, assetIds: Set<string>) => void;
-  onBranchFrom: (card: ResultCard, action: ActionType) => void;
-  onMultiBranchFrom: (cards: ResultCard[], action: ActionType) => void;
-  onAddUserNode: (card: ResultCard, parentCardIds: string[]) => void;
-  onDuplicateCard: (originalCard: ResultCard, parentCardIds: string[]) => void;
-  onClearTree: () => void;
-  onDismissCard: (genId: string, cardId: string) => void;
-  onUpdateCard: (card: ResultCard) => void;
-  onAddAsReference: (dataUrl: string, label: string) => void;
-  onBriefChange: (v: string) => void;
-  onTitleChange: (v: string) => void;
-  onAddAsset: (asset: Asset) => void;
-  onRemoveAsset: (id: string) => void;
-  onSelectionChange?: (ids: string[]) => void;
-  collections: Collection[];
-  onAddCollection: (col: Collection) => void;
-  onAddCardsToCollection: (collectionId: string, cardIds: string[]) => void;
-  onRemoveProvenanceEdge: (fromId: string, toCardId: string) => void;
-  manualEdges: ManualEdge[];
-  onAddManualEdge: (edge: ManualEdge) => void;
-  onRemoveManualEdge: (id: string) => void;
-}
 
 export default function TreeView({
-  generations, allGenerations, isGenerating, generatingAction, assets,
-  brief, title, hoveredSourceIds, onHoverSources, onBranchFrom,
-  onMultiBranchFrom, onAddUserNode, onDuplicateCard, onClearTree, onDismissCard, onUpdateCard, onAddAsReference,
-  onBriefChange, onTitleChange, onAddAsset, onRemoveAsset, onSelectionChange,
-  collections, onAddCollection, onAddCardsToCollection,
-  manualEdges, onAddManualEdge, onRemoveManualEdge, onRemoveProvenanceEdge,
-}: Props) {
-  const { nodes, edges } = useMemo(
-    () => computeLayout(generations, allGenerations),
-    [generations, allGenerations]
-  );
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [selectedInputId, setSelectedInputId] = useState<string | null>(null);
-  const [multiSelectedIds, setMultiSelectedIds] = useState<Set<string>>(new Set());
-  const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [lassoMode, setLassoMode] = useState(false);
-  const [addNodeState, setAddNodeState] = useState<{ parentIds: string[] } | null>(null);
-  const [confirmingClear, setConfirmingClear] = useState(false);
-  const [positionOverrides, setPositionOverrides] = useState<Record<string, { x: number; y: number }>>(() => {
-    try { return JSON.parse(localStorage.getItem("treeview-positions") ?? "{}"); } catch { return {}; }
-  });
-  useEffect(() => {
-    try { localStorage.setItem("treeview-positions", JSON.stringify(positionOverrides)); } catch {}
-  }, [positionOverrides]);
-  const [toasts, setToasts] = useState<{ id: string; message: string }[]>([]);
-  const seenGenErrorIds = useRef<Set<string>>(new Set());
+  briefOpen, onOpenBrief, onOpenAddNode, onOpenRun,
+}: {
+  briefOpen: boolean;
+  onOpenBrief: () => void;
+  onOpenAddNode: (parentIds: NodeId[]) => void;
+  onOpenRun: (action: ActionType) => void;
+}) {
+  const project = useProjectStore((s) => s.project)!;
+  const selection = useProjectStore((s) => s.selection);
+  const setSelection = useProjectStore((s) => s.setSelection);
+  const toggleSelected = useProjectStore((s) => s.toggleSelected);
+  const clearSelection = useProjectStore((s) => s.clearSelection);
+  const hideNode = useProjectStore((s) => s.hideNode);
+  const hideEdge = useProjectStore((s) => s.hideEdge);
+  const addLink = useProjectStore((s) => s.addLink);
+  const addImageNode = useProjectStore((s) => s.addImageNode);
+  const moveNode = useProjectStore((s) => s.moveNode);
+  const resetLayout = useProjectStore((s) => s.resetLayout);
+  const clearTree = useProjectStore((s) => s.clearTree);
+
+  const [hoveredId, setHoveredId] = useState<NodeId | null>(null);
+  const [tool, setTool] = useState<Tool>("select");
   const [showCollectionColors, setShowCollectionColors] = useState(false);
-  const [connectMode, setConnectMode] = useState(false);
-  const [collectionPickerOpen, setCollectionPickerOpen] = useState(false);
-  const [creatingInPicker, setCreatingInPicker] = useState(false);
-  const [newCollectionName, setNewCollectionName] = useState("");
+  const [exportColorsActive, setExportColorsActive] = useState(false);
+  const rfRef = useRef<ReactFlowInstance | null>(null);
+  const linking = tool === "link";
 
-  useEffect(() => {
-    const newToasts: { id: string; message: string }[] = [];
-    for (const gen of generations) {
-      if (seenGenErrorIds.current.has(gen.id)) continue;
-      seenGenErrorIds.current.add(gen.id);
+  const layout = useMemo(() => computeTreeLayout(project), [project]);
+  const shown = useMemo(() => visibleNodes(project), [project]);
+  const provenance = useMemo(() => treeEdges(project), [project]);
+  const links = useMemo(() => visibleLinks(project), [project]);
+  const collections = useMemo(() => Object.values(project.collections), [project]);
+  const hasGenerated = shown.some((n) => n.origin.kind === "generated");
 
-      if (gen.error) {
-        newToasts.push({ id: `${gen.id}-gen`, message: gen.error });
-      }
-
-      const failedCards = gen.cards.filter(
-        (c) => c.type === "visual" && (c as VisualCard).error
-      );
-      if (failedCards.length > 0) {
-        const label = failedCards.length === 1
-          ? `1 visual dimension failed: ${(failedCards[0] as VisualCard).error}`
-          : `${failedCards.length} visual dimensions failed`;
-        newToasts.push({ id: `${gen.id}-cards`, message: label });
-      }
-    }
-    if (newToasts.length === 0) return;
-    setToasts((prev) => [...prev, ...newToasts]);
-    const ids = newToasts.map((t) => t.id);
-    const timer = setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => !ids.includes(t.id)));
-    }, 6000);
-    return () => clearTimeout(timer);
-  }, [generations]);
-
-  const dismissToast = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  }, []);
-
-  useEffect(() => {
-    if (multiSelectedIds.size > 0) {
-      onSelectionChange?.([...multiSelectedIds]);
-    } else {
-      onSelectionChange?.(selectedId ? [selectedId] : []);
-    }
-  }, [multiSelectedIds, selectedId, onSelectionChange]);
-
-  const cardIds = useMemo(() => new Set(nodes.map((n) => n.card.id)), [nodes]);
-
-  const cardCollectionsMap = useMemo(() => {
-    const map = new Map<string, string[]>(); // cardId → [colors]
-    for (const col of collections) {
-      for (const cid of col.cardIds) {
-        const prev = map.get(cid) ?? [];
-        map.set(cid, [...prev, col.color]);
-      }
-    }
+  const singleSelected = selection.length === 1 ? selection[0] : null;
+  const selectedSet = useMemo(() => new Set(selection), [selection]);
+  const hoveredAncestors = useMemo(() => (hoveredId ? ancestors(project, hoveredId) : new Set<NodeId>()), [project, hoveredId]);
+  const selectedAncestors = useMemo(
+    () => (singleSelected && project.nodes[singleSelected] ? ancestors(project, singleSelected) : new Set<NodeId>()),
+    [project, singleSelected],
+  );
+  const collectionColors = useMemo(() => {
+    const map = new Map<NodeId, string[]>();
+    for (const c of collections) for (const id of c.nodeIds) map.set(id, [...(map.get(id) ?? []), c.color]);
     return map;
   }, [collections]);
 
-  const selectedNode = nodes.find((n) => n.card.id === selectedId) ?? null;
-  const effectiveSelectedIds: Set<string> = multiSelectedIds.size > 0
-    ? multiSelectedIds
-    : (selectedId ? new Set([selectedId]) : new Set<string>());
-  const siblings = selectedNode
-    ? nodes.filter((n) => n.genId === selectedNode.genId && n.card.id !== selectedNode.card.id)
-    : [];
+  // When a run finishes (or "Show" is pressed), bring its outputs and what
+  // they came from into view, and make them glow for a moment.
+  const focus = useProjectStore((s) => s.focus);
+  const [newIds, setNewIds] = useState<Set<NodeId>>(new Set());
+  useEffect(() => {
+    if (!focus?.nodeIds.length) return;
+    const ids = new Set(focus.nodeIds);
+    setNewIds(ids);
+    // Wait a frame so React Flow has measured the new nodes.
+    const fit = setTimeout(() => {
+      const withParents = new Set(ids);
+      for (const id of ids) for (const a of ancestors(projectStore.getState().project!, id)) withParents.add(a);
+      const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      rfRef.current?.fitView({ nodes: [...withParents].map((id) => ({ id })), padding: 0.2, maxZoom: 1, duration: still ? 0 : 400 });
+    }, 80);
+    const fade = setTimeout(() => setNewIds(new Set()), 2600);
+    return () => { clearTimeout(fit); clearTimeout(fade); };
+  }, [focus]);
 
-  const selectedInputIsBrief = selectedInputId === "__brief__";
-  const selectedInputAsset = selectedInputId?.startsWith("__asset_")
-    ? assets.find((a) => a.id === selectedInputId.replace("__asset_", "")) ?? null
-    : null;
+  const handleUpload = useCallback(async (files: File[]) => {
+    for (const f of files) await addImageNode(await fileToImage(f), { role: "visual", title: f.name.replace(/\.[^.]+$/, "") });
+  }, [addImageNode]);
 
-  const hoveredAncestorIds = useMemo(() => {
-    if (!hoveredId) return new Set<string>();
-    return getAllAncestorIds(hoveredId, nodes, cardIds);
-  }, [hoveredId, nodes, cardIds]);
+  // ── React Flow nodes and edges ────────────────────────────────────────────
 
-  const selectedAncestorIds = useMemo(() => {
-    if (!selectedId) return new Set<string>();
-    return getAllAncestorIds(selectedId, nodes, cardIds);
-  }, [selectedId, nodes, cardIds]);
-
-  const rfInstanceRef = useRef<ReactFlowInstance | null>(null);
-  const canvasRef = useRef<HTMLDivElement | null>(null); // kept for future use
-  const [isExporting, setIsExporting] = useState(false);
-  const [exportWithColors, setExportWithColors] = useState(false);
-  const [exportColorsActive, setExportColorsActive] = useState(false);
-  const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
-
-  const exportPng = useCallback(async () => {
-    if (!rfInstanceRef.current) return;
-    setIsExporting(true);
-
-    const needColorFlash = exportWithColors && !showCollectionColors;
-    if (needColorFlash) {
-      setExportColorsActive(true);
-      // Two frames: one to flush React state, one for the browser to paint
-      await new Promise<void>((res) => requestAnimationFrame(() => requestAnimationFrame(() => res())));
-    }
-
-    try {
-      const rfNodes = rfInstanceRef.current.getNodes();
-      if (!rfNodes.length) return;
-
-      const bounds = getNodesBounds(rfNodes);
-      const IMG_W = 3200;
-      const IMG_H = Math.round(IMG_W * (bounds.height / bounds.width)) || 2000;
-      const { x, y, zoom } = getViewportForBounds(bounds, IMG_W, IMG_H, 0.05, 4, 0.08);
-
-      const viewport = document.querySelector(".react-flow__viewport") as HTMLElement | null;
-      if (!viewport) return;
-
-      const dataUrl = await toPng(viewport, {
-        backgroundColor: "#f7f6f3",
-        width: IMG_W,
-        height: IMG_H,
-        style: {
-          width: `${IMG_W}px`,
-          height: `${IMG_H}px`,
-          transform: `translate(${x}px, ${y}px) scale(${zoom})`,
-        },
-      });
-
-      const a = document.createElement("a");
-      a.href = dataUrl;
-      a.download = `revision-canvas-${Date.now()}.png`;
-      a.click();
-    } finally {
-      if (needColorFlash) setExportColorsActive(false);
-      setIsExporting(false);
-    }
-  }, [exportWithColors, showCollectionColors]);
-
-  const [panelWidth, setPanelWidth] = useState(272);
-  const handlePanelResizeStart = useCallback((e: React.PointerEvent) => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startWidth = panelWidth;
-    const onMove = (ev: PointerEvent) => {
-      const delta = startX - ev.clientX;
-      setPanelWidth(Math.max(200, Math.min(560, startWidth + delta)));
-    };
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-  }, [panelWidth]);
-
-  const handleRemove = useCallback((genId: string, cardId: string) => {
-    onDismissCard(genId, cardId);
-    setSelectedId(null);
-  }, [onDismissCard]);
-
-  const handleQuickBranch = useCallback((card: ResultCard, action: ActionType) => {
-    if (card.type === "visual" && (card as VisualCard).imageDataUrl) {
-      onAddAsReference(
-        (card as VisualCard).imageDataUrl!,
-        (card as VisualCard).dimensionLabel || card.title,
-      );
-    }
-    onBranchFrom(card, action);
-  }, [onAddAsReference, onBranchFrom]);
-
-  const handleNodeDragStop = useCallback((_evt: MouseEvent | TouchEvent, node: Node, draggedNodes: Node[]) => {
-    // Save positions for ALL nodes moved together (multi-drag)
-    setPositionOverrides((prev) => {
-      const next = { ...prev };
-      for (const n of draggedNodes) next[n.id] = n.position;
-      return next;
-    });
-  }, []);
-
-  // When lasso selects nodes, sync ReactFlow's selection → multiSelectedIds
-  const handleSelectionChange = useCallback(({ nodes: rfSelected }: { nodes: Node[] }) => {
-    const incoming = rfSelected.map((n) => n.id).filter((id) => !id.startsWith("__"));
-    if (incoming.length >= 2) {
-      setMultiSelectedIds((prev) => {
-        if (prev.size === incoming.length && incoming.every((id) => prev.has(id))) return prev;
-        return new Set(incoming);
-      });
-      setSelectedId(null);
-    }
-  }, []);
-
-  const handleMultiAction = useCallback((action: ActionType) => {
-    const targetIds = multiSelectedIds.size > 0 ? multiSelectedIds : (selectedId ? new Set([selectedId]) : new Set<string>());
-    const cards = nodes
-      .filter((n) => targetIds.has(n.card.id))
-      .map((n) => n.card);
-    onMultiBranchFrom(cards, action);
-    setMultiSelectedIds(new Set());
-    setSelectedId(null);
-    setSelectedInputId(null);
-  }, [nodes, multiSelectedIds, selectedId, onMultiBranchFrom]);
-
-  // ── File upload handlers ───────────────────────────────────────────────────
-  const handleDraftFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []);
-    files.forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        onAddAsset({ id: crypto.randomUUID(), type: "draft", fileName: file.name, dataUrl: reader.result as string, note: "" });
-      };
-      reader.readAsDataURL(file);
-    });
-    e.target.value = "";
-  }, [onAddAsset]);
-
-  const handleRefFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []);
-    files.forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        onAddAsset({ id: crypto.randomUUID(), type: "reference", fileName: file.name, dataUrl: reader.result as string, note: "" });
-      };
-      reader.readAsDataURL(file);
-    });
-    e.target.value = "";
-  }, [onAddAsset]);
-
-  // ── Input nodes (brief + assets) ──────────────────────────────────────────
-  const inputRfNodes = useMemo((): Node[] => {
-    const result: Node[] = [];
-    let y = PAD;
-
-    result.push({
-      id: "__brief__",
-      type: "briefNode",
-      position: positionOverrides["__brief__"] ?? { x: PAD, y },
-      data: {
-        title, brief, onTitleChange, onBriefChange,
-        onAddDraftFile: handleDraftFileChange,
-        onAddReferenceFile: handleRefFileChange,
-        connectMode,
-        isSelected: selectedInputId === "__brief__",
-      } satisfies BriefNodeData,
-      width: INPUT_NODE_W,
-      height: BRIEF_NODE_H,
-    });
-    y += BRIEF_NODE_H + ROW_GAP;
-
-    for (const asset of assets) {
-      const assetH = asset.type === "draft" ? VISUAL_NODE_H : ASSET_NODE_H;
-      result.push({
-        id: `__asset_${asset.id}`,
-        type: "assetNode",
-        position: positionOverrides[`__asset_${asset.id}`] ?? { x: PAD, y },
-        data: { asset, onRemove: onRemoveAsset, connectMode, isSelected: selectedInputId === `__asset_${asset.id}` } satisfies AssetNodeData,
-        width: INPUT_NODE_W,
-        height: assetH,
-      });
-      y += assetH + ROW_GAP;
-    }
-
-    return result;
-  }, [title, brief, assets, positionOverrides, connectMode, selectedInputId, onTitleChange, onBriefChange, onRemoveAsset, handleDraftFileChange, handleRefFileChange]);
-
-  // ── Generation nodes (shifted right by INPUT_X_OFFSET) ───────────────────
-  const rfNodes = useMemo((): Node[] =>
-    nodes.map((node): Node => {
-      const hasImage = node.card.type === "visual" && !!(node.card as VisualCard).imageDataUrl;
-      const { w, h } = nodeDims(node.card);
-      return {
-        id: node.card.id,
-        type: hasImage ? "visualCard" : "textCard",
-        position: positionOverrides[node.card.id] ?? { x: node.x + INPUT_X_OFFSET, y: node.y },
+  const flowNodes = useMemo((): FlowNode[] => {
+    const showColors = showCollectionColors || exportColorsActive;
+    const nodes: FlowNode[] = [{
+      id: BRIEF_ID, type: "brief", position: layout.positions[BRIEF_ID],
+      data: { title: project.title, brief: project.brief, isSelected: briefOpen, onUpload: handleUpload } satisfies BriefNodeData,
+      width: BRIEF_W, height: BRIEF_H, deletable: false, selected: false,
+      ariaLabel: "Project brief. Press Enter to edit",
+    }];
+    for (const n of shown) {
+      nodes.push({
+        id: n.id, type: "idea", position: layout.positions[n.id],
         data: {
-          card: node.card,
-          genId: node.genId,
-          actionType: node.actionType,
-          parentCardIds: node.parentCardIds,
-          includedDraftIds: node.includedDraftIds,
-          includedReferenceIds: node.includedReferenceIds,
-          cardIds,
-          isSelected: node.card.id === selectedId,
-          isHovered: node.card.id === hoveredId,
-          isAncestor: hoveredAncestorIds.has(node.card.id)
-            || node.parentCardIds.some((pid) => hoveredSourceIds.has(pid)),
-          isSourceOfSelected: selectedAncestorIds.has(node.card.id),
-          isSaved: false,
-          isMultiSelected: multiSelectedIds.has(node.card.id),
-          collectionColors: (showCollectionColors || exportColorsActive) ? cardCollectionsMap.get(node.card.id) : undefined,
-          connectMode,
-          onRemove: handleRemove,
-          onQuickBranch: (action) => handleQuickBranch(node.card, action),
-        } satisfies CardNodeData,
-        width: w,
-        height: h,
-      };
-    }),
-    [nodes, cardIds, positionOverrides, selectedId, multiSelectedIds, hoveredId, hoveredAncestorIds, selectedAncestorIds, hoveredSourceIds, handleRemove, handleQuickBranch, showCollectionColors, exportColorsActive, cardCollectionsMap, connectMode]
-  );
-
-  // ── Generation edges ──────────────────────────────────────────────────────
-  const SOURCE_EDGE_COLOR = "#2d4f8a";
-
-  const rfEdges = useMemo((): RFEdge[] =>
-    edges.map((edge): RFEdge => {
-      const s = TYPE_STYLE[edge.toType] ?? TYPE_STYLE.concept;
-      const isSourceEdge = !!selectedId && (
-        edge.toId === selectedId ||
-        (selectedAncestorIds.has(edge.toId) && selectedAncestorIds.has(edge.fromId))
-      );
-      const isActive = hoveredId === edge.toId || hoveredId === edge.fromId
-        || hoveredSourceIds.has(edge.fromId);
-      const color = isSourceEdge ? SOURCE_EDGE_COLOR
-        : isActive ? "rgba(0,0,0,0.7)"
-        : s.line;
-      return {
-        id: `${edge.fromId}-${edge.toId}`,
-        source: edge.fromId,
-        target: edge.toId,
-        type: "provenanceEdge",
-        selectable: true,
-        data: {
-          color,
-          isSourceEdge,
-          onDelete: () => onRemoveProvenanceEdge(edge.fromId, edge.toId),
-        },
-        markerEnd: {
-          type: MarkerType.Arrow,
-          color,
-          width: isSourceEdge ? 14 : 12,
-          height: isSourceEdge ? 14 : 12,
-          strokeWidth: 0,
-        },
-      };
-    }),
-    [edges, selectedId, hoveredId, hoveredSourceIds, onRemoveProvenanceEdge]
-  );
-
-  // ── Input → generation edges ──────────────────────────────────────────────
-  const inputRfEdges = useMemo((): RFEdge[] => {
-    const result: RFEdge[] = [];
-
-    // Brief → unpack_brief nodes
-    for (const node of nodes.filter((n) => n.actionType === "unpack_brief")) {
-      result.push({
-        id: `__brief__-${node.card.id}`,
-        source: "__brief__",
-        target: node.card.id,
-        type: "default",
-        style: { stroke: "rgba(0,0,0,0.3)", strokeWidth: 1.5, strokeOpacity: 0.6, strokeDasharray: "5 4" },
-        markerEnd: { type: MarkerType.Arrow, color: "rgba(0,0,0,0.3)", width: 10, height: 10, strokeWidth: 0 },
+          node: n,
+          isSelected: selectedSet.has(n.id),
+          isHovered: hoveredId === n.id,
+          isAncestor: hoveredAncestors.has(n.id),
+          isSourceOfSelected: selectedAncestors.has(n.id),
+          isNew: newIds.has(n.id),
+          collectionColors: showColors ? collectionColors.get(n.id) : undefined,
+          linking,
+          onRemove: hideNode,
+        } satisfies IdeaNodeData,
+        width: layout.sizes[n.id].w, height: layout.sizes[n.id].h,
+        selected: selectedSet.has(n.id),
+        // A group (the default role), since it holds its own Remove button; the
+        // selected state is in the name. Enter selects it (see onKeyDown).
+        ariaLabel: `${ROLE_LABEL[n.role]}: ${n.title}${selectedSet.has(n.id) ? ", selected" : ""}`,
       });
     }
+    return nodes;
+  }, [project.title, project.brief, layout, shown, briefOpen, linking, handleUpload, selectedSet, hoveredId, hoveredAncestors,
+    selectedAncestors, newIds, showCollectionColors, exportColorsActive, collectionColors, hideNode]);
 
-    // Each asset → generations that explicitly included it
-    for (const asset of assets) {
-      for (const node of nodes) {
-        const included = asset.type === "draft"
-          ? node.includedDraftIds.includes(asset.id)
-          : node.includedReferenceIds.includes(asset.id);
-        if (included) {
-          const color = asset.type === "draft" ? "#888" : "#6666cc";
-          const fromId = `__asset_${asset.id}`;
-          result.push({
-            id: `${fromId}-${node.card.id}`,
-            source: fromId,
-            target: node.card.id,
-            type: "provenanceEdge",
-            selectable: true,
-            data: {
-              color,
-              dashed: true,
-              onDelete: () => onRemoveProvenanceEdge(fromId, node.card.id),
-            },
-            markerEnd: { type: MarkerType.Arrow, color, width: 10, height: 10, strokeWidth: 0 },
-          });
-        }
-      }
+  const flowEdges = useMemo((): FlowEdge[] => {
+    const edges: FlowEdge[] = [];
+    for (const id of layout.briefTargets) {
+      edges.push({
+        id: `${BRIEF_ID}->${id}`, source: BRIEF_ID, target: id, type: "default", selectable: false, deletable: false, focusable: false,
+        style: { stroke: "var(--color-line-strong)", strokeWidth: 1.5, strokeDasharray: "5 4" },
+        markerEnd: { type: MarkerType.Arrow, color: "#c7cad1", width: 10, height: 10, strokeWidth: 0 },
+      });
     }
+    for (const e of provenance) {
+      const emphasis = (!!singleSelected && (e.to === singleSelected || (selectedAncestors.has(e.to) && selectedAncestors.has(e.from))))
+        || hoveredId === e.to || hoveredId === e.from;
+      const color = emphasis ? "#43464d" : ROLE_STYLE[project.nodes[e.to].role].border;
+      // A bridged edge spans removed nodes, so there's no single stored edge to delete.
+      const direct = e.bridged ? [] : Object.values(project.edges).filter(
+        (x) => x.kind === "derived_from" && !x.hidden && x.from === e.from && x.to === e.to);
+      edges.push({
+        id: `prov:${e.from}->${e.to}`, source: e.from, target: e.to, type: "provenance",
+        selectable: direct.length > 0, deletable: direct.length > 0, focusable: false,
+        data: { color, emphasis, dashed: e.bridged, onDelete: direct.length > 0 ? () => direct.forEach((x) => hideEdge(x.id)) : undefined },
+        markerEnd: { type: MarkerType.Arrow, color, width: 12, height: 12, strokeWidth: 0 },
+      });
+    }
+    for (const e of links) {
+      edges.push({
+        id: e.id, source: e.from, target: e.to, type: "link", selected: selectedSet.has(e.id),
+        data: { label: e.label },
+        ariaLabel: `Link between ${project.nodes[e.from]?.title} and ${project.nodes[e.to]?.title}${e.label ? `: ${e.label}` : ""}`,
+        ariaRole: "button",
+        domAttributes: { "aria-pressed": selectedSet.has(e.id) },
+        markerEnd: { type: MarkerType.ArrowClosed, color: "#43464d", width: 12, height: 12, strokeWidth: 0 },
+      });
+    }
+    return edges;
+  }, [layout.briefTargets, provenance, links, project.nodes, project.edges, singleSelected, selectedAncestors, hoveredId, selectedSet, hideEdge]);
 
-    return result;
-  }, [nodes, assets, onRemoveProvenanceEdge]);
-
-  const allRfNodes = useMemo(() => [...inputRfNodes, ...rfNodes], [inputRfNodes, rfNodes]);
-
-  const manualRfEdges = useMemo((): RFEdge[] =>
-    manualEdges
-      .filter((e) => {
-        const valid = (id: string) => cardIds.has(id) || id === "__brief__" || id.startsWith("__asset_");
-        return valid(e.fromCardId) && valid(e.toCardId);
-      })
-      .map((e): RFEdge => ({
-        id: `manual_${e.id}`,
-        source: e.fromCardId,
-        target: e.toCardId,
-        type: "manualEdge",
-        data: { onDelete: () => onRemoveManualEdge(e.id) },
-        markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b", width: 12, height: 12, strokeWidth: 0 },
-        selectable: true,
-        focusable: true,
-        deletable: true,
-      })),
-    [manualEdges, cardIds, onRemoveManualEdge]
-  );
-
-  const allRfEdges = useMemo(() => [...inputRfEdges, ...rfEdges, ...manualRfEdges], [inputRfEdges, rfEdges, manualRfEdges]);
-
-  // ── Controlled ReactFlow state (required for drag + edge interaction) ──────
-  // We manage displayNodes/displayEdges ourselves so ReactFlow can track
-  // in-flight drag positions via applyNodeChanges. The sync effect must
-  // PRESERVE current node positions: hoveredId changes cause allRfNodes to
-  // recompute mid-drag, and a naive setDisplayNodes(allRfNodes) would reset
-  // the dragged position, triggering ReactFlow error #015.
-  const [displayNodes, setDisplayNodes] = useState<Node[]>(allRfNodes);
-  const [displayEdges, setDisplayEdges] = useState<RFEdge[]>(allRfEdges);
-  // Ref kept in sync with displayEdges so onEdgesChange can read edge data
-  // without adding displayEdges to its dependency array (which would cause
-  // unnecessary re-registrations with ReactFlow on every edge change).
-  const displayEdgesRef = useRef<RFEdge[]>(allRfEdges);
-
+  // React Flow needs to own node state while dragging. Keep our computed
+  // nodes in sync without resetting a node mid-drag.
+  const [displayNodes, setDisplayNodes] = useState<FlowNode[]>(flowNodes);
   useEffect(() => {
     setDisplayNodes((current) => {
-      const nodeMap = new Map(current.map((n) => [n.id, n]));
-      return allRfNodes.map((n) => {
-        const existing = nodeMap.get(n.id);
-        if (!existing) return n; // new node — use layout position directly
-        // Use existing as base so ReactFlow's internal state (measured dimensions,
-        // internals map, etc.) survives the re-render. Override only data fields
-        // that change (isHovered, connectMode, etc.). Preserve position while the
-        // node is actively being dragged; otherwise use the layout/override pos.
-        return {
-          ...existing,
-          data: n.data,
-          position: existing.dragging ? existing.position : n.position,
-        };
+      const byId = new Map(current.map((n) => [n.id, n]));
+      return flowNodes.map((n) => {
+        const existing = byId.get(n.id);
+        if (!existing) return n;
+        return { ...existing, data: n.data, width: n.width, height: n.height, selected: n.selected,
+          ariaLabel: n.ariaLabel,
+          position: existing.dragging ? existing.position : n.position };
       });
     });
-  }, [allRfNodes]);
+  }, [flowNodes]);
 
-  useEffect(() => {
-    setDisplayEdges(allRfEdges);
-    displayEdgesRef.current = allRfEdges;
-  }, [allRfEdges]);
-
-  const onNodesChange = useCallback((changes: NodeChange<Node>[]) => {
-    setDisplayNodes((nds) => applyNodeChanges(changes, nds));
+  const onNodesChange = useCallback((changes: NodeChange<FlowNode>[]) => {
+    // Selection is owned by the store; ignore React Flow's own select changes.
+    setDisplayNodes((nds) => applyNodeChanges(changes.filter((c) => c.type !== "select"), nds));
   }, []);
 
-  const onEdgesChange = useCallback((changes: EdgeChange<RFEdge>[]) => {
-    for (const change of changes) {
-      if (change.type === "remove") {
-        if (change.id.startsWith("manual_")) {
-          onRemoveManualEdge(change.id.slice("manual_".length));
-        } else {
-          // Provenance edge deleted via Delete/Backspace key — call its onDelete
-          // handler so the state update persists (otherwise the edge reappears).
-          const edge = displayEdgesRef.current.find((e) => e.id === change.id);
-          const edgeData = edge?.data as { onDelete?: () => void } | undefined;
-          edgeData?.onDelete?.();
-        }
-      }
+  const onEdgesChange = useCallback((changes: EdgeChange<FlowEdge>[]) => {
+    for (const c of changes) {
+      if (c.type !== "remove") continue;
+      if (project.edges[c.id]) hideEdge(c.id);
+      else (flowEdges.find((e) => e.id === c.id)?.data as { onDelete?: () => void } | undefined)?.onDelete?.();
     }
-    setDisplayEdges((eds) => {
-      const next = applyEdgeChanges(changes, eds);
-      displayEdgesRef.current = next;
-      return next;
-    });
-  }, [onRemoveManualEdge]);
+  }, [project.edges, flowEdges, hideEdge]);
 
-  // ── Event handlers ────────────────────────────────────────────────────────
-  const handleNodeClick = useCallback((event: React.MouseEvent, rfNode: Node) => {
-    if (rfNode.id === "__brief__" || rfNode.id.startsWith("__asset_")) {
-      if (!event.shiftKey) {
-        setSelectedInputId((prev) => (prev === rfNode.id ? null : rfNode.id));
-        setSelectedId(null);
-        setMultiSelectedIds(new Set());
-      }
-      return;
+  // ── Interaction ───────────────────────────────────────────────────────────
+
+  const selectNode = useCallback((id: string, additive: boolean) => {
+    if (id === BRIEF_ID) { clearSelection(); onOpenBrief(); return; }
+    if (additive) toggleSelected(id);
+    else setSelection(singleSelected === id ? [] : [id]);
+  }, [clearSelection, onOpenBrief, toggleSelected, setSelection, singleSelected]);
+
+  const onNodeClick = useCallback((event: React.MouseEvent, n: FlowNode) => selectNode(n.id, event.shiftKey), [selectNode]);
+
+  // Keyboard: Enter or Space selects the focused node (shift adds), Escape clears.
+  const onKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.closest("button, input, textarea")) return;
+    const nodeEl = target.closest?.(".react-flow__node");
+    const edgeId = target.closest?.(".react-flow__edge")?.getAttribute("data-id");
+    if ((e.key === "Enter" || e.key === " ") && nodeEl) {
+      e.preventDefault();
+      selectNode(nodeEl.getAttribute("data-id")!, e.shiftKey);
+    } else if ((e.key === "Enter" || e.key === " ") && edgeId && project.edges[edgeId]) {
+      e.preventDefault();
+      if (e.shiftKey) toggleSelected(edgeId); else setSelection([edgeId]);
+    } else if (e.key === "Escape") {
+      clearSelection();
     }
-    setSelectedInputId(null);
-    if (event.shiftKey) {
-      setMultiSelectedIds((prev) => {
-        const next = new Set(prev);
-        if (next.has(rfNode.id)) next.delete(rfNode.id);
-        else next.add(rfNode.id);
-        return next;
+  }, [selectNode, clearSelection, project.edges, toggleSelected, setSelection]);
+
+  const onEdgeClick = useCallback((event: React.MouseEvent, e: FlowEdge) => {
+    if (!project.edges[e.id]) return;  // only user links are selectable as inputs
+    if (event.shiftKey) toggleSelected(e.id);
+    else setSelection([e.id]);
+  }, [project.edges, toggleSelected, setSelection]);
+
+  const onSelectionChange = useCallback(({ nodes }: { nodes: FlowNode[] }) => {
+    if (tool !== "lasso") return;
+    const ids = nodes.map((n) => n.id).filter((id) => id !== BRIEF_ID);
+    if (ids.length >= 2) setSelection(ids);
+  }, [tool, setSelection]);
+
+  const onNodeDragStop = useCallback((_e: unknown, _n: FlowNode, dragged: FlowNode[]) => {
+    for (const n of dragged) moveNode("tree", n.id, n.position);
+  }, [moveNode]);
+
+  const onNodesDelete = useCallback((deleted: FlowNode[]) => {
+    for (const n of deleted) if (n.id !== BRIEF_ID) hideNode(n.id);
+  }, [hideNode]);
+
+  const onConnect = useCallback((c: Connection) => {
+    if (!c.source || !c.target || c.source === BRIEF_ID || c.target === BRIEF_ID) return;
+    addLink(c.source, c.target);
+  }, [addLink]);
+
+  // React Flow only connects when the drag ends on the target's small handle.
+  // Dropping anywhere on a node is what people expect, so handle that too.
+  const onConnectEnd = useCallback((event: MouseEvent | TouchEvent, state: FinalConnectionState) => {
+    if (state.isValid || !state.fromNode) return;
+    const point = "changedTouches" in event ? event.changedTouches[0] : event;
+    const target = document.elementFromPoint(point.clientX, point.clientY)?.closest(".react-flow__node")?.getAttribute("data-id");
+    if (!target || target === BRIEF_ID || state.fromNode.id === BRIEF_ID || target === state.fromNode.id) return;
+    addLink(state.fromNode.id, target);
+  }, [addLink]);
+
+  const exportPng = useCallback(async (withColors: boolean) => {
+    const rf = rfRef.current;
+    if (!rf) return;
+    const flash = withColors && !showCollectionColors;
+    if (flash) {
+      setExportColorsActive(true);
+      await new Promise<void>((res) => requestAnimationFrame(() => requestAnimationFrame(() => res())));
+    }
+    try {
+      const nodes = rf.getNodes();
+      if (!nodes.length) return;
+      const bounds = getNodesBounds(nodes);
+      const W = 3200;
+      const H = Math.round(W * (bounds.height / bounds.width)) || 2000;
+      const { x, y, zoom } = getViewportForBounds(bounds, W, H, 0.05, 4, 0.08);
+      const viewport = document.querySelector(".react-flow__viewport") as HTMLElement | null;
+      if (!viewport) return;
+      const dataUrl = await toPng(viewport, {
+        backgroundColor: "#f3f4f6", width: W, height: H,
+        style: { width: `${W}px`, height: `${H}px`, transform: `translate(${x}px, ${y}px) scale(${zoom})` },
       });
-      setSelectedId(null);
-    } else {
-      setSelectedId((prev) => (prev === rfNode.id ? null : rfNode.id));
-      setMultiSelectedIds(new Set());
+      const a = document.createElement("a");
+      a.href = dataUrl;
+      a.download = `${project.title || "tree"}-${Date.now()}.png`;
+      a.click();
+    } finally {
+      if (flash) setExportColorsActive(false);
     }
-  }, []);
-
-  const handleNodeMouseEnter = useCallback((_: React.MouseEvent, rfNode: Node) => {
-    if (rfNode.id === "__brief__" || rfNode.id.startsWith("__asset_")) return;
-    const data = rfNode.data as unknown as CardNodeData;
-    setHoveredId(rfNode.id);
-    const offTreeCardIds = data.parentCardIds.filter((pid) => !data.cardIds.has(pid));
-    onHoverSources(
-      new Set(offTreeCardIds),
-      new Set([...data.includedDraftIds, ...data.includedReferenceIds])
-    );
-  }, [onHoverSources]);
-
-  const handleNodeMouseLeave = useCallback(() => {
-    setHoveredId(null);
-    onHoverSources(new Set(), new Set());
-  }, [onHoverSources]);
-
-  const handleConnect = useCallback((connection: Connection) => {
-    const { source, target } = connection;
-    if (!source || !target || source === target) return;
-    onAddManualEdge({ id: crypto.randomUUID(), fromCardId: source, toCardId: target });
-  }, [onAddManualEdge]);
-
-  const handleNodesDelete = useCallback((deletedNodes: Node[]) => {
-    for (const rfNode of deletedNodes) {
-      if (rfNode.id === "__brief__" || rfNode.id.startsWith("__asset_")) continue;
-      const layoutNode = nodes.find((n) => n.card.id === rfNode.id);
-      if (layoutNode) handleRemove(layoutNode.genId, rfNode.id);
-    }
-  }, [nodes, handleRemove]);
+  }, [showCollectionColors, project.title]);
 
   return (
-    <div className="flex h-full w-full overflow-hidden">
-      {/* ── React Flow canvas ────────────────────────────────────────────── */}
-      <div ref={canvasRef} className={`flex-1 h-full ${styles.canvas}`}>
-        <ReactFlow
-          nodes={displayNodes}
-          edges={displayEdges}
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onNodeClick={handleNodeClick}
-          onNodeMouseEnter={handleNodeMouseEnter}
-          onNodeMouseLeave={handleNodeMouseLeave}
-          onPaneClick={() => { setSelectedId(null); setSelectedInputId(null); setMultiSelectedIds(new Set()); setCollectionPickerOpen(false); setDisplayNodes((p) => p.map((n) => ({ ...n, selected: false }))); }}
-          onInit={(instance) => {
-            rfInstanceRef.current = instance;
-            instance.fitView({ padding: 0.15 });
-          }}
-          fitView
-          fitViewOptions={{ padding: 0.15 }}
-          minZoom={0.2}
-          maxZoom={2.0}
-          nodesDraggable={true}
-          onNodeDragStop={handleNodeDragStop}
-          onNodesDelete={handleNodesDelete}
-          connectOnClick={false}
-          nodesConnectable={connectMode}
-          onConnect={handleConnect}
-          deleteKeyCode={["Delete", "Backspace"]}
-          selectionOnDrag={lassoMode}
-          panOnDrag={lassoMode ? [1, 2] : true}
-          selectionMode={SelectionMode.Partial}
-          onSelectionChange={handleSelectionChange}
-        >
-          {showCollectionColors && <CollectionHalos collections={collections} />}
-
-          <Background
-            variant={BackgroundVariant.Dots}
-            gap={24}
-            size={1}
-            color="rgba(0,0,0,0.15)"
-          />
-          <Controls showInteractive={false} />
-
-          {/* Empty state hint */}
-          {nodes.length === 0 && !isGenerating && (
-            <Panel position="top-center">
-              <div className={`mt-8 text-[12px] italic text-[rgba(0,0,0,0.35)] bg-white/80 border border-[rgba(0,0,0,0.1)] px-4 py-2.5 ${styles.sq}`}>
-                Fill in your brief and run an action to build the concept tree
-              </div>
-            </Panel>
-          )}
-
-          {/* Top-right: Color toggle + Connect mode + Add node + Clear all */}
-          <Panel position="top-right">
-            <div className="flex items-center gap-1.5 mr-2 mt-2">
-              <div
-                className="relative"
-                onMouseEnter={() => setExportDropdownOpen(true)}
-                onMouseLeave={() => setExportDropdownOpen(false)}
-              >
-                <button
-                  onClick={exportPng}
-                  disabled={isExporting}
-                  title="Export canvas as PNG"
-                  className={`bg-white border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 text-[11px] flex items-center gap-1 transition-colors ${styles.sq} ${
-                    isExporting
-                      ? "text-[rgba(0,0,0,0.3)] cursor-wait"
-                      : "text-[rgba(0,0,0,0.45)] hover:text-black hover:border-black"
-                  }`}
-                >
-                  <span className="text-[12px] leading-none">↓</span>
-                  {isExporting ? "Exporting…" : "Export PNG"}
-                </button>
-                {exportDropdownOpen && (
-                  <div className={`absolute top-full left-0 bg-white border border-[rgba(0,0,0,0.18)] px-2.5 py-1.5 z-50 ${styles.sq}`}>
-                    <label className="flex items-center gap-1.5 cursor-pointer whitespace-nowrap text-[10px] text-[rgba(0,0,0,0.55)] hover:text-black select-none">
-                      <input
-                        type="checkbox"
-                        checked={exportWithColors}
-                        onChange={(e) => setExportWithColors(e.target.checked)}
-                        className="w-2.5 h-2.5 accent-black"
-                      />
-                      Include collection colors
-                    </label>
-                  </div>
-                )}
-              </div>
-              <button
-                onClick={() => { setLassoMode((p) => !p); setConnectMode(false); }}
-                title={lassoMode ? "Exit lasso mode (drag pans again)" : "Lasso mode: drag to select multiple nodes"}
-                className={`border px-2.5 py-1.5 text-[11px] transition-colors flex items-center gap-1 ${styles.sq} ${
-                  lassoMode
-                    ? "bg-black border-black text-white"
-                    : "bg-white border-[rgba(0,0,0,0.2)] text-[rgba(0,0,0,0.45)] hover:text-black hover:border-black"
-                }`}
-              >
-                <span className="text-[11px] leading-none">⬚</span>
-                {lassoMode ? "Lasso on" : "Lasso"}
-              </button>
-              <button
-                onClick={() => { setConnectMode((p) => !p); setLassoMode(false); }}
-                title={connectMode ? "Exit connect mode (Drag handles to connect nodes)" : "Enter connect mode to draw connections between nodes"}
-                className={`border px-2.5 py-1.5 text-[11px] transition-colors flex items-center gap-1 ${styles.sq} ${
-                  connectMode
-                    ? "bg-black border-black text-white"
-                    : "bg-white border-[rgba(0,0,0,0.2)] text-[rgba(0,0,0,0.45)] hover:text-black hover:border-black"
-                }`}
-              >
-                <span className="text-[12px] leading-none">⌥</span>
-                {connectMode ? "Connecting…" : "Connect"}
-              </button>
-              {lassoMode && (
-                <span className={`text-[10px] italic text-[rgba(0,0,0,0.4)] bg-white border border-[rgba(0,0,0,0.15)] px-2 py-1 ${styles.sq}`}>
-                  Drag to select · Shift+click to add · Middle-click to pan
-                </span>
-              )}
-              {connectMode && (
-                <span className={`text-[10px] italic text-[rgba(0,0,0,0.4)] bg-white border border-[rgba(0,0,0,0.15)] px-2 py-1 ${styles.sq}`}>
-                  Drag handle → node · Delete to remove
-                </span>
-              )}
-              {collections.length > 0 && (
-                <button
-                  onClick={() => setShowCollectionColors((p) => !p)}
-                  title={showCollectionColors ? "Hide collection colors" : "Show collection colors"}
-                  className={`bg-white border px-2.5 py-1.5 text-[11px] transition-colors flex items-center gap-1 ${styles.sq} ${
-                    showCollectionColors
-                      ? "border-black text-black bg-[#f5f4f0]"
-                      : "border-[rgba(0,0,0,0.2)] text-[rgba(0,0,0,0.45)] hover:text-black hover:border-black"
-                  }`}
-                >
-                  <span className="text-[12px] leading-none">◉</span>
-                  Collections
-                </button>
-              )}
-              <button
-                onClick={() => {
-                  setAddNodeState({ parentIds: multiSelectedIds.size > 0 ? [...multiSelectedIds] : [] });
-                  setSelectedId(null);
-                  setConfirmingClear(false);
-                }}
-                className={`bg-white border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 text-[11px] text-[rgba(0,0,0,0.5)] hover:text-black hover:border-black transition-colors flex items-center gap-1 ${styles.sq}`}
-                title="Add a new node"
-              >
-                <span className="text-[14px] leading-none font-light">+</span>
-                Add node
-              </button>
-
-              {confirmingClear ? (
-                <div className={`bg-white border border-red-200 px-2.5 py-1.5 flex items-center gap-2 ${styles.sq}`}>
-                  <span className="text-[10px] text-red-500">Clear all?</span>
-                  <button
-                    onClick={() => { onClearTree(); setConfirmingClear(false); setSelectedId(null); setMultiSelectedIds(new Set()); setPositionOverrides({}); }}
-                    className="text-[10px] font-semibold text-red-600 hover:text-red-800 transition-colors"
-                  >
-                    Yes
-                  </button>
-                  <button
-                    onClick={() => setConfirmingClear(false)}
-                    className="text-[10px] text-[#aaa] hover:text-[#555] transition-colors"
-                  >
-                    No
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setConfirmingClear(true)}
-                  className={`bg-white border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 text-[11px] text-[rgba(0,0,0,0.35)] hover:text-red-500 hover:border-red-300 transition-colors ${styles.sq}`}
-                  title="Clear all nodes"
-                >
-                  Clear all
-                </button>
-              )}
-            </div>
-          </Panel>
-
-          {/* Generating indicator */}
-          {isGenerating && (
-            <Panel position="top-center">
-              <div className={`flex items-center gap-2 bg-white border border-[#111] px-3 py-2 mt-2 text-[11px] text-[#555] ${styles.sq}`}>
-                <span className="inline-block w-3 h-3 border-2 border-[#555] border-t-transparent rounded-full animate-spin shrink-0" />
-                Running {generatingAction ? (ACTION_LABEL[generatingAction] ?? generatingAction) : "generation"}…
-              </div>
-            </Panel>
-          )}
-
-          {/* Selection action bar (single or multi, including input nodes) */}
-          {(effectiveSelectedIds.size > 0 || !!selectedInputId) && (
-            <Panel position="bottom-center">
-              <div className={`flex items-center gap-2 bg-white border border-[rgba(0,0,0,0.2)] px-3 py-2 mb-2 text-[11px] ${styles.sq}`}>
-                <span className="text-[#555] font-medium pr-1">
-                  {effectiveSelectedIds.size > 0 ? effectiveSelectedIds.size : 1} selected
-                </span>
-                <span className="text-[#ddd]">·</span>
-                {BRANCH_ACTIONS.map((a) => (
-                  <button
-                    key={a.id}
-                    onClick={() => handleMultiAction(a.id)}
-                    title={a.title}
-                    className="px-2.5 py-1 rounded-md bg-[#111] text-white hover:bg-[#333] transition-colors whitespace-nowrap"
-                  >
-                    {a.label} →
-                  </button>
-                ))}
-                <span className="text-[#ddd]">·</span>
-                {/* Collection picker */}
-                <div className="relative">
-                  <button
-                    onClick={() => { setCollectionPickerOpen((p) => !p); setCreatingInPicker(false); }}
-                    className={`px-2.5 py-1 rounded-md border transition-colors whitespace-nowrap ${
-                      collectionPickerOpen
-                        ? "bg-[#f0f0ff] border-[#6666cc] text-[#333]"
-                        : "border-[#e4e3e0] text-[#555] hover:border-[#888] hover:text-[#111]"
-                    }`}
-                  >
-                    Collection →
-                  </button>
-                  {collectionPickerOpen && (
-                    <div className={`absolute bottom-full left-0 mb-1.5 bg-white border border-[rgba(0,0,0,0.15)] shadow-lg p-1.5 min-w-[180px] z-50 ${styles.sq}`}>
-                      {collections.length === 0 && !creatingInPicker && (
-                        <p className="text-[10px] text-[#aaa] px-2 py-1">No collections yet</p>
-                      )}
-                      {collections.map((col) => (
-                        <button
-                          key={col.id}
-                          onClick={() => {
-                            onAddCardsToCollection(col.id, [...effectiveSelectedIds]);
-                            setCollectionPickerOpen(false);
-                            setMultiSelectedIds(new Set());
-                            setSelectedId(null);
-                          }}
-                          className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-[#f5f5f4] text-left"
-                        >
-                          <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: col.color }} />
-                          <span className="text-[11px] text-[#333] truncate">{col.title}</span>
-                        </button>
-                      ))}
-                      {creatingInPicker ? (
-                        <div className="px-2 py-1.5 flex items-center gap-1.5">
-                          <input
-                            autoFocus
-                            placeholder="Collection name…"
-                            value={newCollectionName}
-                            onChange={(e) => setNewCollectionName(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" && newCollectionName.trim()) {
-                                const newCol: Collection = {
-                                  id: crypto.randomUUID(),
-                                  title: newCollectionName.trim(),
-                                  description: "",
-                                  cardIds: [...effectiveSelectedIds],
-                                  color: PICKER_COLORS[collections.length % PICKER_COLORS.length],
-                                  createdAt: new Date().toISOString(),
-                                };
-                                onAddCollection(newCol);
-                                setNewCollectionName("");
-                                setCreatingInPicker(false);
-                                setCollectionPickerOpen(false);
-                                setMultiSelectedIds(new Set());
-                                setSelectedId(null);
-                              }
-                              if (e.key === "Escape") { setCreatingInPicker(false); setNewCollectionName(""); }
-                            }}
-                            className="flex-1 text-[10px] border border-[#e4e3e0] rounded-md px-1.5 py-1 outline-none focus:border-blue-400 min-w-0"
-                          />
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => setCreatingInPicker(true)}
-                          className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-[#f5f5f4] text-left border-t border-[#f0efec] mt-1 pt-2"
-                        >
-                          <span className="text-[11px] text-[#888]">+ New collection</span>
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-                <span className="text-[#ddd]">·</span>
-                <button
-                  onClick={() => { setMultiSelectedIds(new Set()); setSelectedId(null); setSelectedInputId(null); }}
-                  className="text-[#aaa] hover:text-[#555] transition-colors px-1"
-                  title="Clear selection"
-                >
-                  ✕ Clear
-                </button>
-              </div>
-            </Panel>
-          )}
-
-          {/* Error toasts */}
-          {toasts.length > 0 && (
-            <Panel position="bottom-left">
-              <div className="flex flex-col gap-1.5 mb-2 ml-2 max-w-xs">
-                {toasts.map((toast) => (
-                  <div
-                    key={toast.id}
-                    className={`flex items-start gap-2 bg-white border border-red-200 px-3 py-2 text-[11px] ${styles.sq}`}
-                  >
-                    <span className="text-red-500 shrink-0 mt-px">⚠</span>
-                    <span className="text-[#333] flex-1 leading-snug">{toast.message}</span>
-                    <button
-                      onClick={() => dismissToast(toast.id)}
-                      className="text-[#ccc] hover:text-[#555] transition-colors shrink-0 ml-1 leading-none"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </Panel>
-          )}
-
-          {/* ── Node type legend ─────────────────────────────────────────── */}
-          <Panel position="bottom-left">
-            <div className={`mb-2 ml-2 bg-white border border-[rgba(0,0,0,0.12)] px-3 py-2.5 flex flex-col gap-2 ${styles.sq}`}>
-              <p className="text-[8px] uppercase tracking-[0.16em] text-[rgba(0,0,0,0.35)] mb-0.5">Node types</p>
-              {/* Concept — indigo rectangle, uniform border */}
-              <div className="flex items-center gap-2">
-                <div className="w-[18px] h-[14px] shrink-0 bg-[#dde1f2]" style={{ border: "1px solid #8b96c8" }} />
-                <span className="text-[10px] text-[rgba(0,0,0,0.6)]">Concept</span>
-              </div>
-              {/* Motif — amber chamfered octagon */}
-              <div className="flex items-center gap-2">
-                <div className="shrink-0" style={{ background: "#c8a055", padding: 1, clipPath: "polygon(5px 0%, calc(100% - 5px) 0%, 100% 5px, 100% calc(100% - 5px), calc(100% - 5px) 100%, 5px 100%, 0% calc(100% - 5px), 0% 5px)" }}>
-                  <div style={{ width: 18, height: 14, background: "#fdf8ef", clipPath: "polygon(4.5px 0%, calc(100% - 4.5px) 0%, 100% 4.5px, 100% calc(100% - 4.5px), calc(100% - 4.5px) 100%, 4.5px 100%, 0% calc(100% - 4.5px), 0% 4.5px)" }} />
-                </div>
-                <span className="text-[10px] text-[rgba(0,0,0,0.6)]">Motif</span>
-              </div>
-              {/* Note — sage rounded rectangle */}
-              <div className="flex items-center gap-2">
-                <div className="w-[18px] h-[14px] shrink-0 rounded-[4px] bg-[#f3f8f5]" style={{ border: "1px solid #7aab8a" }} />
-                <span className="text-[10px] text-[rgba(0,0,0,0.6)]">Note</span>
-              </div>
-              {/* Visual — terracotta rectangle */}
-              <div className="flex items-center gap-2">
-                <div className="w-[18px] h-[14px] shrink-0 bg-[#fdf4f2]" style={{ border: "1px solid #c89088" }} />
-                <span className="text-[10px] text-[rgba(0,0,0,0.6)]">Visual</span>
-              </div>
-            </div>
-          </Panel>
-        </ReactFlow>
-      </div>
-
-      {/* ── Add-node modal ───────────────────────────────────────────────── */}
-      {addNodeState && (
-        <AddNodeModal
-          nodes={nodes}
-          initialParentIds={addNodeState.parentIds}
-          onAdd={(card: ResultCard, parentIds: string[]) => {
-            onAddUserNode(card, parentIds);
-            setAddNodeState(null);
-          }}
-          onClose={() => setAddNodeState(null)}
-          onAddAsset={(asset) => {
-            onAddAsset(asset);
-            setAddNodeState(null);
-          }}
-        />
-      )}
-
-      {/* ── Detail panel ─────────────────────────────────────────────────── */}
-      {(selectedNode || selectedInputIsBrief || selectedInputAsset) && (
-        <div className="relative flex shrink-0" style={{ width: panelWidth }}>
-          {/* Drag handle */}
-          <div
-            onPointerDown={handlePanelResizeStart}
-            className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize z-10 hover:bg-blue-300/40 transition-colors"
-          />
-          {selectedNode ? (
-            <DetailPanel
-              node={selectedNode}
-              siblings={siblings}
-              assets={assets}
-              onUpdateCard={onUpdateCard}
-              onBranch={(action) => {
-                const card = selectedNode.card;
-                if (card.type === "visual" && (card as VisualCard).imageDataUrl) {
-                  onAddAsReference(
-                    (card as VisualCard).imageDataUrl!,
-                    (card as VisualCard).dimensionLabel || card.title,
-                  );
-                }
-                onBranchFrom(card, action);
-                setSelectedId(null);
-              }}
-              onDuplicate={() => onDuplicateCard(selectedNode.card, selectedNode.parentCardIds)}
-              onRemove={() => handleRemove(selectedNode.genId, selectedNode.card.id)}
-              onSelectSibling={(id) => setSelectedId(id)}
-              onClose={() => setSelectedId(null)}
-              onAddAsReference={onAddAsReference}
-              onAddChild={() => setAddNodeState({ parentIds: [selectedNode.card.id] })}
-              onAddChildNode={(card) => onAddUserNode(card, [selectedNode.card.id])}
-            />
-          ) : selectedInputIsBrief ? (
-            <InputDetailPanel
-              type="brief"
-              title={title}
-              brief={brief}
-              onTitleChange={onTitleChange}
-              onBriefChange={onBriefChange}
-              onClose={() => setSelectedInputId(null)}
-            />
-          ) : selectedInputAsset ? (
-            <InputDetailPanel
-              type="asset"
-              asset={selectedInputAsset}
-              onAddAsReference={onAddAsReference}
-              onRemove={() => { onRemoveAsset(selectedInputAsset.id); setSelectedInputId(null); }}
-              onClose={() => setSelectedInputId(null)}
-            />
-          ) : null}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Add node modal ────────────────────────────────────────────────────────────
-const NODE_TYPE_OPTIONS = ["concept", "motif", "visual", "draft", "reference"] as const;
-type UserNodeType = (typeof NODE_TYPE_OPTIONS)[number];
-
-const ASSET_TYPE_BADGE: Record<string, { bg: string; text: string }> = {
-  draft:     { bg: "#555", text: "#fff" },
-  reference: { bg: "#4444aa", text: "#fff" },
-};
-
-function AddNodeModal({
-  nodes,
-  initialParentIds,
-  onAdd,
-  onClose,
-  onAddAsset,
-}: {
-  nodes: LayoutNode[];
-  initialParentIds: string[];
-  onAdd: (card: ResultCard, parentIds: string[]) => void;
-  onClose: () => void;
-  onAddAsset: (asset: Asset) => void;
-}) {
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
-  const [cardType, setCardType] = useState<UserNodeType | null>(null);
-  const [parentIds, setParentIds] = useState<Set<string>>(new Set(initialParentIds));
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (!imageFile) { setImagePreviewUrl(null); return; }
-    const url = URL.createObjectURL(imageFile);
-    setImagePreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [imageFile]);
-
-  const isAssetType = cardType === "draft" || cardType === "reference";
-  const effectiveType = cardType ?? "note";
-
-  const toggleParent = (id: string) =>
-    setParentIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
-  function buildCard(): ResultCard {
-    const id = crypto.randomUUID();
-    const now = new Date().toISOString();
-    const t = title.trim();
-    const b = body.trim();
-    switch (effectiveType) {
-      case "concept": return { id, type: "concept", title: t, description: b, rationale: "", createdAt: now };
-      case "motif":   return { id, type: "motif",   title: t, visualQuality: b, howItConveysIdea: "", category: "style", createdAt: now };
-      case "visual":  return { id, type: "visual",  title: t, dimensionLabel: t, analysisText: b, createdAt: now };
-      default:        return { id, type: "note", title: t, body: b, createdAt: now };
-    }
-  }
-
-  function handleSubmit() {
-    if (isAssetType) {
-      if (!imageFile) return;
-      const reader = new FileReader();
-      reader.onload = () => {
-        onAddAsset({
-          id: crypto.randomUUID(),
-          type: cardType as "draft" | "reference",
-          fileName: imageFile.name,
-          dataUrl: reader.result as string,
-          note: "",
-        });
-        onClose();
-      };
-      reader.readAsDataURL(imageFile);
-      return;
-    }
-    if (!title.trim()) return;
-    onAdd(buildCard(), [...parentIds]);
-  }
-
-  return (
-    <div
-      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6"
-      onClick={onClose}
-      onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}
-    >
-      <div
-        className={`bg-white shadow-xl w-full max-w-md p-5 ${styles.sq}`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-[13px] font-semibold text-[#111]">Add node</h2>
-          <button onClick={onClose} className="text-[#bbb] hover:text-[#555] text-base leading-none">✕</button>
-        </div>
-
-        {/* Type selector — two rows: card types + asset types */}
-        <div className="flex flex-wrap gap-1.5 mb-4">
-          {NODE_TYPE_OPTIONS.map((t) => {
-            const s = TYPE_STYLE[t];
-            const assetBadge = ASSET_TYPE_BADGE[t];
-            const active = cardType === t;
-            const activeBg = s ? s.badgeBg : assetBadge?.bg ?? "#555";
-            const activeText = s ? s.badgeText : assetBadge?.text ?? "#fff";
-            return (
-              <button
-                key={t}
-                onClick={() => { setCardType(cardType === t ? null : t); setImageFile(null); }}
-                className={`text-[9px] font-semibold uppercase tracking-wide px-2.5 py-1 transition-colors ${styles.sq}`}
-                style={active ? { background: activeBg, color: activeText } : { background: "#f5f5f3", color: "#888" }}
-              >
-                {TYPE_LABEL[t]}
-              </button>
-            );
-          })}
-          {!cardType && (
-            <span className="text-[9px] italic text-[rgba(0,0,0,0.35)] self-center ml-1">
-              uncategorized
-            </span>
-          )}
-        </div>
-
-        {/* Asset upload UI */}
-        {isAssetType ? (
-          <div className="mb-4">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => setImageFile(e.target.files?.[0] ?? null)}
-            />
-            {imageFile && imagePreviewUrl ? (
-              <div className="flex items-center gap-3 border border-[#e4e3e0] rounded-lg px-3 py-2.5 mb-3">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={imagePreviewUrl}
-                  alt={imageFile.name}
-                  className="w-12 h-12 object-cover rounded shrink-0"
-                />
-                <div className="flex-1 min-w-0">
-                  <p className="text-[11px] text-[#333] truncate">{imageFile.name}</p>
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="text-[10px] text-[#888] hover:text-[#333] underline mt-0.5 transition-colors"
-                  >
-                    Change image
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button
-                // eslint-disable-next-line jsx-a11y/no-autofocus
-                autoFocus
-                onClick={() => fileInputRef.current?.click()}
-                className="w-full border-2 border-dashed border-[#ccc] rounded-lg py-6 text-[11px] text-[#bbb] hover:border-[#888] hover:text-[#555] transition-colors mb-3"
-              >
-                Click to upload image
-              </button>
-            )}
-            <p className="text-[10px] text-[#bbb]">
-              {cardType === "draft" ? "Drafts are design sketches or wireframes." : "References are inspiration or style images."}
-            </p>
-          </div>
-        ) : (
-          /* Card text fields */
-          <>
-            <input
-              // eslint-disable-next-line jsx-a11y/no-autofocus
-              autoFocus
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(); } }}
-              placeholder="Title (required)"
-              className="w-full text-[13px] border border-[#e4e3e0] rounded-lg px-3 py-2 mb-3 focus:outline-none focus:border-[#aaa] placeholder:text-[#ccc]"
-            />
-            <textarea
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              placeholder="Description (optional)"
-              rows={2}
-              className="w-full text-[12px] border border-[#e4e3e0] rounded-lg px-3 py-2 mb-4 resize-none focus:outline-none focus:border-[#aaa] placeholder:text-[#ccc]"
-            />
-          </>
-        )}
-
-        {/* Parent node selector — only for card types, not assets */}
-        {!isAssetType && nodes.length > 0 && (
-          <div className="mb-4">
-            <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold mb-1.5">
-              Connect to (optional)
-            </p>
-            <div className="flex flex-col gap-0.5 max-h-40 overflow-y-auto border border-[#f0efec] rounded-lg p-1">
-              {nodes.map((n) => {
-                const s = TYPE_STYLE[n.card.type] ?? TYPE_STYLE.concept;
-                const checked = parentIds.has(n.card.id);
-                return (
-                  <label
-                    key={n.card.id}
-                    className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors ${
-                      checked ? "bg-blue-50" : "hover:bg-[#f7f6f3]"
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleParent(n.card.id)}
-                      className="shrink-0 accent-blue-600"
-                    />
-                    <span
-                      className="text-[7px] font-semibold uppercase px-1 py-0.5 rounded shrink-0"
-                      style={{ background: s.badgeBg, color: s.badgeText }}
-                    >
-                      {TYPE_LABEL[n.card.type]}
-                    </span>
-                    <span className="text-[11px] text-[#333] truncate flex-1">{n.card.title}</span>
-                  </label>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="text-[11px] text-[#888] hover:text-[#333] px-3 py-1.5 transition-colors">
-            Cancel
-          </button>
-          <button
-            onClick={handleSubmit}
-            disabled={isAssetType ? !imageFile : !title.trim()}
-            className="text-[11px] bg-[#111] text-white px-4 py-1.5 rounded-lg hover:bg-[#333] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            Add node
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Input detail panel (brief / asset nodes) ──────────────────────────────────
-type InputDetailPanelProps =
-  | { type: "brief"; title: string; brief: string; onTitleChange: (v: string) => void; onBriefChange: (v: string) => void; onClose: () => void; asset?: never; onAddAsReference?: never; onRemove?: never }
-  | { type: "asset"; asset: Asset; onAddAsReference: (dataUrl: string, label: string) => void; onRemove: () => void; onClose: () => void; title?: never; brief?: never; onTitleChange?: never; onBriefChange?: never };
-
-function InputDetailPanel(props: InputDetailPanelProps) {
-  if (props.type === "brief") {
-    const { title, brief, onTitleChange, onBriefChange, onClose } = props;
-    return (
-      <aside className="w-full h-full border-l border-[#e4e3e0] bg-white flex flex-col overflow-hidden">
-        <div className="px-4 py-3 border-b border-[#f0efec] shrink-0">
-          <div className="flex items-start justify-between gap-2 mb-2">
-            <span className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">
-              Project Brief
-            </span>
-            <button onClick={onClose} className="text-[11px] text-[#bbb] hover:text-[#555] transition-colors shrink-0">Close</button>
-          </div>
-        </div>
-        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
-          <div>
-            <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold mb-1">Title</p>
-            <input
-              value={title}
-              onChange={(e) => onTitleChange(e.target.value)}
-              placeholder="Project title"
-              className="w-full text-[12px] font-semibold text-[#111] bg-[#fafaf8] border border-[#e4e3e0] rounded px-2.5 py-1.5 outline-none focus:border-[#888] placeholder-[#ccc]"
-            />
-          </div>
-          <div>
-            <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold mb-1">Brief</p>
-            <textarea
-              value={brief}
-              onChange={(e) => onBriefChange(e.target.value)}
-              placeholder="Describe your design challenge..."
-              rows={8}
-              className="w-full text-[11px] text-[#444] bg-[#fafaf8] border border-[#e4e3e0] rounded px-2.5 py-1.5 resize-none outline-none focus:border-[#888] placeholder-[#ccc] leading-relaxed"
-            />
-          </div>
-        </div>
-      </aside>
-    );
-  }
-
-  const { asset, onAddAsReference, onRemove, onClose } = props;
-  const isDraft = asset.type === "draft";
-
-  return (
-    <aside className="w-full h-full border-l border-[#e4e3e0] bg-white flex flex-col overflow-hidden">
-      <div className="px-4 py-3 border-b border-[#f0efec] shrink-0">
-        <div className="flex items-start justify-between gap-2 mb-2">
-          <span className={`text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${isDraft ? styles.draftTag : styles.refTag}`}>
-            {isDraft ? "✎ Draft" : "◈ Reference"}
-          </span>
-          <div className="flex items-center gap-1.5 shrink-0 -mt-0.5">
-            <button onClick={onRemove} className="text-[11px] text-[#ccc] hover:text-red-400 transition-colors">✕ Remove</button>
-            <span className="text-[#e4e3e0]">|</span>
-            <button onClick={onClose} className="text-[11px] text-[#bbb] hover:text-[#555] transition-colors">Close</button>
-          </div>
-        </div>
-        <p className="text-[12px] font-semibold text-[#222] leading-snug truncate">{asset.fileName}</p>
-      </div>
-      <div className="flex-1 overflow-y-auto flex flex-col">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={asset.dataUrl} alt={asset.fileName} className="w-full object-contain max-h-56 bg-[#f7f6f3]" />
-        <div className="p-4 flex flex-col gap-2">
-          {isDraft && (
-            <button
-              onClick={() => onAddAsReference(asset.dataUrl, asset.fileName)}
-              className="w-full text-left text-[11px] px-3 py-2 rounded-lg border border-[#ccc] hover:border-[#888] text-[#555] hover:text-[#111] transition-colors"
-            >
-              + Use as Reference input
-            </button>
-          )}
-          <p className="text-[10px] text-[#bbb] leading-relaxed">
-            {isDraft
-              ? "Drafts are sent to Analyze and Variation actions. Use as Reference to also include in contextual calls."
-              : "References are sent to Analyze and Conceptual Variations actions to ground the generation."}
-          </p>
-        </div>
-      </div>
-    </aside>
-  );
-}
-
-// ── Reclassify helper ─────────────────────────────────────────────────────────
-function reclassifyCard(card: ResultCard, newType: "concept" | "motif" | "note"): ResultCard {
-  if (card.type === newType) return card;
-  const base = { id: card.id, title: card.title, createdAt: card.createdAt };
-  const body =
-    card.type === "note" ? (card as NoteCard).body
-    : card.type === "concept" ? (card as ConceptCard).description
-    : card.type === "motif" ? (card as MotifCard).visualQuality
-    : "";
-  const secondary =
-    card.type === "concept" ? (card as ConceptCard).rationale
-    : card.type === "motif" ? (card as MotifCard).howItConveysIdea
-    : "";
-  if (newType === "note") return { ...base, type: "note", body };
-  if (newType === "concept") return { ...base, type: "concept", description: body, rationale: secondary };
-  if (newType === "motif") return { ...base, type: "motif", visualQuality: body, howItConveysIdea: secondary, category: "" };
-  return card;
-}
-
-// ── Detail panel ──────────────────────────────────────────────────────────────
-function DetailPanel({
-  node,
-  siblings,
-  assets,
-  onUpdateCard,
-  onBranch,
-  onDuplicate,
-  onRemove,
-  onSelectSibling,
-  onClose,
-  onAddAsReference,
-  onAddChild,
-  onAddChildNode,
-}: {
-  node: LayoutNode;
-  siblings: LayoutNode[];
-  assets: Asset[];
-  onUpdateCard: (card: ResultCard) => void;
-  onBranch: (action: ActionType) => void;
-  onDuplicate: () => void;
-  onRemove: () => void;
-  onSelectSibling: (id: string) => void;
-  onClose: () => void;
-  onAddAsReference: (dataUrl: string, label: string) => void;
-  onAddChild: () => void;
-  onAddChildNode: (card: ResultCard) => void;
-}) {
-  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
-  const [showCrop, setShowCrop] = useState(false);
-  const s = TYPE_STYLE[node.card.type] ?? TYPE_STYLE.concept;
-
-  const card = node.card;
-  const isVisual = card.type === "visual";
-  const mainImage = isVisual ? (card as VisualCard).imageDataUrl : undefined;
-
-  const sourceDrafts = node.includedDraftIds
-    .map((id) => assets.find((a) => a.id === id))
-    .filter((a): a is Asset => a !== undefined);
-
-  const sourceRefs = node.includedReferenceIds
-    .map((id) => assets.find((a) => a.id === id))
-    .filter((a): a is Asset => a !== undefined);
-
-  const imageSiblings = siblings.filter(
-    (sib): sib is LayoutNode & { card: VisualCard } =>
-      sib.card.type === "visual" && !!(sib.card as VisualCard).imageDataUrl
-  );
-
-  return (
-    <>
-      <aside className="w-full h-full border-l border-[#e4e3e0] bg-white flex flex-col overflow-hidden">
-        <div className="px-4 py-3 border-b border-[#f0efec] shrink-0">
-          <div className="flex items-start justify-between gap-2 mb-2">
-            {node.actionType === "user_added" && card.type !== "visual" ? (
-              <div className="flex items-center gap-1" title="Reclassify this card">
-                {(["note", "concept", "motif"] as const).map((t) => {
-                  const ts = TYPE_STYLE[t] ?? TYPE_STYLE.concept;
-                  const active = card.type === t;
-                  return (
-                    <button
-                      key={t}
-                      onClick={() => onUpdateCard(reclassifyCard(card, t))}
-                      className={`text-[9px] uppercase tracking-[0.12em] px-1.5 py-0.5 transition-colors ${styles.sq}`}
-                      style={active
-                        ? { background: ts.badgeBg, color: ts.badgeText }
-                        : { background: "rgba(0,0,0,0.06)", color: "rgba(0,0,0,0.35)" }}
-                    >
-                      {t}
-                    </button>
-                  );
-                })}
-              </div>
-            ) : (
-              <span className={`text-[9px] uppercase tracking-[0.14em] px-1.5 py-0.5 ${styles.sq}`} style={{ background: s.badgeBg, color: s.badgeText }}>
-                {TYPE_LABEL[card.type]}
-              </span>
-            )}
-            <div className="flex items-center gap-1.5 shrink-0 -mt-0.5">
-              <button onClick={onRemove} className="text-[11px] text-[#ccc] hover:text-red-400 transition-colors">✕ Remove</button>
-              <span className="text-[#e4e3e0]">|</span>
-              <button onClick={onClose} className="text-[11px] text-[#bbb] hover:text-[#555] transition-colors">Close</button>
-            </div>
-          </div>
-          <p className="text-[12px] font-semibold text-[#222] leading-snug">{card.title}</p>
-          <p className="text-[10px] text-[#bbb] mt-0.5">{ACTION_LABEL[node.actionType]}</p>
-        </div>
-
-        <div className="flex-1 overflow-y-auto">
-          {(sourceDrafts.length > 0 || sourceRefs.length > 0) && (
-            <div className="px-4 py-3 border-b border-[#f0efec]">
-              <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold mb-2">Sources</p>
-              <div className="flex flex-col gap-1.5">
-                {sourceDrafts.map((a) => (
-                  <div key={a.id} className={`px-2.5 py-2 flex items-center gap-2 ${styles.draftSourceTag}`}>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={a.dataUrl} alt={a.fileName} className="w-8 h-8 rounded object-cover shrink-0" />
-                    <div>
-                      <p className="text-[9px] text-[#888] uppercase tracking-wide font-semibold mb-0.5">✎ draft</p>
-                      <p className="text-[10px] text-[#333] truncate max-w-[160px]">{a.fileName}</p>
-                    </div>
-                  </div>
-                ))}
-                {sourceRefs.map((a) => (
-                  <div key={a.id} className={`px-2.5 py-2 rounded-lg flex items-center gap-2 ${styles.refSourceTag}`}>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={a.dataUrl} alt={a.fileName} className="w-8 h-8 rounded object-cover shrink-0" />
-                    <div>
-                      <p className="text-[9px] text-[#4444aa] uppercase tracking-wide font-semibold mb-0.5">◈ reference</p>
-                      <p className="text-[10px] text-[#333] truncate max-w-[160px]">{a.fileName}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {mainImage && (
-            <div className="border-b border-[#f0efec]">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={mainImage} alt={card.title} className="w-full object-cover cursor-zoom-in" onClick={() => setLightboxSrc(mainImage)} />
-              <div className="px-3 py-2 flex items-center justify-between gap-2">
-                <p className="text-[9px] text-[#bbb]">
-                  Click to enlarge · {(card as VisualCard).dimensionLabel}
-                </p>
-                <button
-                  onClick={() => onAddAsReference(mainImage, (card as VisualCard).dimensionLabel)}
-                  className="text-[9px] text-[#555] hover:text-[#111] border border-[#ccc] hover:border-[#888] px-2 py-0.5 rounded transition-colors shrink-0"
-                  title="Add this image as a reference input"
-                >
-                  + Use as Input
-                </button>
-              </div>
-            </div>
-          )}
-
-          {imageSiblings.length > 0 && (
-            <div className="border-b border-[#f0efec] p-3">
-              <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold mb-2">Images from same generation</p>
-              <div className="grid grid-cols-3 gap-1.5">
-                {imageSiblings.map((sib) => {
-                  const sibCard = sib.card as VisualCard;
-                  return (
-                    <div key={sib.card.id} className="relative group/img aspect-square rounded overflow-hidden bg-[#f7f6f3]">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={sibCard.imageDataUrl} alt={sibCard.title} className="w-full h-full object-cover cursor-pointer" onClick={() => onSelectSibling(sib.card.id)} />
-                      <button
-                        className="absolute inset-0 bg-black/0 group-hover/img:bg-black/30 transition-colors flex items-center justify-center"
-                        onClick={() => setLightboxSrc(sibCard.imageDataUrl!)}
-                        title={`${sibCard.dimensionLabel} — zoom`}
-                      >
-                        <span className="text-white text-[10px] opacity-0 group-hover/img:opacity-100 transition-opacity bg-black/40 px-1.5 py-0.5 rounded">⤢</span>
-                      </button>
-                      <div
-                        className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/50 to-transparent px-1.5 py-1 opacity-0 group-hover/img:opacity-100 transition-opacity cursor-pointer"
-                        onClick={() => onSelectSibling(sib.card.id)}
-                      >
-                        <p className="text-white text-[8px] leading-tight truncate">{sibCard.dimensionLabel}</p>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          <div className="p-4 border-b border-[#f0efec] flex flex-col gap-3">
-            <EditableCardDetails card={card} onUpdate={onUpdateCard} />
-          </div>
-
-          {siblings.filter((s) => !(imageSiblings as LayoutNode[]).includes(s)).length > 0 && (
-            <div className="p-3 border-b border-[#f0efec]">
-              <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold mb-2">
-                From same generation ({siblings.length})
-              </p>
-              <div className="flex flex-col gap-1.5">
-                {siblings
-                  .filter((sib) => !(imageSiblings as LayoutNode[]).includes(sib))
-                  .map((sib) => {
-                    const sibStyle = TYPE_STYLE[sib.card.type] ?? TYPE_STYLE.concept;
-                    return (
-                      <button
-                        key={sib.card.id}
-                        onClick={() => onSelectSibling(sib.card.id)}
-                        className="text-left px-2.5 py-2 rounded-lg border transition-colors hover:opacity-80"
-                        style={{ borderColor: sibStyle.border, background: sibStyle.bg }}
-                      >
-                        <div className="flex items-center gap-1.5 mb-0.5">
-                          <span className="text-[8px] font-semibold uppercase tracking-wide px-1 py-0.5 rounded" style={{ background: sibStyle.badgeBg, color: sibStyle.badgeText }}>
-                            {TYPE_LABEL[sib.card.type]}
-                          </span>
-                        </div>
-                        <p className="text-[10px] font-medium text-[#333] leading-snug line-clamp-2">{sib.card.title}</p>
-                      </button>
-                    );
-                  })}
-              </div>
-            </div>
-          )}
-
-          <div className="p-3 flex flex-col gap-1">
-            <button
-              onClick={onDuplicate}
-              className="w-full text-left text-[11px] px-3 py-1.5 rounded-lg hover:bg-[#f5f0ff] hover:text-purple-700 text-[#555] transition-colors"
-            >
-              ⧉ Duplicate node
-            </button>
-            <button
-              onClick={onAddChild}
-              className="w-full text-left text-[11px] px-3 py-1.5 rounded-lg hover:bg-[#f0f9f0] hover:text-green-700 text-[#555] transition-colors"
-            >
-              + Add child node
-            </button>
-            <div className="px-1 pt-1 pb-0.5 flex items-baseline gap-1.5">
-              <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold">
-                {isVisual ? "Generate from this image" : "Branch from here"}
-              </p>
-              {isVisual && (
-                <p className="text-[8px] text-[#c4a35a]">· image included in prompt</p>
-              )}
-            </div>
-            {(isVisual ? VISUAL_QUICK_ACTIONS : BRANCH_ACTIONS).map((a) => (
-              <button key={a.id} onClick={() => onBranch(a.id)} title={a.title} className="w-full text-left text-[11px] px-3 py-1.5 rounded-lg hover:bg-blue-50 hover:text-[#2563eb] text-[#555] transition-colors">
-                {a.label} →
-              </button>
-            ))}
-          </div>
-        </div>
-      </aside>
-
-      {lightboxSrc && !showCrop && (
-        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-8" onClick={() => setLightboxSrc(null)}>
-          <div className="relative max-w-4xl max-h-full" onClick={(e) => e.stopPropagation()}>
-            <div className="absolute -top-9 left-0 right-0 flex items-center justify-between">
-              <button
-                onClick={() => setShowCrop(true)}
-                className="text-sm text-white/70 hover:text-white border border-white/30 hover:border-white/70 px-3 py-1 rounded transition-colors"
-              >
-                ⊙ Focus
-              </button>
-              <button onClick={() => setLightboxSrc(null)} className="text-white/60 hover:text-white text-sm transition-colors">✕ Close</button>
-            </div>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={lightboxSrc} alt="Full size" className="max-w-full max-h-[82vh] object-contain rounded-xl shadow-2xl" />
-          </div>
-        </div>
-      )}
-
-      {lightboxSrc && showCrop && (
-        <CropModal
-          src={lightboxSrc}
-          onSave={(croppedDataUrl) => {
-            const sourceCard = card as VisualCard;
-            onAddChildNode({
-              id: crypto.randomUUID(),
-              type: "visual",
-              title: sourceCard.title,
-              dimensionLabel: sourceCard.dimensionLabel,
-              analysisText: sourceCard.analysisText,
-              imageDataUrl: croppedDataUrl,
-              imageMimeType: "image/png",
-              createdAt: new Date().toISOString(),
-            } as VisualCard);
-            setShowCrop(false);
-            setLightboxSrc(null);
-          }}
-          onClose={() => setShowCrop(false)}
-        />
-      )}
-    </>
-  );
-}
-
-// ── Crop modal ────────────────────────────────────────────────────────────────
-function CropModal({ src, onSave, onClose }: { src: string; onSave: (dataUrl: string) => void; onClose: () => void }) {
-  const imgRef = useRef<HTMLImageElement>(null);
-  const [ready, setReady] = useState(false);
-  const [crop, setCrop] = useState({ x: 0, y: 0, w: 0, h: 0 });
-  const dragRef = useRef<{
-    handle: "move" | "nw" | "ne" | "sw" | "se";
-    startX: number; startY: number;
-    startCrop: { x: number; y: number; w: number; h: number };
-  } | null>(null);
-
-  function handleImageLoad() {
-    const img = imgRef.current!;
-    const w = img.clientWidth;
-    const h = img.clientHeight;
-    const m = 0.1;
-    setCrop({ x: w * m, y: h * m, w: w * (1 - 2 * m), h: h * (1 - 2 * m) });
-    setReady(true);
-  }
-
-  function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)); }
-
-  function onHandlePointerDown(e: React.PointerEvent, handle: "move" | "nw" | "ne" | "sw" | "se") {
-    e.stopPropagation();
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    dragRef.current = { handle, startX: e.clientX, startY: e.clientY, startCrop: { ...crop } };
-  }
-
-  function onPointerMove(e: React.PointerEvent) {
-    if (!dragRef.current || !imgRef.current) return;
-    const { handle, startX, startY, startCrop } = dragRef.current;
-    const dx = e.clientX - startX;
-    const dy = e.clientY - startY;
-    const maxW = imgRef.current.clientWidth;
-    const maxH = imgRef.current.clientHeight;
-    const MIN = 20;
-    let { x, y, w, h } = startCrop;
-    if (handle === "move") {
-      x = clamp(x + dx, 0, maxW - w);
-      y = clamp(y + dy, 0, maxH - h);
-    } else {
-      if (handle === "nw") {
-        const nx = clamp(x + dx, 0, x + w - MIN); const ny = clamp(y + dy, 0, y + h - MIN);
-        w += x - nx; h += y - ny; x = nx; y = ny;
-      } else if (handle === "ne") {
-        const ny = clamp(y + dy, 0, y + h - MIN);
-        w = clamp(w + dx, MIN, maxW - x); h += y - ny; y = ny;
-      } else if (handle === "sw") {
-        const nx = clamp(x + dx, 0, x + w - MIN);
-        w += x - nx; x = nx; h = clamp(h + dy, MIN, maxH - y);
-      } else {
-        w = clamp(w + dx, MIN, maxW - x); h = clamp(h + dy, MIN, maxH - y);
-      }
-    }
-    setCrop({ x, y, w, h });
-  }
-
-  function handleApply() {
-    const img = imgRef.current!;
-    const sx = img.naturalWidth / img.clientWidth;
-    const sy = img.naturalHeight / img.clientHeight;
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(crop.w * sx);
-    canvas.height = Math.round(crop.h * sy);
-    canvas.getContext("2d")!.drawImage(img, Math.round(crop.x * sx), Math.round(crop.y * sy), canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
-    const mime = src.startsWith("data:image/png") ? "image/png" : "image/jpeg";
-    onSave(canvas.toDataURL(mime, 0.92));
-  }
-
-  const HANDLE_SIZE = 10;
-  const handles: Array<{ id: "nw" | "ne" | "sw" | "se"; left: number; top: number; cursor: string }> = [
-    { id: "nw", left: crop.x - HANDLE_SIZE / 2,           top: crop.y - HANDLE_SIZE / 2,           cursor: "nwse-resize" },
-    { id: "ne", left: crop.x + crop.w - HANDLE_SIZE / 2,  top: crop.y - HANDLE_SIZE / 2,           cursor: "nesw-resize" },
-    { id: "sw", left: crop.x - HANDLE_SIZE / 2,           top: crop.y + crop.h - HANDLE_SIZE / 2,  cursor: "nesw-resize" },
-    { id: "se", left: crop.x + crop.w - HANDLE_SIZE / 2,  top: crop.y + crop.h - HANDLE_SIZE / 2,  cursor: "nwse-resize" },
-  ];
-
-  return (
-    <div className="fixed inset-0 z-[60] bg-black/92 flex flex-col items-center justify-center gap-5 p-8">
-      <div className="flex items-center gap-4">
-        <p className="text-white/60 text-sm">Drag to select a focus area</p>
-        <button onClick={handleApply} className="bg-white text-[#111] text-sm px-4 py-1.5 rounded-sm hover:bg-white/90 transition-colors font-medium">
-          Save as focus
+    <div className={`relative flex-1 h-full ${styles.canvas}`} onKeyDown={onKeyDown}>
+      {/* Canvas chrome comes first in the page so Tab reaches it before the nodes. */}
+      <div className="absolute top-3 left-3 z-10"><Legend hasNodes={shown.length > 0} /></div>
+      <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
+        <ToolSwitch tool={tool} onChange={setTool} />
+        <button className="btn btn-primary shadow-[var(--shadow-float)]" onClick={() => onOpenAddNode(selection.filter((id) => project.nodes[id]))}>
+          <Plus size={15} aria-hidden /> Add node
         </button>
-        <button onClick={onClose} className="text-white/50 hover:text-white text-sm transition-colors">Cancel</button>
+        <div className="shadow-[var(--shadow-float)] rounded-md">
+          <Menu label="More tree actions" items={[
+            { label: "Tidy layout", onSelect: () => resetLayout("tree"), disabled: Object.keys(project.views.tree.positions).length === 0 },
+            { label: showCollectionColors ? "Hide collection colours" : "Show collection colours", onSelect: () => setShowCollectionColors((v) => !v), disabled: collections.length === 0 },
+            { label: "Export as PNG", onSelect: () => exportPng(false) },
+            { label: "Export as PNG with collection colours", onSelect: () => exportPng(true), disabled: collections.length === 0 },
+            { label: "Clear tree", onSelect: clearTree, danger: true, disabled: shown.length === 0 },
+          ]} />
+        </div>
       </div>
-      <div
-        className="relative inline-block select-none"
-        onPointerMove={onPointerMove}
-        onPointerUp={() => { dragRef.current = null; }}
-      >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          ref={imgRef}
-          src={src}
-          alt="Crop"
-          className="block max-w-[80vw] max-h-[70vh] object-contain"
-          onLoad={handleImageLoad}
-          draggable={false}
-        />
-        {ready && (
-          <>
-            {/* Crop box — box-shadow darkens outside the selection */}
-            <div
-              style={{
-                position: "absolute", left: crop.x, top: crop.y, width: crop.w, height: crop.h,
-                border: "1.5px solid rgba(255,255,255,0.9)",
-                boxShadow: "0 0 0 9999px rgba(0,0,0,0.55)",
-                cursor: "move",
-              }}
-              onPointerDown={(e) => onHandlePointerDown(e, "move")}
-            >
-              {/* Rule-of-thirds grid lines */}
-              {[1, 2].map((n) => (
-                <div key={`v${n}`} style={{ position: "absolute", left: `${(n / 3) * 100}%`, top: 0, bottom: 0, width: 1, background: "rgba(255,255,255,0.3)" }} />
-              ))}
-              {[1, 2].map((n) => (
-                <div key={`h${n}`} style={{ position: "absolute", top: `${(n / 3) * 100}%`, left: 0, right: 0, height: 1, background: "rgba(255,255,255,0.3)" }} />
-              ))}
-            </div>
-            {/* Corner handles */}
-            {handles.map(({ id, left, top, cursor }) => (
-              <div
-                key={id}
-                style={{
-                  position: "absolute", left, top,
-                  width: HANDLE_SIZE, height: HANDLE_SIZE,
-                  background: "white", border: "1px solid rgba(0,0,0,0.4)",
-                  borderRadius: 2, cursor,
-                }}
-                onPointerDown={(e) => onHandlePointerDown(e, id)}
-              />
-            ))}
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── Editable card detail fields ───────────────────────────────────────────────
-function EditableCardDetails({ card, onUpdate }: { card: ResultCard; onUpdate: (c: ResultCard) => void }) {
-  function patch(fields: Partial<ResultCard>) {
-    onUpdate({ ...card, ...fields } as ResultCard);
-  }
-
-  const titleField = (
-    <EditField
-      label="Title"
-      value={card.title}
-      onChange={(v) => patch({ title: v })}
-      singleLine
-    />
-  );
-
-  switch (card.type) {
-    case "concept":
-      return (
-        <>
-          {titleField}
-          <EditField label="Description" value={card.description} onChange={(v) => patch({ description: v })} />
-          <EditField label="Rationale" value={card.rationale} onChange={(v) => patch({ rationale: v })} />
-        </>
-      );
-    case "motif":
-      return (
-        <>
-          {titleField}
-          <EditField label="Visual Quality" value={card.visualQuality} onChange={(v) => patch({ visualQuality: v })} />
-          <EditField label="How It Conveys The Idea" value={card.howItConveysIdea} onChange={(v) => patch({ howItConveysIdea: v })} />
-          <EditField label="Category" value={card.category} onChange={(v) => patch({ category: v })} singleLine />
-        </>
-      );
-    case "visual":
-      return (
-        <>
-          {titleField}
-          <EditField label="Dimension" value={card.dimensionLabel} onChange={(v) => patch({ dimensionLabel: v })} singleLine />
-          <EditField label="Analysis" value={card.analysisText} onChange={(v) => patch({ analysisText: v })} />
-          {card.error && (
-            <div>
-              <p className="text-[9px] font-semibold uppercase tracking-wide text-[#bbb] mb-0.5">Error</p>
-              <p className="text-[11px] text-red-500 leading-relaxed">{card.error}</p>
-            </div>
-          )}
-        </>
-      );
-    case "note":
-      return (
-        <>
-          {titleField}
-          <EditField label="Note" value={card.body} onChange={(v) => patch({ body: v })} />
-        </>
-      );
-  }
-}
-
-function EditField({
-  label, value, onChange, singleLine,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  singleLine?: boolean;
-}) {
-  const cls = "w-full text-[11px] text-[#333] bg-[#fafaf8] border border-transparent hover:border-[#e4e3e0] focus:border-[#888] rounded px-2 py-1 outline-none leading-relaxed resize-none placeholder-[#ccc] transition-colors";
-  return (
-    <div>
-      <p className="text-[9px] font-semibold uppercase tracking-wide text-[#bbb] mb-0.5 px-2">{label}</p>
-      {singleLine ? (
-        <input
-          className={cls}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-        />
-      ) : (
-        <textarea
-          className={cls}
-          value={value}
-          rows={3}
-          onChange={(e) => onChange(e.target.value)}
-        />
+      {!hasGenerated && (
+        <div className="absolute top-14 left-1/2 -translate-x-1/2 z-10">
+          <GetStarted hasBrief={!!project.brief.trim()} hasImage={shown.some((n) => n.image)} onOpenBrief={onOpenBrief} onRun={onOpenRun} />
+        </div>
       )}
+      <ReactFlow
+        proOptions={{ hideAttribution: true }}
+        nodes={displayNodes}
+        edges={flowEdges}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onNodeClick={onNodeClick}
+        onEdgeClick={onEdgeClick}
+        onNodeMouseEnter={(_, n) => { if (n.id !== BRIEF_ID) setHoveredId(n.id); }}
+        onNodeMouseLeave={() => setHoveredId(null)}
+        onPaneClick={clearSelection}
+        onInit={(instance) => { rfRef.current = instance; instance.fitView({ padding: 0.15, maxZoom: 1 }); }}
+        fitView
+        fitViewOptions={{ padding: 0.15, maxZoom: 1 }}
+        minZoom={0.2}
+        maxZoom={2.0}
+        onNodeDragStop={onNodeDragStop}
+        onNodesDelete={onNodesDelete}
+        connectOnClick={false}
+        nodesConnectable={linking}
+        onConnect={onConnect}
+        onConnectEnd={onConnectEnd}
+        deleteKeyCode={["Delete", "Backspace"]}
+        selectionOnDrag={tool === "lasso"}
+        panOnDrag={tool === "lasso" ? [1, 2] : true}
+        selectionMode={SelectionMode.Partial}
+        onSelectionChange={onSelectionChange}
+        aria-label="Idea tree"
+      >
+        {showCollectionColors && <CollectionHalos collections={collections} />}
+        <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#c9ccd3" />
+        <Controls showInteractive={false} position="bottom-right" />
+
+      </ReactFlow>
     </div>
   );
 }

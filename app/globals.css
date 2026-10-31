@@ -1,25 +1,109 @@
 @import "tailwindcss";
 
-:root {
-  --bg-workspace: #f0eeeb;
-  --bg-panel: #ffffff;
-  --border: #000000;
-  --border-light: rgba(0, 0, 0, 0.14);
-  --text-primary: #111010;
-  --text-secondary: #333232;
-  --text-muted: rgba(51, 50, 50, 0.5);
-  --accent: #000000;
+/*
+ * Design tokens. The interface is quiet and neutral (sans); the ideas
+ * themselves (node titles, the brief, project names) are set in an
+ * editorial serif. One accent, used only for selection, focus, links and
+ * "new". Role colours (concept, motif, visual, note) are the data palette
+ * and live in src/components/nodeStyle.ts.
+ */
+@theme {
+  --font-ui: var(--font-instrument-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-idea: var(--font-newsreader), Georgia, serif;
+
+  --color-canvas: #f3f4f6;
+  --color-surface: #ffffff;
+  --color-subtle: #f6f7f8;     /* fills for inputs, hover rows */
+  --color-line: #e2e4e8;       /* hairlines, card borders */
+  --color-line-strong: #c7cad1;
+  --color-field-border: #878c95;  /* 3.4:1 on white, so field edges are visible (1.4.11) */
+  --color-ink: #17181c;        /* primary text, primary buttons */
+  --color-ink-2: #43464d;      /* secondary text (9:1) */
+  --color-muted: #686c75;      /* tertiary text (5:1 on white) */
+  --color-accent: #2d5be3;     /* selection, focus, links, new */
+  --color-accent-soft: #e9efff;
+  --color-danger: #b42318;
+  --color-danger-soft: #fef1f0;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  --shadow-float: 0 1px 2px rgb(16 24 40 / 0.06), 0 4px 12px rgb(16 24 40 / 0.08);
+  --shadow-modal: 0 8px 32px rgb(16 24 40 / 0.18);
 }
 
 body {
-  background: var(--bg-workspace);
-  color: var(--text-primary);
-  font-family: var(--font-inria-serif), "Inria Serif", Georgia, serif;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.45;
   -webkit-font-smoothing: antialiased;
 }
 
+/* One visible focus style everywhere (keyboard only). */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+/* React Flow removes outlines on nodes and edges; put a visible one back. */
+.react-flow .react-flow__node:focus-visible,
+.react-flow .react-flow__edge:focus-visible {
+  outline: 2px solid var(--color-accent) !important;
+  outline-offset: 3px;
+  border-radius: var(--radius-md);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}
+
 /* Scrollbar */
-::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.18); border-radius: 0; }
-::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.32); }
+::-webkit-scrollbar-thumb { background: rgb(0 0 0 / 0.16); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background-color: rgb(0 0 0 / 0.3); }
+
+/* ── Shared components ──────────────────────────────────────────────────── */
+@layer components {
+  /* Buttons: one height, one radius, three weights. */
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md text-[13px] font-medium whitespace-nowrap
+      border border-line bg-surface text-ink transition-colors
+      hover:bg-subtle hover:border-line-strong
+      disabled:opacity-45 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-line
+      aria-disabled:opacity-45 aria-disabled:cursor-not-allowed aria-disabled:hover:bg-surface aria-disabled:hover:border-line;
+  }
+  .btn-sm { @apply h-7 px-2.5 text-[12px]; }
+  .btn-primary {
+    @apply bg-ink border-ink text-white hover:bg-[#2c2e34] hover:border-[#2c2e34]
+      disabled:hover:bg-ink disabled:hover:border-ink;
+  }
+  .btn-ghost { @apply border-transparent bg-transparent hover:bg-subtle hover:border-transparent; }
+  .btn-danger { @apply text-danger hover:bg-danger-soft hover:border-[#f3c5c0]; }
+  .btn-on { @apply bg-ink border-ink text-white hover:bg-[#2c2e34]; }  /* toggled tools */
+  .icon-btn {
+    @apply inline-flex items-center justify-center w-7 h-7 rounded-md text-ink-2 transition-colors
+      hover:bg-subtle hover:text-ink;
+  }
+
+  /* Form fields */
+  .field {
+    @apply w-full rounded-md border border-field-border bg-surface px-2.5 py-1.5 text-[13px] text-ink
+      placeholder:text-muted transition-colors hover:border-ink-2
+      focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20;
+  }
+  .field-label { @apply block text-[12px] font-medium text-ink-2 mb-1; }
+
+  /* Surfaces */
+  .floating { @apply bg-surface border border-line rounded-lg shadow-[var(--shadow-float)]; }
+  .section-title { @apply text-[12px] font-semibold text-ink-2; }
+  .hint { @apply text-[12px] text-muted; }
+
+  /* Small role badge on nodes and chips */
+  .badge { @apply inline-flex w-fit shrink-0 items-center h-[18px] px-1.5 rounded-sm text-[11px] font-medium leading-none; }
+
+  /* Ideas are set in the serif */
+  .idea { font-family: var(--font-idea); }
+}

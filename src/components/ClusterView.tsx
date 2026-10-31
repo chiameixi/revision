@@ -1,966 +1,458 @@
 "use client";
 
-import {
-  useState, useCallback, useMemo, createContext, useContext, useEffect,
-} from "react";
+// The collections view: user collections plus one group per role for nodes
+// that aren't in any collection yet. Drag cards between them, or select cards
+// and use "Add to collection" in the selection bar. Reads and writes through
+// the store; dragged positions are saved in views.cluster.
+
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import {
   ReactFlow,
   Background,
-  useNodesState,
+  BackgroundVariant,
+  applyNodeChanges,
   getNodesBounds,
   getViewportForBounds,
-  type Node,
+  type Node as FlowNode,
+  type NodeChange,
   type NodeProps,
-  Panel,
+  type ReactFlowInstance,
 } from "@xyflow/react";
 import { toPng } from "html-to-image";
 import "@xyflow/react/dist/style.css";
-import type {
-  Asset, Collection, Generation, ResultCard, ActionType, VisualCard,
-} from "@/types";
-import styles from "./ClusterView.module.css";
+import { CheckSquare, Pencil, Plus, Trash2, X } from "lucide-react";
+import { useProjectStore } from "@/store/projectStore";
+import { visibleNodes } from "@/domain/graph";
+import type { Collection, CollectionId, IdeaNode, NodeId, ProjectState, Role } from "@/domain/types";
+import { useImageUrl } from "./useImageUrl";
+import { COLLECTION_COLORS, COLLECTION_COLOR_NAMES, ROLES, ROLE_LABEL_PLURAL, ROLE_STYLE } from "./nodeStyle";
+import { Menu, RoleBadge } from "./ui";
+import styles from "./TreeView.module.css";
 
-// ── Style maps ────────────────────────────────────────────────────────────────
-const TYPE_STYLE: Record<string, {
-  bg: string; border: string; selectedBorder: string;
-  badgeBg: string; badgeText: string; line: string; clusterBg: string;
-}> = {
-  concept: { bg: "#dde1f2", border: "#8b96c8", selectedBorder: "#3c4a8a", badgeBg: "#3c4a8a", badgeText: "#ffffff", line: "rgba(60,74,138,0.45)",  clusterBg: "#e8eaf8" },
-  motif:   { bg: "#fdf8ef", border: "#c8a055", selectedBorder: "#8b6410", badgeBg: "#8b6410", badgeText: "#ffffff", line: "rgba(139,100,16,0.45)", clusterBg: "#faf6ea" },
-  visual:  { bg: "#fdf4f2", border: "#c89088", selectedBorder: "#8b4035", badgeBg: "#8b4035", badgeText: "#ffffff", line: "rgba(139,64,53,0.40)",  clusterBg: "#f8efee" },
-  note:    { bg: "#f3f8f5", border: "#7aab8a", selectedBorder: "#2e6e45", badgeBg: "#2e6e45", badgeText: "#ffffff", line: "rgba(46,110,69,0.40)",  clusterBg: "#eff6f2" },
-};
+const DRAG_NODE = "application/x-node-id";
+const DRAG_FROM = "application/x-from-collection";
+const GROUP_W = 340;
+const COL_GAP = 32;
+const ACCENT = "var(--color-accent)";
 
-const TYPE_LABEL_PLURAL: Record<string, string> = {
-  concept: "Concepts", motif: "Motifs", visual: "Visuals", note: "Your Notes",
-};
+// ── Context for the two container node types ──────────────────────────────────
 
-const TYPE_LABEL_SINGLE: Record<string, string> = {
-  concept: "Concept", motif: "Motif", visual: "Visual", note: "Note",
-};
-
-const ACTION_LABEL: Record<string, string> = {
-  unpack_brief: "Unpack Brief", analyze: "Analyze", visuals: "Visual Variations",
-  conceptual_variations: "Conceptual Vars",
-  user_added: "Your Idea",
-};
-
-const BRANCH_ACTIONS: { id: ActionType; label: string; title: string }[] = [
-  {
-    id: "unpack_brief",
-    label: "Unpack Brief",
-    title: "Out: 5–8 ConceptCards (title · description · rationale)\nUses: brief text only — no images needed.",
-  },
-  {
-    id: "analyze",
-    label: "Analyze",
-    title: "Out: ConceptCards + MotifCards extracted from your selected images in one pass.\nUses: draft and/or reference images + brief as context.",
-  },
-  {
-    id: "visual_variations",
-    label: "Visual Variations",
-    title: "Out: one VisualCard per Arnheim dimension — a 5×3 variation panel that strengthens that dimension.\nUses: one draft image (primary) + brief as the concept.",
-  },
-  {
-    id: "conceptual_variations",
-    label: "Conceptual Variations",
-    title: "Out: one VisualCard per selected ConceptCard — a 2×2 panel of 4 image interpretations.\nSelect ConceptCards to render; MotifCards constrain the visual language.",
-  },
-];
-
-export const COLLECTION_COLORS = [
-  "#c9a84c", // warm gold
-  "#7a9e5e", // sage green
-  "#c14f58", // muted rose
-  "#4a7a9b", // slate blue
-  "#8b6b4a", // warm brown
-  "#7b6b8e", // muted violet
-  "#4a8b7a", // teal
-  "#9b4a4a", // terracotta
-];
-
-const CARD_TYPES = ["concept", "motif", "visual", "note"] as const;
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-interface ClusterItem {
-  card: ResultCard;
-  genId: string;
-  actionType: ActionType;
-}
-
-interface ClusterCtxType {
-  allItems: ClusterItem[];
-  collections: Collection[];
-  selectedItem: ClusterItem | null;
+interface Ctx {
+  nodes: Record<NodeId, IdeaNode>;      // visible nodes only
+  collections: Record<CollectionId, Collection>;
+  unassigned: Record<Role, IdeaNode[]>;
+  selected: Set<string>;
   dragOverId: string | null;
-  editingId: string | null;
-  editForm: { title: string; description: string };
-  onCardClick: (item: ClusterItem) => void;
-  onCardDragStart: (e: React.DragEvent, cardId: string) => void;
-  onContainerDragOver: (e: React.DragEvent) => void;
-  onContainerDragEnter: (e: React.DragEvent, id: string) => void;
-  onContainerDragLeave: (e: React.DragEvent) => void;
-  onContainerDrop: (e: React.DragEvent, collectionId: string | null) => void;
-  onDeleteCollection: (id: string) => void;
-  onRemoveCardFromCollection: (collectionId: string, cardId: string) => void;
-  onStartEdit: (id: string, title: string, description: string) => void;
-  onConfirmEdit: (id: string) => void;
-  onCancelEdit: () => void;
-  onEditFormChange: (field: "title" | "description", value: string) => void;
-  generations: Generation[];
+  setDragOverId: (id: string | null) => void;
+  onSelect: (id: NodeId, additive: boolean) => void;
+  onDrop: (nodeId: NodeId, from: CollectionId | null, to: CollectionId | null) => void;
 }
 
-const ClusterCtx = createContext<ClusterCtxType | null>(null);
-function useClusterCtx() {
+const ClusterCtx = createContext<Ctx | null>(null);
+function useCtx() {
   const ctx = useContext(ClusterCtx);
   if (!ctx) throw new Error("ClusterCtx missing");
   return ctx;
 }
 
-// ── Mini card tile ────────────────────────────────────────────────────────────
-function MiniCard({ item, onRemove }: { item: ClusterItem; onRemove?: () => void }) {
-  const { selectedItem, onCardClick, onCardDragStart } = useClusterCtx();
-  const isSelected = selectedItem?.card.id === item.card.id;
-  const ts = TYPE_STYLE[item.card.type] ?? TYPE_STYLE.concept;
-  const isVisual = item.card.type === "visual";
-  const isChip = item.card.type === "concept" || item.card.type === "motif";
-  const imgSrc = isVisual ? (item.card as VisualCard).imageDataUrl : undefined;
+function dropZone(ctx: Ctx, zoneId: string, to: CollectionId | null) {
+  return {
+    onDragOver: (e: React.DragEvent) => { if (e.dataTransfer.types.includes(DRAG_NODE)) e.preventDefault(); },
+    onDragEnter: (e: React.DragEvent) => { e.preventDefault(); if (e.dataTransfer.types.includes(DRAG_NODE)) ctx.setDragOverId(zoneId); },
+    onDragLeave: (e: React.DragEvent) => {
+      if (e.relatedTarget && (e.currentTarget as Element).contains(e.relatedTarget as Element)) return;
+      ctx.setDragOverId(null);
+    },
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      ctx.setDragOverId(null);
+      const nodeId = e.dataTransfer.getData(DRAG_NODE);
+      if (nodeId) ctx.onDrop(nodeId, e.dataTransfer.getData(DRAG_FROM) || null, to);
+    },
+  };
+}
 
-  const borderColor = isSelected ? ts.selectedBorder : ts.border;
-  const shadow = isSelected ? "2px 2px 0px rgba(0,0,0,0.5)" : "none";
-  const motifFilter = item.card.type === "motif"
-    ? (isSelected ? "drop-shadow(2px 2px 0px rgba(0,0,0,0.5))" : undefined)
-    : undefined;
-  const bgColor = isSelected ? "#f5f4f0" : ts.bg;
+// ── Cards ─────────────────────────────────────────────────────────────────────
 
-  const sharedDrag = {
+function useCardProps(node: IdeaNode, from: CollectionId | null) {
+  const { onSelect } = useCtx();
+  return {
     draggable: true,
-    onDragStart: (e: React.DragEvent) => { e.stopPropagation(); onCardDragStart(e, item.card.id); },
-    onClick: (e: React.MouseEvent) => { e.stopPropagation(); onCardClick(item); },
+    onDragStart: (e: React.DragEvent) => {
+      e.stopPropagation();
+      e.dataTransfer.setData(DRAG_NODE, node.id);
+      if (from) e.dataTransfer.setData(DRAG_FROM, from);
+      e.dataTransfer.effectAllowed = "move";
+    },
+    onClick: (e: React.MouseEvent) => { e.stopPropagation(); onSelect(node.id, e.shiftKey); },
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onSelect(node.id, e.shiftKey); }
+    },
+    role: "button" as const,
+    tabIndex: 0,
+  };
+}
+
+function RemoveFromCollection({ onRemove, title }: { onRemove: () => void; title: string }) {
+  return (
+    <button className="nodrag absolute top-1 right-1 w-6 h-6 rounded-md flex items-center justify-center bg-white/90 text-ink-2 hover:text-danger opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+      aria-label={`Take ${title} out of this collection`} onClick={(e) => { e.stopPropagation(); onRemove(); }}>
+      <X size={13} />
+    </button>
+  );
+}
+
+function TextCard({ node, from, onRemove }: { node: IdeaNode; from: CollectionId | null; onRemove?: () => void }) {
+  const { selected } = useCtx();
+  const props = useCardProps(node, from);
+  const s = ROLE_STYLE[node.role];
+  const on = selected.has(node.id);
+  return (
+    <div {...props} aria-pressed={on} aria-label={`${node.role}: ${node.title}`}
+      className="nodrag nowheel relative group cursor-pointer rounded-md border px-2.5 py-2 pr-7 flex flex-col gap-1"
+      style={{ background: s.fill, borderColor: on ? ACCENT : s.border, boxShadow: on ? `0 0 0 2px ${ACCENT}` : undefined }}>
+      <RoleBadge role={node.role} />
+      <p className="idea text-[14px] leading-snug text-ink line-clamp-3">{node.title}</p>
+      {onRemove && <RemoveFromCollection onRemove={onRemove} title={node.title} />}
+    </div>
+  );
+}
+
+function ImageCard({ node, from, onRemove }: { node: IdeaNode; from: CollectionId | null; onRemove?: () => void }) {
+  const { selected } = useCtx();
+  const props = useCardProps(node, from);
+  const url = useImageUrl(node.image?.imageId);
+  const on = selected.has(node.id);
+  return (
+    <div {...props} aria-pressed={on} aria-label={`${node.role} image: ${node.title}`} title={node.title}
+      className="nodrag nowheel relative group cursor-pointer rounded-md overflow-hidden border aspect-[4/3] bg-subtle"
+      style={{ borderColor: on ? ACCENT : "var(--color-line)", boxShadow: on ? `0 0 0 2px ${ACCENT}` : undefined }}>
+      {url && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={url} alt="" className="w-full h-full object-cover" />
+      )}
+      {node.role !== "visual" && <span className="absolute left-1 top-1"><RoleBadge role={node.role} onImage /></span>}
+      {onRemove && <RemoveFromCollection onRemove={onRemove} title={node.title} />}
+    </div>
+  );
+}
+
+// Text cards two across, images three across.
+function CardGrid({ items, from, onRemove }: { items: IdeaNode[]; from: CollectionId | null; onRemove?: (id: NodeId) => void }) {
+  const images = items.filter((n) => n.image);
+  const texts = items.filter((n) => !n.image);
+  return (
+    <div className="flex flex-col gap-2">
+      {texts.length > 0 && (
+        <div className="grid grid-cols-2 gap-2">
+          {texts.map((n) => <TextCard key={n.id} node={n} from={from} onRemove={onRemove && (() => onRemove(n.id))} />)}
+        </div>
+      )}
+      {images.length > 0 && (
+        <div className="grid grid-cols-3 gap-1.5">
+          {images.map((n) => <ImageCard key={n.id} node={n} from={from} onRemove={onRemove && (() => onRemove(n.id))} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Collection container ──────────────────────────────────────────────────────
+
+function CollectionContainer({ data }: NodeProps) {
+  const ctx = useCtx();
+  const updateCollection = useProjectStore((s) => s.updateCollection);
+  const deleteCollection = useProjectStore((s) => s.deleteCollection);
+  const removeFromCollection = useProjectStore((s) => s.removeFromCollection);
+  const setSelection = useProjectStore((s) => s.setSelection);
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({ title: "", description: "" });
+
+  const id = data.collectionId as CollectionId;
+  const col = ctx.collections[id];
+  if (!col) return null;
+  const items = col.nodeIds.map((n) => ctx.nodes[n]).filter(Boolean);
+  const isOver = ctx.dragOverId === id;
+  const save = () => {
+    if (!form.title.trim()) return;
+    updateCollection(id, { title: form.title.trim(), description: form.description.trim() || undefined });
+    setEditing(false);
   };
 
-  // ── Visual image card ───────────────────────────────────────────────────────
-  if (isVisual && imgSrc) {
-    return (
-      <div
-        {...sharedDrag}
-        className={`relative group/minicard overflow-hidden cursor-pointer nodrag nowheel col-span-2 ${styles.visualCard}`}
-        style={{ border: `1px solid ${borderColor}`, boxShadow: shadow }}
-      >
-        {onRemove && (
-          <button className="nodrag absolute top-1.5 right-1.5 opacity-0 group-hover/minicard:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 text-[10px] leading-none z-20"
-            title="Remove" onClick={(e) => { e.stopPropagation(); onRemove(); }}>✕</button>
-        )}
-        <div className="absolute top-0 left-0 right-0 p-1.5 flex items-center gap-1.5 z-10 bg-gradient-to-b from-black/30 to-transparent">
-          <div className={styles.dotBadge} />
-          {isSelected && <span className="text-[8px] text-white bg-blue-500/80 px-1 rounded font-bold">✓</span>}
-        </div>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={imgSrc} alt={item.card.title} className="w-full h-full object-cover" />
-        <div className="absolute bottom-0 left-0 right-0 px-2 py-1 bg-gradient-to-t from-black/80 via-black/40 to-transparent z-10">
-          <p className="text-[9px] text-white leading-tight truncate font-medium">{item.card.title}</p>
-        </div>
-      </div>
-    );
-  }
-
-  // ── Concept / motif chip ────────────────────────────────────────────────────
-  if (isChip) {
-    const chipContent = (
-      <>
-        <p className={styles.chipText}>{item.card.title}</p>
-        {isSelected && <span className={styles.chipCheck}>✓</span>}
-        {onRemove && (
-          <button className={`nodrag absolute right-1.5 opacity-0 group-hover/minicard:opacity-100 transition-opacity w-4 h-4 rounded-full flex items-center justify-center text-[#bbb] hover:text-red-400 text-[9px] leading-none ${styles.centerY}`}
-            title="Remove" onClick={(e) => { e.stopPropagation(); onRemove(); }}>✕</button>
-        )}
-      </>
-    );
-
-    if (item.card.type === "motif") {
-      return (
-        <div
-          {...sharedDrag}
-          className={styles.chipMotif}
-          style={{ background: borderColor, filter: motifFilter }}
-        >
-          <div
-            className={`relative group/minicard cursor-pointer nodrag nowheel ${styles.chipMotifInner}`}
-            style={{ background: bgColor, paddingLeft: 8, paddingRight: onRemove ? 22 : 8 }}
-          >
-            {chipContent}
-          </div>
-        </div>
-      );
-    }
-
-    // Concept chip
-    return (
-      <div
-        {...sharedDrag}
-        className={`relative group/minicard cursor-pointer nodrag nowheel ${styles.chipNode}`}
-        style={{
-          background: bgColor,
-          border: `1px solid ${borderColor}`,
-          boxShadow: shadow,
-          paddingLeft: 7,
-          paddingRight: onRemove ? 22 : 8,
-        }}
-      >
-        {chipContent}
-      </div>
-    );
-  }
-
-  // ── Note card ───────────────────────────────────────────────────────────────
   return (
-    <div
-      {...sharedDrag}
-      className={`relative group/minicard overflow-hidden cursor-pointer nodrag nowheel ${styles.noteCard}`}
-      style={{ background: bgColor, border: `1px solid ${borderColor}`, boxShadow: shadow }}
-    >
-      {onRemove && (
-        <button className="nodrag absolute top-1.5 right-1.5 opacity-0 group-hover/minicard:opacity-100 transition-opacity w-4 h-4 rounded flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 text-[10px] leading-none z-10"
-          title="Remove" onClick={(e) => { e.stopPropagation(); onRemove(); }}>✕</button>
-      )}
-      <div className="p-2 flex flex-col gap-0.5 h-full">
-        <div className="flex items-center gap-1.5 pr-4">
-          <span className="text-[8px] uppercase tracking-[0.12em] shrink-0 text-[rgba(0,0,0,0.4)]">
-            {TYPE_LABEL_SINGLE[item.card.type]}
-          </span>
-          {isSelected && <span className="text-[9px] text-black shrink-0">✓</span>}
-        </div>
-        <p className="text-[10px] text-[#111] leading-tight line-clamp-2 flex-1">{item.card.title}</p>
-        <p className="text-[9px] truncate text-[rgba(0,0,0,0.3)]">{ACTION_LABEL[item.actionType] ?? item.actionType}</p>
-      </div>
-    </div>
-  );
-}
+    <section aria-label={`Collection: ${col.title}`} {...dropZone(ctx, id, id)}
+      className="rounded-lg bg-surface border overflow-hidden"
+      style={{ width: GROUP_W, borderColor: isOver ? col.color : "var(--color-line)", boxShadow: isOver ? `0 0 0 2px ${col.color}` : "var(--shadow-float)" }}>
+      <header className="flex items-center gap-2 pl-3 pr-1.5 h-11 border-b cursor-grab" style={{ borderColor: `${col.color}55`, background: `${col.color}14` }}>
+        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: col.color }} aria-hidden />
+        <h2 className="idea text-[16px] text-ink truncate flex-1">{col.title}</h2>
+        <span className="text-[12px] text-muted tabular-nums">{items.length}</span>
+        <button className="nodrag icon-btn" aria-label={`Select everything in ${col.title}`} title="Select all"
+          disabled={!items.length} onClick={() => setSelection(items.map((n) => n.id))}><CheckSquare size={14} /></button>
+        <button className="nodrag icon-btn" aria-label={`Rename ${col.title}`} title="Rename"
+          onClick={() => { setForm({ title: col.title, description: col.description ?? "" }); setEditing(true); }}><Pencil size={14} /></button>
+        <button className="nodrag icon-btn hover:text-danger" aria-label={`Delete ${col.title} (its nodes stay)`} title="Delete collection"
+          onClick={() => deleteCollection(id)}><Trash2 size={14} /></button>
+      </header>
 
-// ── Collection node ───────────────────────────────────────────────────────────
-function CollectionNodeComponent({ data }: NodeProps) {
-  const {
-    allItems, collections, dragOverId, editingId, editForm,
-    onContainerDragOver, onContainerDragEnter, onContainerDragLeave, onContainerDrop,
-    onDeleteCollection, onRemoveCardFromCollection, onStartEdit, onConfirmEdit, onCancelEdit, onEditFormChange,
-  } = useClusterCtx();
-
-  const collectionId = data.collectionId as string;
-  const collection = collections.find((c) => c.id === collectionId);
-  if (!collection) return null;
-
-  const items = allItems.filter((item) => collection.cardIds.includes(item.card.id));
-  const isEditing = editingId === collectionId;
-  const isDragOver = dragOverId === collectionId;
-  const color = collection.color;
-
-  return (
-    <div
-      className={`overflow-hidden transition-shadow ${styles.clusterNode}`}
-      style={{
-        background: isDragOver ? `${color}10` : "#fff",
-        border: `1.5px solid ${isDragOver ? color : "rgba(0,0,0,0.18)"}`,
-        boxShadow: isDragOver ? `2px 2px 0px ${color}` : "none",
-      }}
-      onDragOver={onContainerDragOver}
-      onDragEnter={(e) => onContainerDragEnter(e, collectionId)}
-      onDragLeave={onContainerDragLeave}
-      onDrop={(e) => onContainerDrop(e, collectionId)}
-    >
-      {/* Header — acts as drag handle for the RF node */}
-      <div
-        className="px-3 py-2.5 flex items-center gap-2 cursor-grab"
-        style={{ background: `${color}16`, borderBottom: `1px solid ${color}55` }}
-      >
-        <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color }} />
-        {isEditing ? (
-          <input
-            autoFocus
-            value={editForm.title}
-            onChange={(e) => onEditFormChange("title", e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") onConfirmEdit(collectionId);
-              if (e.key === "Escape") onCancelEdit();
-            }}
-            className="nodrag flex-1 text-[11px] font-semibold bg-transparent border-b border-[#2563eb] outline-none min-w-0"
-          />
-        ) : (
-          <span className="flex-1 text-[11px] font-semibold text-[#222] truncate">{collection.title}</span>
-        )}
-        <span className="text-[9px] text-[#aaa] shrink-0">{items.length}</span>
-        <button
-          className="nodrag text-[9px] text-[#ccc] hover:text-[#555] transition-colors"
-          title="Rename"
-          onClick={() => onStartEdit(collectionId, collection.title, collection.description)}
-        >✎</button>
-        <button
-          className="nodrag text-[9px] text-[#ccc] hover:text-red-400 transition-colors ml-0.5"
-          title="Delete"
-          onClick={() => onDeleteCollection(collectionId)}
-        >✕</button>
-      </div>
-
-      {/* Edit form */}
-      {isEditing && (
-        <div className="nodrag px-3 py-2 bg-white border-b border-[#f0efec]">
-          <input
-            placeholder="Description (optional)…"
-            value={editForm.description}
-            onChange={(e) => onEditFormChange("description", e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") onConfirmEdit(collectionId);
-              if (e.key === "Escape") onCancelEdit();
-            }}
-            className="w-full text-[10px] bg-transparent border-b border-[#e4e3e0] outline-none text-[#666]"
-          />
-          <div className="flex gap-2 mt-1.5">
-            <button onClick={() => onConfirmEdit(collectionId)} className="text-[9px] text-white bg-[#333] rounded px-2 py-0.5 nodrag">Save</button>
-            <button onClick={onCancelEdit} className="text-[9px] text-[#aaa] nodrag">Cancel</button>
+      {editing && (
+        <form className="nodrag p-3 border-b border-line flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); save(); }}
+          onKeyDown={(e) => { if (e.key === "Escape") setEditing(false); }}>
+          <label className="field-label" htmlFor={`col-title-${id}`}>Name</label>
+          <input id={`col-title-${id}`} autoFocus className="field" value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} />
+          <label className="field-label" htmlFor={`col-desc-${id}`}>Description (optional)</label>
+          <input id={`col-desc-${id}`} className="field" value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
+          <div className="flex gap-1.5 justify-end">
+            <button type="button" className="btn btn-sm" onClick={() => setEditing(false)}>Cancel</button>
+            <button type="submit" className="btn btn-sm btn-primary">Save</button>
           </div>
-        </div>
+        </form>
       )}
-      {!isEditing && collection.description && (
-        <div className="px-3 py-1.5 border-b border-[#f0efec]">
-          <p className="text-[9px] text-[#888] leading-snug">{collection.description}</p>
-        </div>
-      )}
+      {!editing && col.description && <p className="px-3 pt-2.5 text-[13px] text-ink-2">{col.description}</p>}
 
-      {/* Cards */}
-      <div className="nodrag nowheel p-2.5">
+      <div className="nodrag nowheel p-3">
         {items.length === 0 ? (
-          <div
-            className={`flex items-center justify-center py-5 border border-dashed ${styles.sq}`}
-            style={{ borderColor: `${color}70` }}
-          >
-            <p className="text-[10px] text-[#bbb]">{isDragOver ? "Drop here ↓" : "Drag cards here"}</p>
-          </div>
+          <p className="rounded-md border border-dashed py-6 text-center text-[13px] text-muted" style={{ borderColor: `${col.color}90` }}>
+            {isOver ? "Drop to add" : "Drag cards here, or select some and use Add to collection"}
+          </p>
         ) : (
-          <div className="grid grid-cols-2 gap-2">
-            {items.map((item) => (
-              <MiniCard
-                key={item.card.id}
-                item={item}
-                onRemove={() => onRemoveCardFromCollection(collectionId, item.card.id)}
-              />
-            ))}
-          </div>
+          <CardGrid items={items} from={id} onRemove={(nodeId) => removeFromCollection(id, nodeId)} />
         )}
       </div>
-    </div>
+    </section>
   );
 }
 
-// ── Type-group node (unassigned cards by type) ────────────────────────────────
-function TypeGroupNodeComponent({ data }: NodeProps) {
-  const {
-    allItems, collections, dragOverId,
-    onContainerDragOver, onContainerDragEnter, onContainerDragLeave, onContainerDrop,
-  } = useClusterCtx();
+// ── Unassigned nodes, grouped by role ─────────────────────────────────────────
 
-  const typeName = data.typeName as string;
-  const items = allItems.filter((item) => item.card.type === typeName);
-
-  const s = TYPE_STYLE[typeName] ?? TYPE_STYLE.concept;
-  const isDragOver = dragOverId === `type::${typeName}`;
-
-  if (items.length === 0) {
-    return (
-      <div
-        className={`overflow-hidden opacity-35 ${styles.clusterNode}`}
-        style={{ background: s.clusterBg, border: `1px dashed rgba(0,0,0,0.3)` }}
-        onDragOver={onContainerDragOver}
-        onDragEnter={(e) => onContainerDragEnter(e, `type::${typeName}`)}
-        onDragLeave={onContainerDragLeave}
-        onDrop={(e) => onContainerDrop(e, null)}
-      >
-        <div className="px-3 py-3 flex items-center gap-2 cursor-grab">
-          <span className="text-[9px] uppercase tracking-[0.14em] text-[rgba(0,0,0,0.45)]">
-            {TYPE_LABEL_PLURAL[typeName]}
-          </span>
-          <span className="text-[9px] italic text-[rgba(0,0,0,0.3)]">none yet</span>
-        </div>
-      </div>
-    );
-  }
-
+function RoleGroup({ data }: NodeProps) {
+  const ctx = useCtx();
+  const role = data.role as Role;
+  const items = ctx.unassigned[role];
+  const zoneId = `role::${role}`;
+  const isOver = ctx.dragOverId === zoneId;
   return (
-    <div
-      className={`overflow-hidden transition-shadow ${styles.clusterNode}`}
-      style={{
-        background: isDragOver ? "#f5f4f0" : s.clusterBg,
-        border: `1px solid ${isDragOver ? "#000" : "rgba(0,0,0,0.18)"}`,
-        boxShadow: isDragOver ? "2px 2px 0px rgba(0,0,0,0.4)" : "none",
-      }}
-      onDragOver={onContainerDragOver}
-      onDragEnter={(e) => onContainerDragEnter(e, `type::${typeName}`)}
-      onDragLeave={onContainerDragLeave}
-      onDrop={(e) => onContainerDrop(e, null)}
-    >
-      <div
-        className={`px-3 py-2.5 flex items-center gap-2 cursor-grab ${styles.sectionHeader}`}
-      >
-        <span className="text-[9px] uppercase tracking-[0.14em] text-[rgba(0,0,0,0.5)]">
-          {TYPE_LABEL_PLURAL[typeName]}
-        </span>
-        <span className="text-[9px] flex-1 text-[rgba(0,0,0,0.3)]">{items.length}</span>
-      </div>
-      <div className="nodrag nowheel p-2.5">
-        <div className="grid grid-cols-2 gap-2">
-          {items.map((item) => <MiniCard key={item.card.id} item={item} />)}
-        </div>
-      </div>
-    </div>
+    <section aria-label={`${ROLE_LABEL_PLURAL[role]} not in a collection`} {...dropZone(ctx, zoneId, null)}
+      className="rounded-lg border overflow-hidden"
+      style={{ width: GROUP_W, background: ROLE_STYLE[role].group, borderColor: isOver ? "var(--color-ink-2)" : "var(--color-line)" }}>
+      <header className="flex items-baseline gap-2 px-3 h-10 pt-2.5 cursor-grab">
+        <h2 className="text-[13px] font-semibold text-ink">{ROLE_LABEL_PLURAL[role]}</h2>
+        <span className="text-[12px] text-muted">{items.length} not in a collection</span>
+      </header>
+      <div className="nodrag nowheel px-3 pb-3"><CardGrid items={items} from={null} /></div>
+    </section>
   );
 }
 
-const nodeTypes = { collection: CollectionNodeComponent, typeGroup: TypeGroupNodeComponent };
+const nodeTypes = { collection: CollectionContainer, role: RoleGroup };
 
-// ── Build RF nodes helper ─────────────────────────────────────────────────────
-function buildRfNodes(
-  collections: Collection[],
-  prevPositions: Map<string, { x: number; y: number }>,
-): Node[] {
-  const COL_W = 360;
-  const nodes: Node[] = [];
-
-  collections.forEach((col, i) => {
-    nodes.push({
-      id: col.id,
-      type: "collection",
-      position: prevPositions.get(col.id) ?? { x: (i % 2) * COL_W + 20, y: Math.floor(i / 2) * 420 + 20 },
-      style: { width: 320 },
-      data: { collectionId: col.id },
-    });
-  });
-
-  const colRows = Math.max(1, Math.ceil(collections.length / 2));
-  const typeBaseY = colRows * 420 + 32;
-  CARD_TYPES.forEach((t, i) => {
-    const id = `type::${t}`;
-    nodes.push({
-      id,
-      type: "typeGroup",
-      position: prevPositions.get(id) ?? { x: (i % 2) * COL_W + 20, y: typeBaseY + Math.floor(i / 2) * 360 },
-      style: { width: 320 },
-      data: { typeName: t },
-    });
-  });
-
-  return nodes;
+// Rough height of a group from what's in it, so groups can be packed into
+// columns without overlapping before React Flow has measured them.
+function estimateHeight(items: IdeaNode[], extra = 0): number {
+  const texts = items.filter((n) => !n.image).length;
+  const images = items.filter((n) => n.image).length;
+  const body = items.length === 0 ? 70 : Math.ceil(texts / 2) * 78 + Math.ceil(images / 3) * 82 + (texts && images ? 8 : 0);
+  return 44 + 24 + body + extra;
 }
 
-// ── Props ─────────────────────────────────────────────────────────────────────
-interface Props {
-  generations: Generation[];
-  assets: Asset[];
-  onHoverSources: (cardIds: Set<string>, assetIds: Set<string>) => void;
-  onBranchFrom: (card: ResultCard, action: ActionType) => void;
-  onDismissCard: (genId: string, cardId: string) => void;
-  onAddUserCard: (title: string, body: string) => void;
-  onAddAsReference: (dataUrl: string, label: string) => void;
-  collections: Collection[];
-  onAddCollection: (col: Collection) => void;
-  onRemoveCollection: (id: string) => void;
-  onUpdateCollection: (id: string, patch: Partial<Pick<Collection, "title" | "description" | "color">>) => void;
-  onAddCardsToCollection: (collectionId: string, cardIds: string[]) => void;
-  onMoveCardToCollection: (cardId: string, toCollectionId: string | null) => void;
-  onRemoveCardFromCollection: (collectionId: string, cardId: string) => void;
+function buildFlowNodes(p: ProjectState, ctx: Pick<Ctx, "nodes" | "unassigned">): FlowNode[] {
+  const saved = p.views.cluster.positions;
+  const cols = Object.values(p.collections).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const groups: { id: string; type: string; data: Record<string, unknown>; h: number }[] = [
+    ...cols.map((c) => ({
+      id: c.id, type: "collection", data: { collectionId: c.id },
+      h: estimateHeight(c.nodeIds.map((n) => ctx.nodes[n]).filter(Boolean), c.description ? 28 : 0),
+    })),
+    ...ROLES.filter((r) => ctx.unassigned[r].length > 0).map((r) => ({
+      id: `role::${r}`, type: "role", data: { role: r }, h: estimateHeight(ctx.unassigned[r]) - 4,
+    })),
+  ];
+  // Pack into two columns, each group into the shorter one.
+  const colY = [20, 20];
+  return groups.map((g) => {
+    const c = colY[0] <= colY[1] ? 0 : 1;
+    const position = saved[g.id] ?? { x: 20 + c * (GROUP_W + COL_GAP), y: colY[c] };
+    colY[c] += g.h + 24;
+    return { id: g.id, type: g.type, data: g.data, position };
+  });
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function ClusterView({
-  generations, assets,
-  onHoverSources, onBranchFrom, onDismissCard,
-  onAddUserCard: _onAddUserCard, onAddAsReference,
-  collections, onAddCollection, onRemoveCollection, onUpdateCollection,
-  onAddCardsToCollection: _onAddCardsToCollection, onMoveCardToCollection, onRemoveCardFromCollection,
-}: Props) {
-  const [selectedItem, setSelectedItem] = useState<ClusterItem | null>(null);
-  const [panelWidth, setPanelWidth] = useState(272);
-  const handlePanelResizeStart = useCallback((e: React.PointerEvent) => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startWidth = panelWidth;
-    const onMove = (ev: PointerEvent) => {
-      const delta = startX - ev.clientX;
-      setPanelWidth(Math.max(200, Math.min(560, startWidth + delta)));
-    };
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-  }, [panelWidth]);
+
+export default function ClusterView() {
+  const project = useProjectStore((s) => s.project)!;
+  const selection = useProjectStore((s) => s.selection);
+  const setSelection = useProjectStore((s) => s.setSelection);
+  const toggleSelected = useProjectStore((s) => s.toggleSelected);
+  const clearSelection = useProjectStore((s) => s.clearSelection);
+  const moveToCollection = useProjectStore((s) => s.moveToCollection);
+  const removeFromCollection = useProjectStore((s) => s.removeFromCollection);
+  const createCollection = useProjectStore((s) => s.createCollection);
+  const updateCollection = useProjectStore((s) => s.updateCollection);
+  const moveNode = useProjectStore((s) => s.moveNode);
+  const resetLayout = useProjectStore((s) => s.resetLayout);
+
   const [dragOverId, setDragOverId] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState({ title: "", description: "" });
-  const [newColForm, setNewColForm] = useState({
-    open: false, title: "", description: "", colorIdx: 0,
-  });
+  const [newCol, setNewCol] = useState({ open: false, title: "", description: "", colorIdx: 0 });
+  const [rf, setRf] = useState<ReactFlowInstance | null>(null);
 
-  const [rfNodes, setRfNodes, onRfNodesChange] = useNodesState<Node>(
-    buildRfNodes(collections, new Map())
-  );
+  const shown = useMemo(() => visibleNodes(project), [project]);
+  const ctx: Ctx = useMemo(() => {
+    const nodes = Object.fromEntries(shown.map((n) => [n.id, n]));
+    const inCollection = new Set(Object.values(project.collections).flatMap((c) => c.nodeIds));
+    const unassigned = Object.fromEntries(ROLES.map((r) => [r, shown.filter((n) => n.role === r && !inCollection.has(n.id))])) as Record<Role, IdeaNode[]>;
+    return {
+      nodes,
+      collections: project.collections,
+      unassigned,
+      selected: new Set(selection),
+      dragOverId,
+      setDragOverId,
+      onSelect: (id, additive) => {
+        if (additive) toggleSelected(id);
+        else setSelection(selection.length === 1 && selection[0] === id ? [] : [id]);
+      },
+      onDrop: (nodeId, from, to) => {
+        if (from === to) return;
+        if (to) moveToCollection(nodeId, from, to);
+        else if (from) removeFromCollection(from, nodeId);
+      },
+    };
+  }, [shown, project.collections, selection, dragOverId, setSelection, toggleSelected, moveToCollection, removeFromCollection]);
 
-  const [isExporting, setIsExporting] = useState(false);
-  const exportPng = useCallback(async () => {
-    if (!rfNodes.length) return;
-    setIsExporting(true);
-    try {
-      const bounds = getNodesBounds(rfNodes);
-      const IMG_W = 3200;
-      const IMG_H = Math.round(IMG_W * (bounds.height / bounds.width)) || 2000;
-      const { x, y, zoom } = getViewportForBounds(bounds, IMG_W, IMG_H, 0.05, 4, 0.08);
-      const viewport = document.querySelector(".react-flow__viewport") as HTMLElement | null;
-      if (!viewport) return;
-      const dataUrl = await toPng(viewport, {
-        backgroundColor: "#f7f6f3",
-        width: IMG_W,
-        height: IMG_H,
-        style: {
-          width: `${IMG_W}px`,
-          height: `${IMG_H}px`,
-          transform: `translate(${x}px, ${y}px) scale(${zoom})`,
-        },
-      });
-      const a = document.createElement("a");
-      a.href = dataUrl;
-      a.download = `revision-collections-${Date.now()}.png`;
-      a.click();
-    } finally {
-      setIsExporting(false);
-    }
-  }, [rfNodes]);
-
-  // Sync RF node list when collections are added / removed (positions preserved)
+  // Layout follows content; React Flow owns positions only while dragging.
+  const computed = useMemo(() => buildFlowNodes(project, ctx), [project, ctx]);
+  const [flowNodes, setFlowNodes] = useState<FlowNode[]>(computed);
   useEffect(() => {
-    setRfNodes((prev) => {
-      const prevPositions = new Map(prev.map((n) => [n.id, n.position]));
-      return buildRfNodes(collections, prevPositions);
+    setFlowNodes((current) => {
+      const live = new Map(current.map((n) => [n.id, n]));
+      return computed.map((n) => {
+        const existing = live.get(n.id);
+        return existing ? { ...n, measured: existing.measured, position: existing.dragging ? existing.position : n.position } : n;
+      });
     });
-  }, [collections, setRfNodes]);
+  }, [computed]);
 
-  const allItems: ClusterItem[] = useMemo(() =>
-    generations.flatMap((gen) =>
-      gen.cards.map((card) => ({ card, genId: gen.id, actionType: gen.actionType }))
-    ),
-    [generations]
-  );
+  // Refit when groups appear or disappear, readable rather than all-in-view.
+  const groupKey = computed.map((n) => n.id).join(",");
+  useEffect(() => {
+    const t = setTimeout(() => rf?.fitView({ padding: 0.1, maxZoom: 1, minZoom: 0.7, duration: 250 }), 60);
+    return () => clearTimeout(t);
+  }, [groupKey, rf]);
 
-  const genSiblings = selectedItem
-    ? allItems.filter((c) => c.genId === selectedItem.genId && c.card.id !== selectedItem.card.id)
-    : [];
-
-  // ── Drag handlers ─────────────────────────────────────────────────────────
-  const onCardDragStart = useCallback((e: React.DragEvent, cardId: string) => {
-    e.dataTransfer.setData("cluster-card-id", cardId);
-    e.dataTransfer.effectAllowed = "move";
+  const onNodesChange = useCallback((changes: NodeChange<FlowNode>[]) => {
+    setFlowNodes((nds) => applyNodeChanges(changes.filter((c) => c.type !== "select"), nds));
   }, []);
 
-  const onContainerDragOver = useCallback((e: React.DragEvent) => {
-    if (e.dataTransfer.types.includes("cluster-card-id")) e.preventDefault();
-  }, []);
-
-  const onContainerDragEnter = useCallback((e: React.DragEvent, id: string) => {
-    e.preventDefault();
-    if (e.dataTransfer.types.includes("cluster-card-id")) setDragOverId(id);
-  }, []);
-
-  const onContainerDragLeave = useCallback((e: React.DragEvent) => {
-    if (e.relatedTarget && (e.currentTarget as Element).contains(e.relatedTarget as unknown as Element)) return;
-    setDragOverId(null);
-  }, []);
-
-  const onContainerDrop = useCallback((e: React.DragEvent, collectionId: string | null) => {
-    e.preventDefault();
-    setDragOverId(null);
-    const cardId = e.dataTransfer.getData("cluster-card-id");
-    if (!cardId) return;
-    onMoveCardToCollection(cardId, collectionId);
-  }, [onMoveCardToCollection]);
-
-  // ── Collection edit ───────────────────────────────────────────────────────
-  const onDeleteCollection = useCallback((id: string) => {
-    onRemoveCollection(id);
-    if (selectedItem && collections.find((c) => c.id === id)?.cardIds.includes(selectedItem.card.id)) {
-      setSelectedItem(null);
-    }
-  }, [onRemoveCollection, selectedItem, collections]);
-
-  const onStartEdit = useCallback((id: string, title: string, description: string) => {
-    setEditingId(id); setEditForm({ title, description });
-  }, []);
-
-  const onConfirmEdit = useCallback((id: string) => {
-    if (!editForm.title.trim()) return;
-    onUpdateCollection(id, { title: editForm.title.trim(), description: editForm.description.trim() });
-    setEditingId(null);
-  }, [editForm, onUpdateCollection]);
-
-  const onCancelEdit = useCallback(() => setEditingId(null), []);
-
-  const onEditFormChange = useCallback((field: "title" | "description", value: string) => {
-    setEditForm((prev) => ({ ...prev, [field]: value }));
-  }, []);
-
-  // ── New collection ────────────────────────────────────────────────────────
-  function createCollection() {
-    if (!newColForm.title.trim()) return;
-    onAddCollection({
-      id: crypto.randomUUID(),
-      title: newColForm.title.trim(),
-      description: newColForm.description.trim(),
-      cardIds: [],
-      color: COLLECTION_COLORS[newColForm.colorIdx],
-      createdAt: new Date().toISOString(),
-    });
-    setNewColForm({ open: false, title: "", description: "", colorIdx: 0 });
+  function addCollection(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (!newCol.title.trim()) return;
+    const id = createCollection(newCol.title.trim(), COLLECTION_COLORS[newCol.colorIdx]);
+    if (id && newCol.description.trim()) updateCollection(id, { description: newCol.description.trim() });
+    setNewCol({ open: false, title: "", description: "", colorIdx: (newCol.colorIdx + 1) % COLLECTION_COLORS.length });
   }
 
-  const onCardClick = useCallback((item: ClusterItem) => {
-    setSelectedItem((prev) => prev?.card.id === item.card.id ? null : item);
-  }, []);
+  const exportPng = useCallback(async () => {
+    if (!rf) return;
+    const nodes = rf.getNodes();
+    if (!nodes.length) return;
+    const bounds = getNodesBounds(nodes);
+    const W = 3200;
+    const H = Math.round(W * (bounds.height / bounds.width)) || 2000;
+    const { x, y, zoom } = getViewportForBounds(bounds, W, H, 0.05, 4, 0.08);
+    const viewport = document.querySelector(".react-flow__viewport") as HTMLElement | null;
+    if (!viewport) return;
+    const dataUrl = await toPng(viewport, {
+      backgroundColor: "#f3f4f6", width: W, height: H,
+      style: { width: `${W}px`, height: `${H}px`, transform: `translate(${x}px, ${y}px) scale(${zoom})` },
+    });
+    const a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = `${project.title || "collections"}-collections-${Date.now()}.png`;
+    a.click();
+  }, [rf, project.title]);
 
-  const ctxValue: ClusterCtxType = useMemo(() => ({
-    allItems, collections, selectedItem, dragOverId, editingId, editForm,
-    onCardClick, onCardDragStart, onContainerDragOver, onContainerDragEnter,
-    onContainerDragLeave, onContainerDrop, onDeleteCollection, onRemoveCardFromCollection,
-    onStartEdit, onConfirmEdit, onCancelEdit, onEditFormChange, generations,
-  }), [
-    allItems, collections, selectedItem, dragOverId, editingId, editForm,
-    onCardClick, onCardDragStart, onContainerDragOver, onContainerDragEnter,
-    onContainerDragLeave, onContainerDrop, onDeleteCollection, onRemoveCardFromCollection,
-    onStartEdit, onConfirmEdit, onCancelEdit, onEditFormChange, generations,
-  ]);
-
-  if (allItems.length === 0) {
+  if (shown.length === 0 && Object.keys(project.collections).length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center text-center py-24 text-[#bbb]">
-        <div>
-          <p className="text-sm mb-1">Run an action to see cards.</p>
-          <p className="text-xs">Create collections to organize them.</p>
+      <div className="flex-1 flex items-center justify-center">
+        <div className="floating max-w-sm px-5 py-4 text-center">
+          <p className="text-[15px] font-semibold text-ink mb-1">Nothing to group yet</p>
+          <p className="text-[13px] text-ink-2">Build the tree first, then group its nodes into collections here.</p>
         </div>
       </div>
     );
   }
 
   return (
-    <ClusterCtx.Provider value={ctxValue}>
-      <div className="flex h-full w-full overflow-hidden">
-        {/* ── RF Canvas ────────────────────────────────────────────────────── */}
-        <div className="flex-1 h-full overflow-hidden bg-[#f7f6f3]">
-          <ReactFlow
-            nodes={rfNodes}
-            edges={[]}
-            nodeTypes={nodeTypes}
-            onNodesChange={onRfNodesChange}
-            fitView
-            fitViewOptions={{ padding: 0.15 }}
-            nodesDraggable={true}
-            nodesConnectable={false}
-            elementsSelectable={false}
-            panOnScroll
-            zoomOnScroll={false}
-            minZoom={0.3}
-            maxZoom={2}
-            onClick={() => { setSelectedItem(null); setEditingId(null); }}
-          >
-            <Background color="#bbb" gap={24} size={1} />
-
-            {/* Top-right controls */}
-            <Panel position="top-right">
-              {!newColForm.open && (
-                <div className="flex items-center gap-1.5 mb-1.5">
-                  <button
-                    onClick={exportPng}
-                    disabled={isExporting}
-                    title="Export canvas as PNG"
-                    className={`bg-white border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 text-[11px] flex items-center gap-1 transition-colors ${styles.sq} ${
-                      isExporting
-                        ? "text-[rgba(0,0,0,0.3)] cursor-wait"
-                        : "text-[rgba(0,0,0,0.45)] hover:text-black hover:border-black"
-                    }`}
-                  >
-                    <span className="text-[12px] leading-none">↓</span>
-                    {isExporting ? "Exporting…" : "Export PNG"}
-                  </button>
-                </div>
-              )}
-              {newColForm.open ? (
-                <div className={`bg-white border border-[rgba(0,0,0,0.18)] shadow-lg p-4 w-64 flex flex-col gap-3 ${styles.sq}`}>
-                  <p className="text-[11px] uppercase tracking-[0.12em] text-[rgba(0,0,0,0.5)]">New Collection</p>
-                  <input
-                    autoFocus
-                    placeholder="Collection title…"
-                    value={newColForm.title}
-                    onChange={(e) => setNewColForm((p) => ({ ...p, title: e.target.value }))}
-                    onKeyDown={(e) => e.key === "Enter" && createCollection()}
-                    className={`text-[11px] border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 outline-none focus:border-black ${styles.sq}`}
-                  />
-                  <input
-                    placeholder="Description (optional)…"
-                    value={newColForm.description}
-                    onChange={(e) => setNewColForm((p) => ({ ...p, description: e.target.value }))}
-                    onKeyDown={(e) => e.key === "Enter" && createCollection()}
-                    className={`text-[11px] border border-[rgba(0,0,0,0.2)] px-2.5 py-1.5 outline-none focus:border-black ${styles.sq}`}
-                  />
-                  <div className="flex gap-1.5 flex-wrap">
-                    {COLLECTION_COLORS.map((color, i) => (
-                      <button
-                        key={color}
-                        onClick={() => setNewColForm((p) => ({ ...p, colorIdx: i }))}
-                        className={`w-5 h-5 border-2 transition-transform ${styles.sq}`}
-                        style={{
-                          background: color,
-                          borderColor: newColForm.colorIdx === i ? "#333" : "transparent",
-                          transform: newColForm.colorIdx === i ? "scale(1.2)" : "scale(1)",
-                        }}
-                      />
-                    ))}
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={createCollection}
-                      className={`text-[11px] text-white bg-black hover:bg-[#333] px-3 py-1 transition-colors ${styles.sq}`}
-                    >Create</button>
-                    <button
-                      onClick={() => setNewColForm((p) => ({ ...p, open: false, title: "", description: "" }))}
-                      className="text-[11px] text-[rgba(0,0,0,0.4)] hover:text-black transition-colors"
-                    >Cancel</button>
-                  </div>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setNewColForm((p) => ({ ...p, open: true }))}
-                  className={`bg-white border border-[rgba(0,0,0,0.2)] hover:border-black text-[11px] text-[rgba(0,0,0,0.5)] hover:text-black px-4 py-2 transition-colors ${styles.sq}`}
-                >
-                  + New Collection
-                </button>
-              )}
-            </Panel>
-          </ReactFlow>
-        </div>
-
-        {/* ── Detail panel ─────────────────────────────────────────────────── */}
-        {selectedItem && (
-          <div className="relative flex shrink-0" style={{ width: panelWidth }}>
-            <div
-              onPointerDown={handlePanelResizeStart}
-              className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize z-10 hover:bg-blue-300/40 transition-colors"
-            />
-            <ClusterDetailPanel
-              item={selectedItem}
-              genSiblings={genSiblings}
-              assets={assets}
-              sourceCardIds={generations.find((g) => g.id === selectedItem.genId)?.sourceCardIds ?? []}
-              sourceDraftIds={generations.find((g) => g.id === selectedItem.genId)?.includedDraftIds ?? []}
-              sourceRefIds={generations.find((g) => g.id === selectedItem.genId)?.includedReferenceIds ?? []}
-              onBranch={(action) => { onBranchFrom(selectedItem.card, action); setSelectedItem(null); }}
-              onRemove={() => { onDismissCard(selectedItem.genId, selectedItem.card.id); setSelectedItem(null); }}
-              onSelectSibling={(id) => {
-                const found = allItems.find((c) => c.card.id === id);
-                if (found) setSelectedItem(found);
-              }}
-              onClose={() => setSelectedItem(null)}
-              onAddAsReference={onAddAsReference}
-            />
-          </div>
+    <ClusterCtx.Provider value={ctx}>
+      <div className={`relative flex-1 h-full overflow-hidden ${styles.canvas}`}>
+        {/* Toolbar first in the page so Tab reaches it before the cards. */}
+      <div className="absolute top-3 right-3 z-10 flex items-start gap-2">
+        {newCol.open ? (
+          <form className="floating p-4 w-72 flex flex-col gap-3" onSubmit={addCollection}
+            onKeyDown={(e) => { if (e.key === "Escape") setNewCol((c) => ({ ...c, open: false })); }}>
+            <h2 className="text-[15px] font-semibold text-ink">New collection</h2>
+            <div>
+              <label htmlFor="new-col-title" className="field-label">Name</label>
+              <input id="new-col-title" autoFocus className="field" value={newCol.title}
+                onChange={(e) => setNewCol((c) => ({ ...c, title: e.target.value }))} />
+            </div>
+            <div>
+              <label htmlFor="new-col-desc" className="field-label">Description (optional)</label>
+              <input id="new-col-desc" className="field" value={newCol.description}
+                onChange={(e) => setNewCol((c) => ({ ...c, description: e.target.value }))} />
+            </div>
+            <fieldset>
+              <legend className="field-label">Colour</legend>
+              <div role="radiogroup" className="flex gap-1.5 flex-wrap">
+                {COLLECTION_COLORS.map((color, i) => (
+                  <button type="button" key={color} role="radio" aria-checked={newCol.colorIdx === i} aria-label={COLLECTION_COLOR_NAMES[i]}
+                    onClick={() => setNewCol((c) => ({ ...c, colorIdx: i }))}
+                    className="w-6 h-6 rounded-full border-2 transition-transform"
+                    style={{ background: color, borderColor: newCol.colorIdx === i ? "var(--color-ink)" : "transparent", transform: newCol.colorIdx === i ? "scale(1.1)" : undefined }} />
+                ))}
+              </div>
+            </fieldset>
+            <div className="flex gap-1.5 justify-end">
+              <button type="button" className="btn" onClick={() => setNewCol((c) => ({ ...c, open: false, title: "", description: "" }))}>Cancel</button>
+              <button type="submit" className="btn btn-primary" disabled={!newCol.title.trim()}>Create</button>
+            </div>
+          </form>
+        ) : (
+          <button className="btn btn-primary shadow-[var(--shadow-float)]" onClick={() => setNewCol((c) => ({ ...c, open: true }))}>
+            <Plus size={15} aria-hidden /> New collection
+          </button>
         )}
+        <div className="shadow-[var(--shadow-float)] rounded-md">
+          <Menu label="More collection actions" items={[
+            { label: "Tidy layout", onSelect: () => resetLayout("cluster"), disabled: Object.keys(project.views.cluster.positions).length === 0 },
+            { label: "Export as PNG", onSelect: exportPng },
+          ]} />
+        </div>
+      </div>
+        <ReactFlow
+          proOptions={{ hideAttribution: true }}
+          nodes={flowNodes}
+          edges={[]}
+          nodeTypes={nodeTypes}
+          onNodesChange={onNodesChange}
+          onNodeDragStop={(_e, n) => moveNode("cluster", n.id, n.position)}
+          onInit={setRf}
+          fitView
+          fitViewOptions={{ padding: 0.1, maxZoom: 1, minZoom: 0.7 }}
+          nodesDraggable
+          nodesConnectable={false}
+          elementsSelectable={false}
+          panOnScroll
+          zoomOnScroll={false}
+          minZoom={0.3}
+          maxZoom={2}
+          onPaneClick={clearSelection}
+          aria-label="Collections"
+        >
+          <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#c9ccd3" />
+        </ReactFlow>
       </div>
     </ClusterCtx.Provider>
-  );
-}
-
-// ── Cluster detail panel ──────────────────────────────────────────────────────
-function ClusterDetailPanel({
-  item, genSiblings, assets,
-  sourceCardIds: _sourceCardIds, sourceDraftIds, sourceRefIds,
-  onBranch, onRemove, onSelectSibling, onClose, onAddAsReference,
-}: {
-  item: ClusterItem;
-  genSiblings: ClusterItem[];
-  assets: Asset[];
-  sourceCardIds: string[];
-  sourceDraftIds: string[];
-  sourceRefIds: string[];
-  onBranch: (action: ActionType) => void;
-  onRemove: () => void;
-  onSelectSibling: (id: string) => void;
-  onClose: () => void;
-  onAddAsReference: (dataUrl: string, label: string) => void;
-}) {
-  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
-  const { card } = item;
-  const s = TYPE_STYLE[card.type] ?? TYPE_STYLE.concept;
-  const isVisual = card.type === "visual";
-  const mainImage = isVisual ? (card as VisualCard).imageDataUrl : undefined;
-
-  const sourceDrafts = sourceDraftIds
-    .map((id) => assets.find((a) => a.id === id))
-    .filter((a): a is Asset => a !== undefined);
-
-  const sourceRefs = sourceRefIds
-    .map((id) => assets.find((a) => a.id === id))
-    .filter((a): a is Asset => a !== undefined);
-
-  const imageSiblings = genSiblings.filter(
-    (sib): sib is ClusterItem & { card: VisualCard } =>
-      sib.card.type === "visual" && !!(sib.card as VisualCard).imageDataUrl
-  );
-  const textSiblings = genSiblings.filter((sib) => !(imageSiblings as ClusterItem[]).includes(sib));
-
-  return (
-    <>
-      <aside className="w-full h-full border-l border-[#e4e3e0] bg-white flex flex-col overflow-hidden">
-        <div className="px-4 py-3 border-b border-[#f0efec] shrink-0">
-          <div className="flex items-start justify-between gap-2 mb-2">
-            <span className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded" style={{ background: s.badgeBg, color: s.badgeText }}>
-              {TYPE_LABEL_SINGLE[card.type]}
-            </span>
-            <div className="flex items-center gap-1.5 shrink-0 -mt-0.5">
-              <button onClick={onRemove} className="text-[11px] text-[#ccc] hover:text-red-400 transition-colors">✕ Remove</button>
-              <span className="text-[#e4e3e0]">|</span>
-              <button onClick={onClose} className="text-[11px] text-[#bbb] hover:text-[#555] transition-colors">Close</button>
-            </div>
-          </div>
-          <p className="text-[12px] font-semibold text-[#222] leading-snug">{card.title}</p>
-          <p className="text-[10px] text-[#bbb] mt-0.5">{ACTION_LABEL[item.actionType]}</p>
-        </div>
-
-        <div className="flex-1 overflow-y-auto">
-          {(sourceDrafts.length > 0 || sourceRefs.length > 0) && (
-            <div className="px-4 py-3 border-b border-[#f0efec]">
-              <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold mb-2">Sources</p>
-              <div className="flex flex-col gap-1.5">
-                {sourceDrafts.map((a) => (
-                  <div key={a.id} className="px-2.5 py-2 rounded-lg flex items-center gap-2 bg-[#f5f5f4] border border-[#ccc]">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={a.dataUrl} alt={a.fileName} className="w-8 h-8 rounded object-cover shrink-0" />
-                    <div>
-                      <p className="text-[9px] text-[#888] uppercase tracking-wide font-semibold mb-0.5">✎ draft</p>
-                      <p className="text-[10px] text-[#333] truncate max-w-[160px]">{a.fileName}</p>
-                    </div>
-                  </div>
-                ))}
-                {sourceRefs.map((a) => (
-                  <div key={a.id} className="px-2.5 py-2 rounded-lg flex items-center gap-2 bg-[#f0f0ff] border border-[#c5c5e8]">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={a.dataUrl} alt={a.fileName} className="w-8 h-8 rounded object-cover shrink-0" />
-                    <div>
-                      <p className="text-[9px] text-[#4444aa] uppercase tracking-wide font-semibold mb-0.5">◈ reference</p>
-                      <p className="text-[10px] text-[#333] truncate max-w-[160px]">{a.fileName}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {mainImage && (
-            <div className="border-b border-[#f0efec]">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={mainImage} alt={card.title} className="w-full object-cover cursor-zoom-in" onClick={() => setLightboxSrc(mainImage)} />
-              <div className="px-3 py-2 flex items-center justify-between gap-2">
-                <p className="text-[9px] text-[#bbb]">Click to enlarge · {(card as VisualCard).dimensionLabel}</p>
-                <button
-                  onClick={() => onAddAsReference(mainImage, (card as VisualCard).dimensionLabel)}
-                  className="text-[9px] text-[#555] hover:text-[#111] border border-[#ccc] hover:border-[#888] px-2 py-0.5 rounded transition-colors shrink-0"
-                >+ Use as Input</button>
-              </div>
-            </div>
-          )}
-
-          {imageSiblings.length > 0 && (
-            <div className="border-b border-[#f0efec] p-3">
-              <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold mb-2">Images from same generation</p>
-              <div className="grid grid-cols-3 gap-1.5">
-                {imageSiblings.map((sib) => {
-                  const sibCard = sib.card as VisualCard;
-                  return (
-                    <div key={sib.card.id} className="relative group/img aspect-square rounded overflow-hidden bg-[#f7f6f3]">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={sibCard.imageDataUrl} alt={sibCard.title} className="w-full h-full object-cover cursor-pointer" onClick={() => onSelectSibling(sib.card.id)} />
-                      <button className="absolute inset-0 bg-black/0 group-hover/img:bg-black/30 transition-colors flex items-center justify-center" onClick={() => setLightboxSrc(sibCard.imageDataUrl!)}>
-                        <span className="text-white text-[10px] opacity-0 group-hover/img:opacity-100 transition-opacity bg-black/40 px-1.5 py-0.5 rounded">⤢</span>
-                      </button>
-                      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/50 to-transparent px-1.5 py-1 opacity-0 group-hover/img:opacity-100 transition-opacity cursor-pointer" onClick={() => onSelectSibling(sib.card.id)}>
-                        <p className="text-white text-[8px] leading-tight truncate">{sibCard.dimensionLabel}</p>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          <div className="p-4 border-b border-[#f0efec] flex flex-col gap-3">
-            <CardDetails card={card} />
-          </div>
-
-          {textSiblings.length > 0 && (
-            <div className="p-3 border-b border-[#f0efec]">
-              <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold mb-2">From same generation ({genSiblings.length})</p>
-              <div className="flex flex-col gap-1.5">
-                {textSiblings.map((sib) => {
-                  const sibStyle = TYPE_STYLE[sib.card.type] ?? TYPE_STYLE.concept;
-                  return (
-                    <button key={sib.card.id} onClick={() => onSelectSibling(sib.card.id)} className="text-left px-2.5 py-2 rounded-lg border transition-colors hover:opacity-80" style={{ borderColor: sibStyle.border, background: sibStyle.bg }}>
-                      <div className="flex items-center gap-1.5 mb-0.5">
-                        <span className="text-[8px] font-semibold uppercase tracking-wide px-1 py-0.5 rounded" style={{ background: sibStyle.badgeBg, color: sibStyle.badgeText }}>{TYPE_LABEL_SINGLE[sib.card.type]}</span>
-                      </div>
-                      <p className="text-[10px] font-medium text-[#333] leading-snug line-clamp-2">{sib.card.title}</p>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          <div className="p-3 flex flex-col gap-1">
-            <p className="text-[9px] text-[#bbb] uppercase tracking-wide font-semibold px-1 pt-1 pb-0.5">Branch from here</p>
-            {BRANCH_ACTIONS.map((a) => (
-              <button key={a.id} onClick={() => onBranch(a.id)} title={a.title} className="w-full text-left text-[11px] px-3 py-1.5 rounded-lg hover:bg-blue-50 hover:text-[#2563eb] text-[#555] transition-colors">
-                {a.label} →
-              </button>
-            ))}
-          </div>
-        </div>
-      </aside>
-
-      {lightboxSrc && (
-        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-8" onClick={() => setLightboxSrc(null)}>
-          <div className="relative max-w-4xl max-h-full" onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => setLightboxSrc(null)} className="absolute -top-9 right-0 text-white/60 hover:text-white text-sm transition-colors">✕ Close</button>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={lightboxSrc} alt="Full size" className="max-w-full max-h-[82vh] object-contain rounded-xl shadow-2xl" />
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
-
-// ── Card detail fields ────────────────────────────────────────────────────────
-function CardDetails({ card }: { card: ResultCard }) {
-  switch (card.type) {
-    case "concept":
-      return (<><Field label="Description" value={card.description} /><Field label="Rationale" value={card.rationale} /></>);
-    case "motif":
-      return (<><Field label="Visual Quality" value={card.visualQuality} /><Field label="How It Conveys The Idea" value={card.howItConveysIdea} /><Field label="Category" value={card.category} /></>);
-    case "visual":
-      return (<><Field label="Dimension" value={card.dimensionLabel} /><Field label="Analysis" value={card.analysisText} />{card.error && <Field label="Error" value={card.error} isError />}</>);
-    case "note":
-      return <Field label="Note" value={card.body} />;
-  }
-}
-
-function Field({ label, value, isError }: { label: string; value: string; isError?: boolean }) {
-  if (!value) return null;
-  return (
-    <div>
-      <p className="text-[9px] font-semibold uppercase tracking-wide text-[#bbb] mb-0.5">{label}</p>
-      <p className={`text-[11px] leading-relaxed ${isError ? "text-red-500" : "text-[#444]"}`}>{value}</p>
-    </div>
   );
 }
