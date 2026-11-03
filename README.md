@@ -1,61 +1,20 @@
-# Design Workspace
+# ReVision Design Workspace
 
-This app is a workspace for design ideation. It is a prototype for HCI research.
+ReVision is a workspace for design ideation, as described in https://arxiv.org/abs/2609.33911 
 
-You write a design brief. The app uses Gemini models to make concepts, motifs and images from the brief. You keep the ideas in a tree. You sort the ideas into collections.
+It aims to help visual designers better understand inspiration images by decomposing them into abstract "concepts"  and visual "motifs", making the connections between these explicit and explorable in order to support more divergent exploration of a design space. 
 
 ---
 
 ## Requirements
 
-- Node.js 22 or a newer version.
-- A Gemini API key.
+- Node.js 22 or a newer version
+- Gemini API key, placed either in shell profile or a git-ignored env file
 
----
+## Quickstart
 
-## Set the API key
-
-The server reads the key from the `GEMINI_API_KEY` environment variable.
-
-Do one of these two procedures:
-
-**Procedure A: use your shell profile**
-
-1. Open `~/.zshrc`.
-2. Add this line: `export GEMINI_API_KEY=your_key`.
-3. Open a new terminal.
-
-**Procedure B: use a local file**
-
-1. Copy `.env.local.example` to `.env.local`.
-2. In `.env.local`, replace `your_api_key_here` with your key.
-
-Note: If you set the key in your shell, the app uses that key. It does not use the key in `.env.local`.
-
-CAUTION: Do not put the key in a file that git tracks. Git ignores `.env*.local` files.
-
----
-
-## Start the app
-
-1. Go to the `workspace` folder.
-2. Type `npm install`.
-3. Type `npm run dev`.
-4. Open http://localhost:3000 in your browser.
-
----
-
-## Do the tests
-
-Do these commands before you commit a change:
-
-| Command | Function |
-| --- | --- |
-| `npm test` | Does the unit tests (Vitest). |
-| `npm run typecheck` | Finds TypeScript errors. |
-| `npm run build` | Makes a production build. |
-
----
+Clone the repo ->  `npm install` -> `npm run dev`.
+Open http://localhost:3000 in a browser.
 
 ## How to use the app
 
@@ -68,9 +27,7 @@ The first page (`/`) shows all projects.
 - Click a project card to open the project.
 - Use the **⋯** menu on a card to rename, export or delete the project.
 
-An upload does not change the project that you exported. The new project has its own ID, so it does not replace a project in this browser, even if it has the same name.
-
-Each project has its own brief, tree and collections.
+Each project is associated with its own design brief, tree and collections.
 
 ### The tree view
 
@@ -83,7 +40,7 @@ There are four types of node:
 - **Visual**: an image.
 - **Note**: your own text.
 
-You can change the type of a node.
+The type of a node can be changed. 
 
 The tree has three tools:
 
@@ -101,9 +58,9 @@ Select one or more nodes. Then select an action on the toolbar. A window opens. 
 
 | Action | Input | Output |
 | --- | --- | --- |
-| **Expand** | Nodes, images or connections | New concepts and motifs. Use the sliders to set the quantity (maximum 10 of each). |
-| **Visual variations** | Ideas | One image for each visual dimension that you select: Balance, Shape, Light, Color or Dynamics. The dimensions come from Rudolf Arnheim. |
-| **Visualize** | Ideas or connections | Images that show the idea. Use the slider to set the quantity (maximum 4 for each idea). |
+| **Expand** | Nodes, images or connections | New concepts and motifs; quantity set via sliders  |
+| **Visual variations** | Ideas | One image showing a concept board for how an initial image can be varied to highlight a visual dimension that the user selects (Balance, Shape, Light, Color or Dynamics). The dimensions come from Rudolf Arnheim. |
+| **Visualize** | Ideas or connections | Images that show the idea; quantity set via sliders. |
 
 The app sends a maximum of 4 requests at the same time. If some requests fail, you can try again. The app sends only the failed requests again.
 
@@ -220,18 +177,3 @@ The server writes each model call to the `logs/` folder. The folder name has the
 | `src/components/` | The React components. |
 | `tests/` | The unit tests. |
 | `prompts.txt` | The prompt text for the image actions. |
-
----
-
-## How to change the app
-
-| To change | Edit |
-| --- | --- |
-| The models | `src/server/model.ts` (`TEXT_MODEL` and `IMAGE_MODEL`) |
-| The prompts | `prompts.txt` and `src/server/prompts.ts` |
-| The connection readings and questions | `src/domain/relations.ts` |
-| The prices | `src/domain/pricing.ts` |
-| The visual dimensions | `src/lib/dimensions.ts`. Remove `hidden: true` to show a dimension again. |
-| The default and maximum quantities | `src/domain/wire.ts` |
-
-When you add a function, add a test for it in `tests/`.
