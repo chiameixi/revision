@@ -17,22 +17,25 @@
  *   selected image is the base; the rest is context. One job per idea per image.
  */
 
-import type { ActionType, Edge, EdgeId, IdeaNode, ImageId, NodeId, Region, RunId } from "@/domain/types";
+import { BRIEF_ID, type ActionType, type Edge, type EdgeId, type IdeaNode, type ImageId, type NodeId, type Region, type Relation, type RunId } from "@/domain/types";
 import {
   DEFAULT_COUNTS,
   DEFAULT_IMAGES_PER_IDEA,
+  type ActionContract,
   type ActionReply,
   type ActionRequest,
   type ActionResponse,
   type ExpandResponse,
   type ImageResponse,
+  type SuggestRelationRequest,
   type Usage,
   type WireLink,
   type WireNode,
+  type WireRelation,
 } from "@/domain/wire";
 import { makeEdge, makeNode } from "@/domain/builders";
 import { newId } from "@/domain/ids";
-import { DIMENSIONS, DIMENSION_MAP } from "@/lib/dimensions";
+import { DIMENSION_MAP, OFFERED_DIMENSIONS } from "@/lib/dimensions";
 
 export interface RunOptions {
   instructions?: string;
@@ -44,7 +47,7 @@ export interface RunOptions {
 export interface Job<A extends ActionType = ActionType> {
   action: A;
   req: ActionRequest<A>;
-  parents: NodeId[];          // provenance for this job's outputs
+  parents: NodeId[];          // provenance for this job's outputs; [BRIEF_ID] for a brief-only expand
   label: string;              // shown if the job fails
   sourceEdgeId?: EdgeId;      // the link this job explores, recorded on its outputs
   imageNodeIds?: NodeId[];    // expand: which node each sent image belongs to, in order
@@ -70,7 +73,7 @@ export function toWire(n: IdeaNode, images: Record<ImageId, string>): WireNode {
 }
 
 function toWireLink(l: Selection["links"][number], images: Record<ImageId, string>): WireLink {
-  return { id: l.edge.id, from: toWire(l.from, images), to: toWire(l.to, images), label: l.edge.label };
+  return { id: l.edge.id, from: toWire(l.from, images), to: toWire(l.to, images), relation: l.edge.relation };
 }
 
 // `images` maps imageId → data URL for every input that has an image.
@@ -99,7 +102,8 @@ export function planRun(
       return {
         ok: true,
         jobs: [{
-          action, label: "Expand", parents: ids(all),
+          // With nothing selected the outputs come from the brief, so they connect to it.
+          action, label: "Expand", parents: all.length ? ids(all) : [BRIEF_ID],
           sourceEdgeId: sel.links.length === 1 ? sel.links[0].edge.id : undefined,
           imageNodeIds: ids(all.filter(hasImage)),
           req: {
@@ -113,7 +117,7 @@ export function planRun(
     case "visual_variations": {
       const base = all.find(hasImage);
       if (!base) return { ok: false, error: "Select at least one image to make visual variations." };
-      const dims = opts.dimensionIds ?? DIMENSIONS.map((d) => d.id);
+      const dims = opts.dimensionIds ?? OFFERED_DIMENSIONS.map((d) => d.id);
       if (dims.length === 0) return { ok: false, error: "Choose at least one dimension." };
       const context = all.filter((n) => n !== base).map(wire);
       return {
@@ -130,7 +134,7 @@ export function planRun(
     case "conceptual_variations": {
       const ideas = sel.nodes.filter((n) => n.role === "concept" || n.role === "motif");
       if (ideas.length === 0 && sel.links.length === 0) {
-        return { ok: false, error: "Select at least one concept, motif or link to visualize." };
+        return { ok: false, error: "Select at least one concept, motif or connection to visualize." };
       }
       const base = sel.nodes.find((n) => !ideas.includes(n) && hasImage(n));
       const context = sel.nodes.filter((n) => !ideas.includes(n) && n !== base).map(wire);
@@ -168,6 +172,20 @@ export function toRegion(box: unknown): Region | undefined {
   return { box: [ymin, xmin, ymax, xmax] };
 }
 
+// The model numbers inputs from 1 in parent order. Keeps the first usable entry per
+// input and drops numbers that don't exist or entries with no word.
+export function relationsByParent(parents: NodeId[], relations: WireRelation[] = []): (Relation | undefined)[] {
+  const out: (Relation | undefined)[] = parents.map(() => undefined);
+  for (const r of relations) {
+    const i = r.input - 1;
+    const word = typeof r.word === "string" ? r.word.trim() : "";
+    if (!Number.isInteger(r.input) || i < 0 || i >= parents.length || out[i] || !word) continue;
+    const explanation = typeof r.explanation === "string" ? r.explanation.trim() : "";
+    out[i] = explanation ? { word, explanation } : { word };
+  }
+  return out;
+}
+
 export interface Outputs {
   nodes: IdeaNode[];
   edges: Edge[];
@@ -181,14 +199,15 @@ function mimeOf(dataUrl: string): string {
 export function outputsFor(job: Job, res: ActionResponse, runId: RunId): Outputs {
   const out: Outputs = { nodes: [], edges: [], images: [] };
   // `from` says which input image the output came from (expand only), so that
-  // edge can carry the region.
-  const add = (node: IdeaNode, from?: { sourceImage?: number; box?: number[] }) => {
+  // edge can carry the region, and how the output connects to each input.
+  const add = (node: IdeaNode, from?: { sourceImage?: number; box?: number[]; relations?: WireRelation[] }) => {
     out.nodes.push(node);
     const sourceId = from?.sourceImage ? job.imageNodeIds?.[from.sourceImage - 1] : undefined;
-    for (const parent of job.parents) {
+    const relations = relationsByParent(job.parents, from?.relations);
+    job.parents.forEach((parent, i) => {
       const region = parent === sourceId ? toRegion(from?.box) ?? "whole" : undefined;
-      out.edges.push(makeEdge(parent, node.id, "derived_from", { origin: { kind: "generated", action: job.action, runId }, region }));
-    }
+      out.edges.push(makeEdge(parent, node.id, "derived_from", { origin: { kind: "generated", action: job.action, runId }, region, relation: relations[i] }));
+    });
   };
   const origin = (params: { dimensionId?: string } = {}) => {
     const all = { ...params, ...(job.sourceEdgeId ? { sourceEdgeId: job.sourceEdgeId } : {}) };
@@ -203,7 +222,7 @@ export function outputsFor(job: Job, res: ActionResponse, runId: RunId): Outputs
     for (const m of r.motifs) {
       add(makeNode({
         role: "motif", title: m.title, body: m.visualQuality,
-        details: { howItConveysIdea: m.howItConveysIdea, category: m.category },
+        details: { howItConveysIdea: m.howItConveysIdea || undefined, category: m.category },
       }, origin()), m);
     }
     return out;
@@ -258,7 +277,7 @@ export class ActionCallError extends Error {
 
 export type CallActionFn = (action: ActionType, req: ActionRequest) => Promise<ActionResult>;
 
-export const callAction: CallActionFn = async (action, req) => {
+async function post<A extends keyof ActionContract>(action: A, req: ActionRequest<A>): Promise<{ result: ActionResponse<A>; usage?: Usage }> {
   let res: Response;
   try {
     res = await fetch(`/api/actions/${action}`, {
@@ -269,7 +288,7 @@ export const callAction: CallActionFn = async (action, req) => {
   } catch {
     throw new ActionCallError("Couldn't reach the server. Check that it's running.");
   }
-  let reply: ActionReply;
+  let reply: ActionReply<A>;
   try {
     reply = await res.json();
   } catch {
@@ -277,4 +296,10 @@ export const callAction: CallActionFn = async (action, req) => {
   }
   if ("error" in reply) throw new ActionCallError(readableError(reply.error), reply.usage);
   return { result: reply.result, usage: reply.usage };
-};
+}
+
+export const callAction: CallActionFn = (action, req) => post(action, req);
+
+export type CallSuggestFn = (req: SuggestRelationRequest) => Promise<{ result: Relation; usage?: Usage }>;
+
+export const callSuggest: CallSuggestFn = (req) => post("suggest_relation", req);

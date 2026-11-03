@@ -1,7 +1,7 @@
 // Pure helpers over ProjectState. No React, no IO.
 // Everything here is derived on demand and never stored.
 
-import type { Edge, EdgeId, IdeaNode, NodeId, ProjectId, ProjectState, ProjectSummary } from "./types";
+import { BRIEF_ID, type Edge, type EdgeId, type IdeaNode, type NodeId, type ProjectId, type ProjectState, type ProjectSummary } from "./types";
 
 export function emptyProject(id: ProjectId, title: string, at: string): ProjectState {
   return {
@@ -61,6 +61,20 @@ function rawParents(p: ProjectState, id: NodeId): NodeId[] {
     if (e.kind === "derived_from" && !e.hidden && e.to === id && p.nodes[e.from]) out.push(e.from);
   }
   return out;
+}
+
+// What a node's incoming connections say, as one line for the model:
+// "(Ebb) restlessness — <explanation>". Undefined when none say anything.
+export function incomingRelations(p: ProjectState, id: NodeId): string | undefined {
+  const parts: string[] = [];
+  for (const e of Object.values(p.edges)) {
+    if (e.kind !== "derived_from" || e.hidden || e.to !== id) continue;
+    const from = e.from === BRIEF_ID ? "the brief" : p.nodes[e.from] && !p.nodes[e.from].hidden ? p.nodes[e.from].title : null;
+    const r = e.relation;
+    if (!from || !r) continue;
+    parts.push(`(${from}) ${[r.word, r.explanation].filter(Boolean).join(" — ")}`);
+  }
+  return parts.length ? parts.join(" ") : undefined;
 }
 
 // Nearest visible ancestors, walking up through removed (hidden) nodes.

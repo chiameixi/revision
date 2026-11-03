@@ -42,7 +42,9 @@ import { Check, ChevronDown, ChevronUp, ImagePlus, Lasso, MousePointer2, Plus, S
 import { projectStore, useProjectStore } from "@/store/projectStore";
 import { ancestors, treeEdges, visibleLinks, visibleNodes } from "@/domain/graph";
 import { BRIEF_H, BRIEF_ID, BRIEF_W, computeTreeLayout } from "@/domain/treeLayout";
-import type { ActionType, Collection, IdeaNode, NodeId } from "@/domain/types";
+import { placeLabels, wordSize, type Box, type LabelRequest } from "@/domain/labelPlacement";
+import { readingFor } from "@/domain/relations";
+import type { ActionType, Collection, IdeaNode, NodeId, XY } from "@/domain/types";
 import { fileToImage } from "@/services/images";
 import { useImageUrl } from "./useImageUrl";
 import { ROLE_STYLE, ROLES, ROLE_LABEL } from "./nodeStyle";
@@ -212,12 +214,74 @@ const nodeTypes: NodeTypes = { idea: IdeaFlowNode, brief: BriefFlowNode };
 
 // ── Edges ─────────────────────────────────────────────────────────────────────
 
+type SelectEdge = (additive: boolean) => void;
+
+const LINK_SHAPE = { borderRadius: 14, offset: 28 };
+const HANDLE_RADIUS = 5;
+const LINE_SAMPLES = 41;
+const LINK_DOT = { w: 10, h: 10 };
+
+// Evenly spaced points along an SVG path. Kept by path text: most lines don't
+// change between renders, and getPointAtLength is slow.
+const sampledPaths = new Map<string, XY[]>();
+function samplePath(d: string): XY[] {
+  const known = sampledPaths.get(d);
+  if (known) return known;
+  if (sampledPaths.size > 2000) sampledPaths.clear();
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", d);
+  const length = path.getTotalLength();
+  const points = Array.from({ length: LINE_SAMPLES }, (_, i) => {
+    const { x, y } = path.getPointAtLength((length * i) / (LINE_SAMPLES - 1));
+    return { x, y };
+  });
+  sampledPaths.set(d, points);
+  return points;
+}
+
+// Finds a spot for each connection's word that no node or other word covers.
+function placeWords(edges: FlowEdge[], nodes: FlowNode[]): Record<string, XY> {
+  const boxes = new Map<string, Box>(nodes.map((n) => [n.id, {
+    x: n.position.x, y: n.position.y,
+    w: n.measured?.width ?? n.width ?? 0, h: n.measured?.height ?? n.height ?? 0,
+  }]));
+  const requests: LabelRequest[] = [];
+  for (const e of edges) {
+    const from = boxes.get(e.source);
+    const to = boxes.get(e.target);
+    const word = (e.data as { word?: string } | undefined)?.word;
+    // A link with no word still shows a dot to click.
+    if (!from || !to || (!word && e.type !== "link")) continue;
+    const ends = {
+      sourceX: from.x + from.w + HANDLE_RADIUS, sourceY: from.y + from.h / 2, sourcePosition: Position.Right,
+      targetX: to.x - HANDLE_RADIUS, targetY: to.y + to.h / 2, targetPosition: Position.Left,
+    };
+    const [path] = e.type === "link" ? getSmoothStepPath({ ...ends, ...LINK_SHAPE }) : getBezierPath(ends);
+    requests.push({ id: e.id, points: samplePath(path), ...(word ? wordSize(word) : LINK_DOT) });
+  }
+  return placeLabels(requests, [...boxes.values()]);
+}
+
+// A connection's word, with its reading above it when that end of the tree is in focus.
+// A bigger click target than the line. Keyboard users select the edge itself.
+function RelationPill({ word, reading, borderColor, active, onSelect }: { word: string; reading?: string; borderColor?: string; active?: boolean; onSelect?: SelectEdge }) {
+  return (
+    <span className="block px-2 py-0.5 rounded-[10px] bg-surface border text-[12px] leading-[1.3] max-w-40"
+      onClick={onSelect && ((e) => { e.stopPropagation(); onSelect(e.shiftKey); })}
+      style={{ borderColor, color: active ? "var(--color-ink)" : "var(--color-ink-2)", pointerEvents: onSelect ? "all" : "none", cursor: onSelect ? "pointer" : undefined }}>
+      {reading && <span className="block text-[10px] text-muted truncate">{reading}</span>}
+      <span className="block truncate">{word}</span>
+    </span>
+  );
+}
+
 function ProvenanceEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, data, selected }: EdgeProps) {
   const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
-  const { onDelete, color, dashed, emphasis } = (data ?? {}) as { onDelete?: () => void; color?: string; dashed?: boolean; emphasis?: boolean };
+  const { onDelete, color, dashed, emphasis, word, wordAt, reading, onSelect } = (data ?? {}) as { onDelete?: () => void; color?: string; dashed?: boolean; emphasis?: boolean; word?: string; wordAt?: XY; reading?: string; onSelect?: SelectEdge };
+  const showDelete = selected && onDelete;
   return (
     <>
-      <path d={path} fill="none" stroke="transparent" strokeWidth={20} style={{ cursor: onDelete ? "pointer" : "default" }} />
+      <path d={path} fill="none" stroke="transparent" strokeWidth={20} style={{ cursor: onSelect ? "pointer" : "default" }} />
       <BaseEdge path={path} markerEnd={markerEnd}
         style={{
           stroke: selected ? ACCENT : color,
@@ -226,13 +290,17 @@ function ProvenanceEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, ta
           strokeDasharray: dashed ? "5 4" : undefined,
           transition: "stroke 0.15s, stroke-opacity 0.15s",
         }} />
-      {selected && onDelete && (
+      {(word || showDelete) && (
         <EdgeLabelRenderer>
-          <div style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`, pointerEvents: "all" }} className="nodrag nopan">
-            <button onClick={(e) => { e.stopPropagation(); onDelete(); }} aria-label="Remove connection"
-              className="w-6 h-6 rounded-full bg-surface border border-line shadow-[var(--shadow-float)] text-ink-2 hover:text-danger flex items-center justify-center">
-              <X size={12} />
-            </button>
+          <div style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${wordAt?.x ?? labelX}px,${wordAt?.y ?? labelY}px)`, pointerEvents: "none", zIndex: 1 }}
+            className="nodrag nopan flex items-center gap-1">
+            {word && <RelationPill word={word} reading={reading} borderColor={selected ? ACCENT : color} active={emphasis || selected} onSelect={onSelect} />}
+            {showDelete && (
+              <button onClick={(e) => { e.stopPropagation(); onDelete(); }} aria-label="Remove connection" style={{ pointerEvents: "all" }}
+                className="w-6 h-6 shrink-0 rounded-full bg-surface border border-line shadow-[var(--shadow-float)] text-ink-2 hover:text-danger flex items-center justify-center">
+                <X size={12} />
+              </button>
+            )}
           </div>
         </EdgeLabelRenderer>
       )}
@@ -243,18 +311,17 @@ function ProvenanceEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, ta
 // User links bend around the column instead of cutting through the nodes in it,
 // and always show a label or a dot to click.
 function LinkEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, data, selected }: EdgeProps) {
-  const [path, labelX, labelY] = getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, borderRadius: 14, offset: 28 });
-  const { label } = (data ?? {}) as { label?: string };
+  const [path, labelX, labelY] = getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, ...LINK_SHAPE });
+  const { word, wordAt, reading, onSelect } = (data ?? {}) as { word?: string; wordAt?: XY; reading?: string; onSelect?: SelectEdge };
   const stroke = selected ? ACCENT : "var(--color-ink-2)";
   return (
     <>
       <path d={path} fill="none" stroke="transparent" strokeWidth={24} style={{ cursor: "pointer" }} />
       <BaseEdge path={path} markerEnd={markerEnd} style={{ stroke, strokeWidth: selected ? 2 : 1.5, strokeDasharray: "5 3" }} />
       <EdgeLabelRenderer>
-        <div style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`, pointerEvents: "none" }}>
-          {label ? (
-            <span className="block px-2 py-0.5 rounded-full bg-surface border text-[12px] max-w-40 truncate"
-              style={{ borderColor: stroke, color: selected ? ACCENT : "var(--color-ink-2)" }}>{label}</span>
+        <div style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${wordAt?.x ?? labelX}px,${wordAt?.y ?? labelY}px)`, pointerEvents: "none", zIndex: 1 }}>
+          {word ? (
+            <RelationPill word={word} reading={selected ? reading : undefined} borderColor={stroke} active={selected} onSelect={onSelect} />
           ) : (
             <span className="block w-2.5 h-2.5 rounded-full border-2 bg-surface" style={{ borderColor: stroke }} />
           )}
@@ -300,7 +367,7 @@ function ToolSwitch({ tool, onChange }: { tool: Tool; onChange: (t: Tool) => voi
   const tools: { id: Tool; label: string; hint: string; Icon: typeof MousePointer2 }[] = [
     { id: "select", label: "Select", hint: "Click to select, shift-click to add, drag to pan", Icon: MousePointer2 },
     { id: "lasso", label: "Lasso", hint: "Drag to select several nodes", Icon: Lasso },
-    { id: "link", label: "Link", hint: "Drag from a node to another node to link them", Icon: Spline },
+    { id: "link", label: "Connect", hint: "Drag from a node to another node to connect them", Icon: Spline },
   ];
   return (
     <div role="radiogroup" aria-label="Canvas tool" className="inline-flex p-0.5 rounded-md bg-surface border border-line shadow-[var(--shadow-float)]">
@@ -344,7 +411,7 @@ function Legend({ hasNodes }: { hasNodes: boolean }) {
           ))}
           <li className="flex items-center gap-2">
             <svg width="16" height="8" aria-hidden><line x1="0" y1="4" x2="16" y2="4" stroke="var(--color-ink-2)" strokeWidth="1.5" strokeDasharray="4 3" /></svg>
-            Your link
+            Your connection
           </li>
         </ul>
       )}
@@ -490,12 +557,32 @@ export default function TreeView({
   }, [project.title, project.brief, layout, shown, briefOpen, linking, handleUpload, selectedSet, hoveredId, hoveredAncestors,
     selectedAncestors, newIds, showCollectionColors, exportColorsActive, collectionColors, hideNode]);
 
+  const selectEdge = useCallback((id: string, additive: boolean) => {
+    if (additive) toggleSelected(id);
+    else setSelection([id]);
+  }, [toggleSelected, setSelection]);
+
   const flowEdges = useMemo((): FlowEdge[] => {
     const edges: FlowEdge[] = [];
+    const edgeAria = (from: string, to: string, word?: string) => `Connection between ${from} and ${to}${word ? `: ${word}` : ""}`;
     for (const id of layout.briefTargets) {
+      // Older outputs have no stored edge from the brief, so no word to show.
+      const stored = Object.values(project.edges).find((x) => x.from === BRIEF_ID && x.to === id && !x.hidden);
+      const focused = hoveredId === id || singleSelected === id;
+      const word = stored && stored.relation?.word;
       edges.push({
-        id: `${BRIEF_ID}->${id}`, source: BRIEF_ID, target: id, type: "default", selectable: false, deletable: false, focusable: false,
-        style: { stroke: "var(--color-line-strong)", strokeWidth: 1.5, strokeDasharray: "5 4" },
+        id: stored?.id ?? `${BRIEF_ID}->${id}`, source: BRIEF_ID, target: id, type: "provenance",
+        selected: !!stored && selectedSet.has(stored.id), selectable: !!stored, deletable: false, focusable: !!stored,
+        ...(stored ? {
+          ariaLabel: edgeAria("the brief", project.nodes[id].title, word),
+          ariaRole: "button" as const,
+          domAttributes: { "aria-pressed": selectedSet.has(stored.id) },
+        } : {}),
+        data: {
+          color: "var(--color-line-strong)", dashed: true, emphasis: focused, word,
+          reading: focused || (stored && selectedSet.has(stored.id)) ? readingFor("brief", project.nodes[id].role).reading : undefined,
+          onSelect: stored && ((additive: boolean) => selectEdge(stored.id, additive)),
+        },
         markerEnd: { type: MarkerType.Arrow, color: "#c7cad1", width: 10, height: 10, strokeWidth: 0 },
       });
     }
@@ -506,25 +593,44 @@ export default function TreeView({
       // A bridged edge spans removed nodes, so there's no single stored edge to delete.
       const direct = e.bridged ? [] : Object.values(project.edges).filter(
         (x) => x.kind === "derived_from" && !x.hidden && x.from === e.from && x.to === e.to);
+      const stored = direct[0];
+      const isSelected = !!stored && selectedSet.has(stored.id);
+      const word = stored && stored.relation?.word;
       edges.push({
-        id: `prov:${e.from}->${e.to}`, source: e.from, target: e.to, type: "provenance",
-        selectable: direct.length > 0, deletable: direct.length > 0, focusable: false,
-        data: { color, emphasis, dashed: e.bridged, onDelete: direct.length > 0 ? () => direct.forEach((x) => hideEdge(x.id)) : undefined },
+        // A stored connection is selected by its own ID; a bridged one can't be selected.
+        id: stored?.id ?? `prov:${e.from}->${e.to}`, source: e.from, target: e.to, type: "provenance",
+        selected: isSelected, selectable: !!stored, deletable: !!stored, focusable: !!stored,
+        ...(stored ? {
+          ariaLabel: edgeAria(project.nodes[e.from].title, project.nodes[e.to].title, word),
+          ariaRole: "button" as const,
+          domAttributes: { "aria-pressed": isSelected },
+        } : {}),
+        data: {
+          color, emphasis, dashed: e.bridged, word,
+          // Only edges into the node in focus: a whole fan of two-line pills would overlap.
+          reading: isSelected || hoveredId === e.to || singleSelected === e.to ? readingFor(project.nodes[e.from].role, project.nodes[e.to].role).reading : undefined,
+          onSelect: stored && ((additive: boolean) => selectEdge(stored.id, additive)),
+          onDelete: direct.length > 0 ? () => direct.forEach((x) => hideEdge(x.id)) : undefined,
+        },
         markerEnd: { type: MarkerType.Arrow, color, width: 12, height: 12, strokeWidth: 0 },
       });
     }
     for (const e of links) {
       edges.push({
         id: e.id, source: e.from, target: e.to, type: "link", selected: selectedSet.has(e.id),
-        data: { label: e.label },
-        ariaLabel: `Link between ${project.nodes[e.from]?.title} and ${project.nodes[e.to]?.title}${e.label ? `: ${e.label}` : ""}`,
+        data: {
+          word: e.relation?.word,
+          reading: readingFor(project.nodes[e.from].role, project.nodes[e.to].role).reading,
+          onSelect: (additive: boolean) => selectEdge(e.id, additive),
+        },
+        ariaLabel: edgeAria(project.nodes[e.from].title, project.nodes[e.to].title, e.relation?.word),
         ariaRole: "button",
         domAttributes: { "aria-pressed": selectedSet.has(e.id) },
         markerEnd: { type: MarkerType.ArrowClosed, color: "#43464d", width: 12, height: 12, strokeWidth: 0 },
       });
     }
     return edges;
-  }, [layout.briefTargets, provenance, links, project.nodes, project.edges, singleSelected, selectedAncestors, hoveredId, selectedSet, hideEdge]);
+  }, [layout.briefTargets, provenance, links, project.nodes, project.edges, singleSelected, selectedAncestors, hoveredId, selectedSet, hideEdge, selectEdge]);
 
   // React Flow needs to own node state while dragging. Keep our computed
   // nodes in sync without resetting a node mid-drag.
@@ -542,6 +648,12 @@ export default function TreeView({
     });
   }, [flowNodes]);
 
+  // From the live node positions, so words move out of the way during a drag.
+  const placedEdges = useMemo((): FlowEdge[] => {
+    const spots = placeWords(flowEdges, displayNodes);
+    return flowEdges.map((e) => (spots[e.id] ? { ...e, data: { ...e.data, wordAt: spots[e.id] } } : e));
+  }, [flowEdges, displayNodes]);
+
   const onNodesChange = useCallback((changes: NodeChange<FlowNode>[]) => {
     // Selection is owned by the store; ignore React Flow's own select changes.
     setDisplayNodes((nds) => applyNodeChanges(changes.filter((c) => c.type !== "select"), nds));
@@ -550,8 +662,9 @@ export default function TreeView({
   const onEdgesChange = useCallback((changes: EdgeChange<FlowEdge>[]) => {
     for (const c of changes) {
       if (c.type !== "remove") continue;
-      if (project.edges[c.id]) hideEdge(c.id);
-      else (flowEdges.find((e) => e.id === c.id)?.data as { onDelete?: () => void } | undefined)?.onDelete?.();
+      const onDelete = (flowEdges.find((e) => e.id === c.id)?.data as { onDelete?: () => void } | undefined)?.onDelete;
+      if (onDelete) onDelete();
+      else if (project.edges[c.id]) hideEdge(c.id);
     }
   }, [project.edges, flowEdges, hideEdge]);
 
@@ -583,10 +696,9 @@ export default function TreeView({
   }, [selectNode, clearSelection, project.edges, toggleSelected, setSelection]);
 
   const onEdgeClick = useCallback((event: React.MouseEvent, e: FlowEdge) => {
-    if (!project.edges[e.id]) return;  // only user links are selectable as inputs
-    if (event.shiftKey) toggleSelected(e.id);
-    else setSelection([e.id]);
-  }, [project.edges, toggleSelected, setSelection]);
+    if (!project.edges[e.id]) return;  // older lines from the brief and bridged lines aren't stored
+    selectEdge(e.id, event.shiftKey);
+  }, [project.edges, selectEdge]);
 
   const onSelectionChange = useCallback(({ nodes }: { nodes: FlowNode[] }) => {
     if (tool !== "lasso") return;
@@ -674,7 +786,7 @@ export default function TreeView({
       <ReactFlow
         proOptions={{ hideAttribution: true }}
         nodes={displayNodes}
-        edges={flowEdges}
+        edges={placedEdges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildConceptualVariationPrompt,
   buildExpandPrompt,
+  buildRelationPrompt,
   buildVisualVariationPrompt,
   contextSections,
   expandSchema,
@@ -60,9 +61,52 @@ describe("expand prompt", () => {
     expect(expandSchema(req.counts).required).toEqual(["motifs"]);
   });
 
+  it("asks each output how it connects to each input, with the question for that pair of roles", () => {
+    const req = { ...meta, inputs: [image, concept], counts: { concepts: 1, motifs: 1 } };
+    const { prompt } = buildExpandPrompt(req, SYSTEM);
+    expect(prompt).toContain(`1. "draft.png" (image): What in the image suggests this idea?`);
+    expect(prompt).toContain(`2. "Ebb" (concept): How does the new idea follow from, push on, or reframe the input?`);
+    expect(prompt).toContain(`1. "draft.png" (image): Where and how does this quality appear in the image?`);
+    expect(prompt).toContain(`2. "Ebb" (concept): How does this motif give visual form to the concept?`);
+    expect(prompt).not.toContain("howItConveysIdea");
+    const schema = expandSchema(req.counts, true);
+    for (const kind of ["concepts", "motifs"]) {
+      expect((schema.properties[kind] as { items: { required: string[] } }).items.required).toContain("relations");
+    }
+  });
+
+  it("asks how outputs connect to the brief when nothing is selected", () => {
+    const { prompt } = buildExpandPrompt({ ...meta, inputs: [], counts: { concepts: 1, motifs: 1 } }, SYSTEM);
+    expect(prompt).toContain("1. The design brief: What in the brief suggests this idea?");
+    expect(prompt).toContain("1. The design brief: How does this motif give visual form to the brief?");
+  });
+
   it("adds the user's instructions", () => {
     const { prompt } = buildExpandPrompt({ ...meta, instructions: " more playful ", inputs: [], counts: { concepts: 1, motifs: 0 } }, SYSTEM);
     expect(prompt).toContain("Additional instructions: more playful");
+  });
+});
+
+describe("suggest connection prompt", () => {
+  it("asks the question for the pair of roles and sends both ends' images", () => {
+    const { prompt, images } = buildRelationPrompt({ ...meta, from: image, to: motif });
+    expect(prompt).toContain(`This connection reads: "draft.png" contains "Waves".`);
+    expect(prompt).toContain("Where and how does this quality appear in the image?");
+    expect(prompt).toContain(`1. "draft.png"`);
+    expect(images).toEqual([PNG]);
+  });
+
+  it("reads from the brief when there's no from", () => {
+    const { prompt, images } = buildRelationPrompt({ ...meta, to: concept });
+    expect(prompt).toContain(`This connection reads: the design brief suggests "Ebb".`);
+    expect(prompt).toContain("What in the brief suggests this idea?");
+    expect(images).toEqual([]);
+  });
+
+  it("validates its request", () => {
+    expect(isActionType("suggest_relation")).toBe(true);
+    expect(validateRequest("suggest_relation", { ...meta, to: concept }).to.title).toBe("Ebb");
+    expect(() => validateRequest("suggest_relation", { ...meta })).toThrow(RequestError);
   });
 });
 
@@ -141,12 +185,12 @@ describe("request validation", () => {
 });
 
 describe("links and regions in prompts", () => {
-  const link = { id: "e1", from: concept, to: motif, label: "both pull back" };
+  const link = { id: "e1", from: concept, to: motif, relation: { word: "pulling back", explanation: "Both recede." } };
 
   it("asks expand for ideas between the two ends of a link", () => {
     const { prompt } = buildExpandPrompt({ ...meta, inputs: [concept, motif], links: [link], counts: { concepts: 2, motifs: 0 } }, SYSTEM);
     expect(prompt).toContain(`Connections to explore`);
-    expect(prompt).toContain(`1. "Ebb" (concept) ↔ "Waves" (motif) — the designer sees them as connected by: both pull back`);
+    expect(prompt).toContain(`1. "Ebb" (concept) embodied as "Waves" (motif): pulling back — Both recede.`);
     expect(prompt).toContain("sit between the two ends");
   });
 

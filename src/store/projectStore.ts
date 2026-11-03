@@ -31,21 +31,23 @@ import type {
   ProjectState,
   ProjectSummary,
   Region,
+  Relation,
   Role,
   RunId,
   RunInProgress,
   XY,
 } from "@/domain/types";
-import { emptyProject, resolveSelection } from "@/domain/graph";
+import { emptyProject, incomingRelations, resolveSelection } from "@/domain/graph";
 import { newId, now } from "@/domain/ids";
 import { makeCollection, makeEdge, makeNode, type NewNodeInput } from "@/domain/builders";
 import * as u from "@/domain/updates";
 import { repo as defaultRepo, type NewImage, type Repository } from "@/db";
 import { blobToDataUrl, dataUrlToImage } from "@/services/images";
-import { ActionCallError, callAction as fetchAction, outputsFor, planRun, readableError, type CallActionFn, type Job, type RunOptions, type Selection } from "@/services/generate";
+import { ActionCallError, callAction as fetchAction, callSuggest as fetchSuggest, outputsFor, planRun, readableError, toWire, type CallActionFn, type CallSuggestFn, type Job, type RunOptions, type Selection } from "@/services/generate";
 import type { Usage } from "@/domain/wire";
 import { costUsd } from "@/domain/pricing";
 import { buildStudyLog, type StudyLog } from "@/services/exportLog";
+import { buildProjectFile, imageIdsOf, parseProjectFile, restoreProject, type ProjectFile } from "@/services/projectFile";
 
 type View = "tree" | "cluster";
 type Ref = NodeId | EdgeId;
@@ -60,7 +62,7 @@ export interface Notice {
 const ACTION_NAMES: Record<ActionType, string> = {
   expand: "Expand",
   visual_variations: "Visual variations",
-  conceptual_variations: "Conceptual variations",
+  conceptual_variations: "Visualize",
 };
 
 // "Made 4 concepts and 3 motifs", "Made 10 images".
@@ -95,6 +97,10 @@ export interface ProjectStore {
   // Study log for one project, or for all of them. Saves pending edits first.
   exportStudyLog(id: ProjectId): Promise<StudyLog | null>;
   exportAllStudyLogs(): Promise<StudyLog[]>;
+  // The project with its images and log, for uploadProject in any browser.
+  exportProjectFile(id: ProjectId): Promise<ProjectFile | null>;
+  // Opens a project file's text as a new project. Throws ProjectFileError if the file is bad.
+  uploadProject(text: string): Promise<ProjectId>;
   flush(): Promise<void>;
   setTitle(title: string): void;
   setBrief(brief: string): void;
@@ -112,8 +118,10 @@ export interface ProjectStore {
   clearTree(): void;
 
   // Edges
-  addLink(from: NodeId, to: NodeId, label?: string): EdgeId | null;
-  labelEdge(id: EdgeId, label: string): void;
+  addLink(from: NodeId, to: NodeId, word?: string): EdgeId | null;
+  setRelation(id: EdgeId, relation: Relation | undefined): void;
+  // Asks the model to write the connection's word and explanation. Resolves when it's done.
+  suggestRelation(id: EdgeId): Promise<void>;
   hideEdge(id: EdgeId): void;
 
   // Collections
@@ -154,11 +162,12 @@ async function inPool<T>(items: T[], limit: number, fn: (item: T) => Promise<voi
 export interface StoreOptions {
   saveDelayMs?: number;
   callAction?: CallActionFn;   // tests pass a fake
+  callSuggest?: CallSuggestFn;
 }
 
 export function createProjectStore(
   getRepo: () => Repository = defaultRepo,
-  { saveDelayMs = 400, callAction = fetchAction }: StoreOptions = {},
+  { saveDelayMs = 400, callAction = fetchAction, callSuggest = fetchSuggest }: StoreOptions = {},
 ): StoreApi<ProjectStore> {
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -383,6 +392,27 @@ export function createProjectStore(
         return logs;
       },
 
+      async exportProjectFile(id) {
+        await flush();
+        const repo = getRepo();
+        const p = await repo.loadProject(id);
+        if (!p) return null;
+        const images = await Promise.all(imageIdsOf(p).map((imageId) => repo.getImage(imageId)));
+        return buildProjectFile(p, images.filter((i) => !!i), await repo.listEvents(id), now());
+      },
+
+      async uploadProject(text) {
+        await flush();
+        const file = parseProjectFile(text);
+        const { project, images, events, missingImages } = restoreProject(file, newId("project"), now());
+        await getRepo().importProject(project, images, events);
+        set({ project, status: "ready", selection: [], notices: [], focus: null });
+        log("project.uploaded", { sourceProjectId: file.project.id, exportedAt: file.exportedAt });
+        if (missingImages) notify(`${missingImages} ${missingImages === 1 ? "image was" : "images were"} missing from this file, so ${missingImages === 1 ? "its node shows" : "their nodes show"} no picture.`);
+        await get().loadProjects();
+        return project.id;
+      },
+
       flush,
 
       setTitle(title) {
@@ -443,9 +473,9 @@ export function createProjectStore(
             e.from === id ? copy.id : e.from,
             e.to === id ? copy.id : e.to,
             e.kind,
-            { label: e.label, region: e.region },
+            { relation: e.relation, region: e.region },
           ));
-        edges.push(makeEdge(id, copy.id, "link", { label: "duplicate" }));
+        edges.push(makeEdge(id, copy.id, "link", { relation: { word: "duplicate" } }));
         commit((s) => u.addNodesAndEdges(s, [copy], edges), {
           type: "node.duplicated",
           payload: { nodeId: copy.id, sourceId: id },
@@ -491,16 +521,57 @@ export function createProjectStore(
 
       // ── Edges ─────────────────────────────────────────────────────────────
 
-      addLink(from, to, label) {
+      addLink(from, to, word) {
         const p = get().project;
         if (!p || from === to || !p.nodes[from] || !p.nodes[to] || u.hasLink(p, from, to)) return null;
-        const e = makeEdge(from, to, "link", { label });
+        const e = makeEdge(from, to, "link", { relation: word ? { word } : undefined });
         commit((s) => u.addNodesAndEdges(s, [], [e]), { type: "link.created", payload: { edgeId: e.id, from, to } });
         return e.id;
       },
 
-      labelEdge(id, label) {
-        commit((p) => u.labelEdge(p, id, label), { type: "edge.labelled", payload: { edgeId: id } });
+      setRelation(id, relation) {
+        commit((p) => u.setRelation(p, id, relation), { type: "edge.relation_edited", payload: { edgeId: id } });
+      },
+
+      async suggestRelation(id) {
+        const p = get().project;
+        const edge = p?.edges[id];
+        if (!p || !edge) return;
+        const from = p.nodes[edge.from];
+        const to = p.nodes[edge.to];
+        if (!to) return;
+        const images: Record<ImageId, string> = {};
+        for (const n of [from, to]) {
+          if (!n?.image) continue;
+          const rec = await getRepo().getImage(n.image.imageId);
+          if (rec) images[n.image.imageId] = await blobToDataUrl(rec.blob, rec.mimeType);
+        }
+        const previous = edge.relation;
+        const stillOpen = () => get().project?.id === p.id;
+        try {
+          const { result, usage } = await callSuggest({
+            runId: newId("run"), brief: p.brief,
+            from: from ? toWire(from, images) : undefined,
+            to: toWire(to, images),
+          });
+          await applyTo(p.id, (s) => {
+            const next = u.setRelation(s, id, result);
+            return usage ? u.addUsage(next, usage) : next;
+          });
+          log("edge.relation_suggested", { edgeId: id, word: result.word, replaced: !!previous }, { actor: "model", projectId: p.id });
+          // Replacing text the user may have written, so it can be taken back.
+          if (previous && stillOpen()) {
+            notify("Replaced the connection's text", {
+              kind: "info",
+              action: { label: "Undo", run: () => get().setRelation(id, previous) },
+            });
+          }
+        } catch (err) {
+          const usage = err instanceof ActionCallError ? err.usage : undefined;
+          if (usage) await applyTo(p.id, (s) => u.addUsage(s, usage));
+          log("edge.relation_suggest_failed", { edgeId: id }, { actor: "model", projectId: p.id });
+          if (stillOpen()) notify(`Couldn't suggest a connection: ${err instanceof Error ? err.message : String(err)}`);
+        }
       },
 
       hideEdge(id) {
@@ -572,11 +643,21 @@ export function createProjectStore(
         const p = get().project;
         if (!p) return null;
 
-        // Links stay links: actions can explore the connection itself.
+        // Connections stay connections: actions can explore the connection itself.
         const resolved = resolveSelection(p, get().selection);
+        // A motif's "how it conveys the idea" is now on its incoming connections; fold it
+        // back into details so the model still sees it. One copy per node keeps inputs deduped.
+        const withConveys = new Map<NodeId, IdeaNode>();
+        const ctx = (n: IdeaNode): IdeaNode => {
+          if (!withConveys.has(n.id)) {
+            const conveys = n.role === "motif" ? n.details?.howItConveysIdea ?? incomingRelations(p, n.id) : undefined;
+            withConveys.set(n.id, conveys ? { ...n, details: { ...n.details, howItConveysIdea: conveys } } : n);
+          }
+          return withConveys.get(n.id)!;
+        };
         const sel: Selection = {
-          nodes: resolved.nodes,
-          links: resolved.edges.filter((e) => e.kind === "link").map((edge) => ({ edge, from: p.nodes[edge.from], to: p.nodes[edge.to] })),
+          nodes: resolved.nodes.map(ctx),
+          links: resolved.edges.map((edge) => ({ edge, from: ctx(p.nodes[edge.from]), to: ctx(p.nodes[edge.to]) })),
         };
         const inputs: IdeaNode[] = [];
         for (const n of [...sel.nodes, ...sel.links.flatMap((l) => [l.from, l.to])]) {

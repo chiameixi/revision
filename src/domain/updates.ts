@@ -13,11 +13,13 @@ import type {
   IdeaNode,
   NodeId,
   ProjectState,
+  Relation,
   Role,
   XY,
 } from "./types";
 import type { Usage } from "./wire";
 import { costUsd } from "./pricing";
+import { BRIEF_ID } from "./types";
 
 export type NodePatch = Partial<Pick<IdeaNode, "title" | "body" | "details" | "image">>;
 export type CollectionPatch = Partial<Pick<Collection, "title" | "description" | "color">>;
@@ -58,8 +60,10 @@ export function addNodesAndEdges(p: ProjectState, nodes: IdeaNode[], edges: Edge
   const nextNodes = { ...p.nodes };
   for (const n of nodes) nextNodes[n.id] = n;
   const nextEdges = { ...p.edges };
+  // A run's edges may start at the brief, which isn't in nodes.
   for (const e of edges) {
-    if (nextNodes[e.from] && nextNodes[e.to]) nextEdges[e.id] = e;
+    const fromOk = nextNodes[e.from] || (e.from === BRIEF_ID && e.kind === "derived_from");
+    if (fromOk && nextNodes[e.to]) nextEdges[e.id] = e;
   }
   return { ...p, nodes: nextNodes, edges: nextEdges };
 }
@@ -98,8 +102,13 @@ export function hasLink(p: ProjectState, from: NodeId, to: NodeId): boolean {
   );
 }
 
-export function labelEdge(p: ProjectState, id: EdgeId, label: string): ProjectState {
-  return patchEdge(p, id, { label: label || undefined });
+// Clears the relation when both parts are empty.
+export function setRelation(p: ProjectState, id: EdgeId, relation: Relation | undefined): ProjectState {
+  const word = relation?.word.trim() ?? "";
+  const explanation = relation?.explanation?.trim();
+  return patchEdge(p, id, {
+    relation: word || explanation ? { word, ...(explanation ? { explanation } : {}) } : undefined,
+  });
 }
 
 // Removes one edge only. Siblings from the same run keep theirs.

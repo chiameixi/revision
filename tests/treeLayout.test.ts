@@ -11,7 +11,7 @@ function generated(p: ProjectState, id: string) {
 }
 
 const column = (layout: ReturnType<typeof computeTreeLayout>, id: string) =>
-  Math.round((layout.positions[id].x - 48) / (IMAGE_W + 96));
+  Math.round((layout.positions[id].x - 48) / (IMAGE_W + 176));
 
 describe("tree layout", () => {
   it("puts the brief and user-made roots in column 0", () => {

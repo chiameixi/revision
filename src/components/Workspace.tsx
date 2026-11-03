@@ -9,13 +9,14 @@ import Link from "next/link";
 import { AlertTriangle, ChevronLeft, FolderPlus, Loader2, X } from "lucide-react";
 import { projectStore, useProjectStore, type Notice } from "@/store/projectStore";
 import { downloadJson, exportFileName } from "@/services/exportLog";
+import { projectFileName } from "@/services/projectFile";
 import type { ActionType, NodeId } from "@/domain/types";
 import { aboutUsd, PRICES_CHECKED } from "@/domain/pricing";
 import TreeView from "./TreeView";
 import ClusterView from "./ClusterView";
 import RunComposer from "./RunComposer";
 import AddNodeModal from "./AddNodeModal";
-import { BriefPanel, LinkPanel, NodePanel } from "./DetailPanel";
+import { BriefPanel, ConnectionPanel, NodePanel } from "./DetailPanel";
 import { ACTIONS, ACTION_LABEL, COLLECTION_COLORS } from "./nodeStyle";
 import { Menu } from "./ui";
 import { whyUnavailable } from "./availability";
@@ -167,6 +168,11 @@ async function exportLog(id: string, title: string) {
   if (log) downloadJson(log, exportFileName(title, new Date()));
 }
 
+async function exportProject(id: string, title: string) {
+  const file = await projectStore.getState().exportProjectFile(id);
+  if (file) downloadJson(file, projectFileName(title, new Date()));
+}
+
 export default function Workspace() {
   const project = useProjectStore((s) => s.project)!;
   const selection = useProjectStore((s) => s.selection);
@@ -189,7 +195,7 @@ export default function Workspace() {
   const panel = useMemo(() => {
     if (briefOpen) return { kind: "brief" as const };
     if (single && project.nodes[single] && !project.nodes[single].hidden) return { kind: "node" as const, id: single };
-    if (single && project.edges[single]) return { kind: "link" as const, id: single };
+    if (single && project.edges[single]) return { kind: "connection" as const, id: single };
     return null;
   }, [briefOpen, single, project]);
 
@@ -233,6 +239,7 @@ export default function Workspace() {
           )}
           <UsageBadge />
           <Menu label="Project actions" items={[
+            { label: "Export project (with images)", onSelect: () => exportProject(project.id, project.title) },
             { label: "Export study log (JSON)", onSelect: () => exportLog(project.id, project.title) },
           ]} />
         </div>
@@ -258,7 +265,7 @@ export default function Workspace() {
             {panel.kind === "node" && (
               <NodePanel nodeId={panel.id} onClose={clearSelection} onRun={runFrom([panel.id])} onAddChild={() => setAddNodeParents([panel.id])} />
             )}
-            {panel.kind === "link" && <LinkPanel edgeId={panel.id} onClose={clearSelection} onRun={runFrom([panel.id])} />}
+            {panel.kind === "connection" && <ConnectionPanel key={panel.id} edgeId={panel.id} onClose={clearSelection} onRun={runFrom([panel.id])} />}
           </div>
         )}
       </div>

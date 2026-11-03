@@ -1,14 +1,15 @@
 "use client";
 
 // Side panels shared by the tree and cluster views: one for a node, one for a
-// user-drawn link, one for the brief. All read and write through the store.
+// connection, one for the brief. All read and write through the store.
 // Text fields save on blur, so the study log gets one event per edit.
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { Copy, Crop, Expand as ExpandIcon, Plus, Trash2, X } from "lucide-react";
+import { Copy, Crop, Expand as ExpandIcon, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { useProjectStore } from "@/store/projectStore";
 import { visibleParents } from "@/domain/graph";
-import type { ActionType, EdgeId, IdeaNode, NodeId, Region, RoleDetails } from "@/domain/types";
+import { readingFor } from "@/domain/relations";
+import { BRIEF_ID, type ActionType, type Edge, type EdgeId, type IdeaNode, type NodeId, type Region, type RoleDetails } from "@/domain/types";
 import { fileToImage } from "@/services/images";
 import { useImageUrl } from "./useImageUrl";
 import { ACTIONS, BODY_LABEL, ROLES, ROLE_LABEL, ROLE_STYLE, originLabel } from "./nodeStyle";
@@ -127,6 +128,19 @@ function NodeChip({ node, onClick }: { node: IdeaNode; onClick: () => void }) {
   );
 }
 
+// One connection in "Came from": what it says, or a prompt to fill it in. Opens its panel.
+function ConnectionRow({ edge, reading, onClick }: { edge: Edge; reading: string; onClick: () => void }) {
+  const relation = edge.relation;
+  return (
+    <button onClick={onClick} className="text-left px-2.5 py-1.5 rounded-md border border-line hover:border-ink-2">
+      <span className="block text-[12px] text-muted">{reading}</span>
+      {relation?.word && <span className="block text-[13px] font-medium text-ink">{relation.word}</span>}
+      {relation?.explanation && <span className="block text-[13px] text-ink-2">{relation.explanation}</span>}
+      {!relation && <span className="block text-[13px] text-muted italic">Describe this connection</span>}
+    </button>
+  );
+}
+
 function SiblingImage({ node, onSelect }: { node: IdeaNode; onSelect: () => void }) {
   const url = useImageUrl(node.image?.imageId);
   return (
@@ -181,7 +195,7 @@ function Lightbox({ src, alt, onCrop, onClose }: { src: string; alt: string; onC
   );
 }
 
-// Links another node to this one without dragging (the canvas Link tool needs a drag).
+// Connects another node to this one without dragging (the canvas Connect tool needs a drag).
 function LinkTo({ nodeId }: { nodeId: NodeId }) {
   const project = useProjectStore((s) => s.project)!;
   const addLink = useProjectStore((s) => s.addLink);
@@ -191,14 +205,14 @@ function LinkTo({ nodeId }: { nodeId: NodeId }) {
     .sort((a, b) => a.title.localeCompare(b.title));
   if (options.length === 0) return null;
   return (
-    <Section title="Link to another node">
+    <Section title="Connect to another node">
       <form className="flex gap-1.5" onSubmit={(e) => { e.preventDefault(); if (target) { addLink(nodeId, target); setTarget(""); } }}>
-        <label htmlFor={id} className="sr-only">Node to link to</label>
+        <label htmlFor={id} className="sr-only">Node to connect to</label>
         <select id={id} className="field flex-1 min-w-0" value={target} onChange={(e) => setTarget(e.target.value)}>
           <option value="">Choose a node</option>
           {options.map((n) => <option key={n.id} value={n.id}>{n.title} ({ROLE_LABEL[n.role].toLowerCase()})</option>)}
         </select>
-        <button type="submit" className="btn" disabled={!target}>Link</button>
+        <button type="submit" className="btn" disabled={!target}>Connect</button>
       </form>
     </Section>
   );
@@ -230,14 +244,16 @@ export function NodePanel({
   const [cropping, setCropping] = useState(false);
 
   const parents = useMemo(() => (node ? visibleParents(project, node.id).map((id) => project.nodes[id]) : []), [project, node]);
-  // Where in a parent image this node came from, if the model said.
-  const regions = useMemo(() => {
-    const map = new Map<NodeId, Region | "whole">();
+  // The stored edge from each parent: how they connect, and where in a parent image this
+  // node came from. A parent bridged over a removed node has none. Includes the brief.
+  const parentEdges = useMemo(() => {
+    const map = new Map<string, Edge>();
     for (const e of Object.values(project.edges)) {
-      if (e.kind === "derived_from" && e.to === nodeId && !e.hidden && e.region) map.set(e.from, e.region);
+      if (e.kind === "derived_from" && e.to === nodeId && !e.hidden) map.set(e.from, e);
     }
     return map;
   }, [project.edges, nodeId]);
+  const briefEdge = parentEdges.get(BRIEF_ID);
   const exploredLink = node?.origin.kind === "generated" && node.origin.params?.sourceEdgeId
     ? project.edges[node.origin.params.sourceEdgeId]
     : undefined;
@@ -298,7 +314,8 @@ export function NodePanel({
             {(node.role === "concept" || node.details?.rationale) && (
               <EditField label="Rationale" value={node.details?.rationale ?? ""} onCommit={(v) => setDetail("rationale", v)} />
             )}
-            {(node.role === "motif" || node.details?.howItConveysIdea) && (
+            {/* New motifs say this on their connections; only older motifs have it here. */}
+            {node.details?.howItConveysIdea && (
               <EditField label="How it conveys the idea" value={node.details?.howItConveysIdea ?? ""} onCommit={(v) => setDetail("howItConveysIdea", v)} />
             )}
             {(node.role === "motif" || node.details?.category) && (
@@ -306,23 +323,34 @@ export function NodePanel({
             )}
           </Section>
 
-          {(parents.length > 0 || exploredLink) && (
+          {(parents.length > 0 || exploredLink || briefEdge) && (
             <Section title="Came from">
               {exploredLink && project.nodes[exploredLink.from] && project.nodes[exploredLink.to] && (
                 <button onClick={() => setSelection([exploredLink.id])}
                   className="text-left px-2.5 py-2 rounded-md border border-dashed border-ink-2 hover:bg-subtle">
-                  <span className="block text-[12px] text-muted">Explored link</span>
+                  <span className="block text-[12px] text-muted">Explored connection</span>
                   <span className="idea text-[14px] text-ink">
                     {project.nodes[exploredLink.from].title} and {project.nodes[exploredLink.to].title}
                   </span>
-                  {exploredLink.label && <span className="block text-[12px] text-ink-2 italic">{exploredLink.label}</span>}
+                  {exploredLink.relation?.word && <span className="block text-[12px] text-ink-2 italic">{exploredLink.relation.word}</span>}
                 </button>
               )}
+              {briefEdge && (
+                <div className="flex flex-col gap-1.5">
+                  <p className="text-[13px] text-ink-2">The project brief</p>
+                  <ConnectionRow edge={briefEdge} reading={readingFor("brief", node.role).reading} onClick={() => setSelection([briefEdge.id])} />
+                </div>
+              )}
               {parents.map((p) => {
-                const region = regions.get(p.id);
-                return p.image && region
-                  ? <RegionPreview key={p.id} node={p} region={region} onClick={() => setSelection([p.id])} />
-                  : <NodeChip key={p.id} node={p} onClick={() => setSelection([p.id])} />;
+                const edge = parentEdges.get(p.id);
+                return (
+                  <div key={p.id} className="flex flex-col gap-1.5">
+                    {p.image && edge?.region
+                      ? <RegionPreview node={p} region={edge.region} onClick={() => setSelection([p.id])} />
+                      : <NodeChip node={p} onClick={() => setSelection([p.id])} />}
+                    {edge && <ConnectionRow edge={edge} reading={readingFor(p.role, node.role).reading} onClick={() => setSelection([edge.id])} />}
+                  </div>
+                );
               })}
             </Section>
           )}
@@ -341,16 +369,16 @@ export function NodePanel({
           <LinkTo nodeId={node.id} />
 
           {links.length > 0 && (
-            <Section title="Linked to">
+            <Section title="Connected to">
               {links.map((e) => {
                 const other = project.nodes[e.from === node.id ? e.to : e.from];
                 return (
                   <div key={e.id} className="flex items-center gap-1">
                     <button className="flex-1 text-left truncate text-[13px] text-ink hover:underline" onClick={() => setSelection([e.id])}>
                       <span className="idea text-[14px]">{other.title}</span>
-                      {e.label && <span className="text-ink-2 italic">, {e.label}</span>}
+                      {e.relation?.word && <span className="text-ink-2 italic">, {e.relation.word}</span>}
                     </button>
-                    <button className="icon-btn hover:text-danger" aria-label={`Remove link to ${other.title}`} onClick={() => hideEdge(e.id)}>
+                    <button className="icon-btn hover:text-danger" aria-label={`Remove connection to ${other.title}`} onClick={() => hideEdge(e.id)}>
                       <X size={14} />
                     </button>
                   </div>
@@ -396,35 +424,61 @@ export function NodePanel({
   );
 }
 
-// ── Link panel ────────────────────────────────────────────────────────────────
+// ── Connection panel ──────────────────────────────────────────────────────────
 
-export function LinkPanel({ edgeId, onClose, onRun }: { edgeId: EdgeId; onClose: () => void; onRun: (a: ActionType) => void }) {
+// For any connection: one a run made, or one the user drew. One from the brief can't be
+// explored, because the brief isn't a node a run can take as input.
+export function ConnectionPanel({ edgeId, onClose, onRun }: { edgeId: EdgeId; onClose: () => void; onRun: (a: ActionType) => void }) {
   const project = useProjectStore((s) => s.project)!;
-  const labelEdge = useProjectStore((s) => s.labelEdge);
+  const setRelation = useProjectStore((s) => s.setRelation);
+  const suggestRelation = useProjectStore((s) => s.suggestRelation);
   const hideEdge = useProjectStore((s) => s.hideEdge);
   const setSelection = useProjectStore((s) => s.setSelection);
+  const [suggesting, setSuggesting] = useState(false);
   const edge = project.edges[edgeId];
   if (!edge) return null;
+  const fromBrief = edge.from === BRIEF_ID;
   const from = project.nodes[edge.from];
   const to = project.nodes[edge.to];
+  if (!to) return null;
+  const relation = edge.relation;
+  const fromTitle = fromBrief ? "The brief" : from?.title;
+  const reading = readingFor(fromBrief ? "brief" : from?.role ?? "note", to.role).reading;
+
+  const suggest = async () => {
+    setSuggesting(true);
+    await suggestRelation(edge.id);
+    setSuggesting(false);
+  };
 
   return (
-    <PanelShell label="Link details">
-      <PanelHeader kind="Link" title={`${from?.title} and ${to?.title}`} onClose={onClose} />
+    <PanelShell label="Connection details">
+      <PanelHeader kind="Connection" title={`${fromTitle} and ${to.title}`} subtitle={`${fromTitle} ${reading} ${to.title}`} onClose={onClose} />
       <div className="flex-1 overflow-y-auto">
         <Section>
-          <EditField label="What connects them" value={edge.label ?? ""} onCommit={(v) => labelEdge(edge.id, v)}
-            placeholder="For example, both are about holding back" />
+          <EditField label="Word" value={relation?.word ?? ""} singleLine placeholder="For example, holding back"
+            onCommit={(word) => setRelation(edge.id, { word, explanation: relation?.explanation })} />
+          <EditField label="Explanation" value={relation?.explanation ?? ""} placeholder="How do these two connect?"
+            onCommit={(explanation) => setRelation(edge.id, { word: relation?.word ?? "", explanation })} />
+          <button className="btn self-start" onClick={suggest} disabled={suggesting} aria-busy={suggesting}>
+            <Sparkles size={14} aria-hidden /> {suggesting ? "Suggesting…" : relation ? "Suggest again" : "Suggest connection"}
+          </button>
           <div className="flex flex-col gap-1.5">
+            {fromBrief && <p className="text-[13px] text-ink-2">The project brief</p>}
             {from && <NodeChip node={from} onClick={() => setSelection([from.id])} />}
-            {to && <NodeChip node={to} onClick={() => setSelection([to.id])} />}
+            <NodeChip node={to} onClick={() => setSelection([to.id])} />
           </div>
         </Section>
-        <RunButtons onRun={onRun} title="Explore this connection" note="Runs on the link: ideas between the two ends, or one expressed through the other." selection={[edge.id]} />
+        {!fromBrief && (
+          <RunButtons onRun={onRun} title="Explore this connection" note="Runs on the connection: ideas between the two ends, or one expressed through the other." selection={[edge.id]} />
+        )}
         <Section last>
           <button className="btn btn-danger self-start" onClick={() => { hideEdge(edge.id); onClose(); }}>
-            <Trash2 size={14} aria-hidden /> Remove link
+            <Trash2 size={14} aria-hidden /> Remove connection
           </button>
+          {edge.kind === "derived_from" && !fromBrief && (
+            <p className="hint">{to.title} will no longer come from {fromTitle}, so it may move in the tree.</p>
+          )}
         </Section>
       </div>
     </PanelShell>

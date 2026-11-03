@@ -28,6 +28,8 @@ export interface Repository {
   loadProject(id: ProjectId): Promise<ProjectState | undefined>;
   saveProject(project: ProjectState): Promise<void>;
   deleteProject(id: ProjectId): Promise<void>;
+  // Adds a whole project at once, or nothing if any part fails.
+  importProject(project: ProjectState, images: ImageRecord[], events: AppEvent[]): Promise<void>;
 
   saveImage(image: NewImage, id?: ImageId): Promise<ImageId>;
   getImage(id: ImageId): Promise<ImageRecord | undefined>;

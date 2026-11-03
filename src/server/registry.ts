@@ -9,7 +9,7 @@
  */
 
 import "server-only";
-import type { ActionType } from "@/domain/types";
+import type { ActionType, Relation } from "@/domain/types";
 import type { ActionContract, ActionRequest, ActionResponse, ExpandResponse, Usage } from "@/domain/wire";
 import { getPrompt } from "@/lib/prompts";
 import { DIMENSION_MAP } from "@/lib/dimensions";
@@ -18,11 +18,13 @@ import { callImage, callText, IMAGE_MODEL, TEXT_MODEL, UsageMeter } from "./mode
 import {
   buildConceptualVariationPrompt,
   buildExpandPrompt,
+  buildRelationPrompt,
   buildVisualVariationPrompt,
   expandSchema,
+  relationSchema,
 } from "./prompts";
 
-interface ActionDef<A extends ActionType> {
+interface ActionDef<A extends keyof ActionContract> {
   model: string;
   // Names this request's log folder within the run, e.g. a dimension ID.
   item(req: ActionRequest<A>): string;
@@ -81,10 +83,27 @@ const conceptualVariations: ActionDef<"conceptual_variations"> = {
   },
 };
 
-export const registry: { [A in ActionType]: ActionDef<A> } = {
+const suggestRelation: ActionDef<"suggest_relation"> = {
+  model: TEXT_MODEL,
+  item: (req) => `${req.from?.title ?? "brief"} to ${req.to.title}`,
+  async run(req, log, meter) {
+    const { prompt, images } = buildRelationPrompt(req);
+    log.write("request.json", { model: TEXT_MODEL, imageCount: images.length, prompt });
+    const { result, rawText } = await callText<Partial<Relation>>("suggest_relation", prompt, images, relationSchema, meter);
+    log.write("response.json", { rawText });
+    const word = result.word?.trim();
+    if (!word) throw new Error("The model didn't suggest a connection.");
+    const out: Relation = { word, explanation: result.explanation?.trim() || undefined };
+    log.write("result.json", out);
+    return out;
+  },
+};
+
+export const registry: { [A in keyof ActionContract]: ActionDef<A> } = {
   expand,
   visual_variations: visualVariations,
   conceptual_variations: conceptualVariations,
+  suggest_relation: suggestRelation,
 };
 
 // A failed request still carries what it used, so its cost is counted.

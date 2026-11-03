@@ -1,7 +1,7 @@
 // Builders for new entities with fresh IDs and timestamps.
 
 import { newId, now } from "./ids";
-import type { Collection, Edge, EdgeKind, IdeaNode, ImageRef, NodeId, Origin, Region, Role, RoleDetails } from "./types";
+import type { Collection, Edge, EdgeKind, IdeaNode, ImageRef, NodeId, Origin, Region, Relation, Role, RoleDetails } from "./types";
 
 export interface NewNodeInput {
   role: Role;
@@ -19,14 +19,14 @@ export function makeEdge(
   from: NodeId,
   to: NodeId,
   kind: EdgeKind,
-  opts: { origin?: Origin; label?: string; region?: Region | "whole" } = {},
+  opts: { origin?: Origin; relation?: Relation; region?: Region | "whole" } = {},
 ): Edge {
   return {
     id: newId("edge"),
     from,
     to,
     kind,
-    label: opts.label,
+    relation: opts.relation,
     region: opts.region,
     origin: opts.origin ?? { kind: "user" },
     createdAt: now(),

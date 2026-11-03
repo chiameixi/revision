@@ -46,8 +46,8 @@ export const ACTIONS: { id: ActionType; label: string; description: string }[] =
   },
   {
     id: "conceptual_variations",
-    label: "Conceptual variations",
-    description: "Renders each selected concept, motif or link as an image. A selected image is used as the base.",
+    label: "Visualize",
+    description: "Renders each selected concept, motif or connection as an image. A selected image is used as the base.",
   },
 ];
 

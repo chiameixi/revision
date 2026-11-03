@@ -16,6 +16,6 @@ export function whyUnavailable(action: ActionType, project: ProjectState, select
     case "conceptual_variations":
       return nodes.some((n) => n.role === "concept" || n.role === "motif") || edges.length > 0
         ? null
-        : "Select a concept, motif or link to visualize.";
+        : "Select a concept, motif or connection to visualize.";
   }
 }

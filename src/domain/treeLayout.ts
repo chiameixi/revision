@@ -7,9 +7,10 @@
 // User-dragged positions (views.tree.positions) override the computed ones.
 
 import { visibleNodes, visibleParents } from "./graph";
+import { BRIEF_ID } from "./types";
 import type { IdeaNode, NodeId, ProjectState, XY } from "./types";
 
-export const BRIEF_ID = "__brief__";
+export { BRIEF_ID };
 
 export const CHIP_W = 160;
 export const NOTE_W = 140;
@@ -17,7 +18,7 @@ export const IMAGE_W = 320;
 export const IMAGE_H = 200;
 export const BRIEF_W = IMAGE_W;
 export const BRIEF_H = 200;
-const COL_GAP = 96;
+const COL_GAP = 176;  // room for a connection's word (160px at most) between image-wide columns
 const ROW_GAP = 16;
 const PAD = 48;
 const COL_STRIDE = IMAGE_W + COL_GAP;

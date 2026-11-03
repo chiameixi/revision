@@ -71,7 +71,9 @@ describe("edges", () => {
     const p = project();
     node(p, "A"); node(p, "B");
     const e = edge(p, "A", "B", "link");
-    expect(u.labelEdge(u.labelEdge(p, e.id, "tension"), e.id, "").edges[e.id].label).toBeUndefined();
+    const set = u.setRelation(p, e.id, { word: " tension ", explanation: " pulls apart " });
+    expect(set.edges[e.id].relation).toEqual({ word: "tension", explanation: "pulls apart" });
+    expect(u.setRelation(set, e.id, { word: "", explanation: " " }).edges[e.id].relation).toBeUndefined();
   });
 });
 

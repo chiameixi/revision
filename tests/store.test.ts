@@ -2,9 +2,9 @@ import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DexieRepository } from "@/db/dexie";
 import { createProjectStore } from "@/store/projectStore";
-import { ActionCallError, type ActionResult, type CallActionFn } from "@/services/generate";
-import type { ActionRequest, ActionResponse } from "@/domain/wire";
-import type { ActionType } from "@/domain/types";
+import { ActionCallError, type ActionResult, type CallActionFn, type CallSuggestFn } from "@/services/generate";
+import type { ActionRequest, ActionResponse, SuggestRelationRequest } from "@/domain/wire";
+import { BRIEF_ID, type ActionType } from "@/domain/types";
 import { treeEdges, visibleLinks, visibleNodes } from "@/domain/graph";
 
 let repo: DexieRepository;
@@ -106,7 +106,7 @@ describe("nodes", () => {
     expect(treeEdges(p()).filter((e) => e.to === copy).map((e) => e.from)).toEqual([a]);
     expect(treeEdges(p()).filter((e) => e.from === copy)).toEqual([]);
     expect(visibleLinks(p()).some((e) => e.from === copy && e.to === c)).toBe(true);
-    expect(visibleLinks(p()).find((e) => e.from === b && e.to === copy)?.label).toBe("duplicate");
+    expect(visibleLinks(p()).find((e) => e.from === b && e.to === copy)?.relation?.word).toBe("duplicate");
   });
 
   it("hides a node and drops it from the selection", () => {
@@ -127,6 +127,70 @@ describe("links", () => {
     expect(s().addLink(a, a)).toBeNull();
     expect(s().addLink(a, "ghost")).toBeNull();
     expect(visibleLinks(p())).toHaveLength(1);
+  });
+});
+
+describe("suggesting a connection", () => {
+  const usage = { model: "m", calls: 1, inputTokens: 10, outputTokens: 5, imageTokens: 0 };
+  const suggestStore = (fn: CallSuggestFn) => createProjectStore(() => repo, { saveDelayMs: 0, callSuggest: fn });
+
+  async function linked() {
+    await s().createProject("Suggest");
+    s().setBrief("Tides");
+    const a = s().addNode({ role: "concept", title: "Ebb" })!;
+    const b = s().addNode({ role: "motif", title: "Foam" })!;
+    return { a, b, edge: s().addLink(a, b)! };
+  }
+
+  it("fills an empty connection, counts the cost, and logs it as the model's", async () => {
+    const reqs: SuggestRelationRequest[] = [];
+    store = suggestStore(async (req) => { reqs.push(req); return { result: { word: "restless", explanation: "It churns." }, usage }; });
+    const { edge } = await linked();
+    await s().suggestRelation(edge);
+    expect(p().edges[edge].relation).toEqual({ word: "restless", explanation: "It churns." });
+    expect(reqs[0]).toMatchObject({ brief: "Tides", from: { title: "Ebb" }, to: { title: "Foam" } });
+    expect(p().usage?.calls).toBe(1);
+    expect(s().notices).toEqual([]);
+    await new Promise((r) => setTimeout(r, 5));
+    const events = await repo.listEvents(p().id);
+    expect(events.map((e) => [e.type, e.actor])).toContainEqual(["edge.relation_suggested", "model"]);
+  });
+
+  it("offers Undo when it replaces existing text", async () => {
+    store = suggestStore(async () => ({ result: { word: "new" } }));
+    const { edge } = await linked();
+    s().setRelation(edge, { word: "mine", explanation: "My words." });
+    await s().suggestRelation(edge);
+    expect(p().edges[edge].relation).toEqual({ word: "new" });
+    s().notices[0].action!.run();
+    expect(p().edges[edge].relation).toEqual({ word: "mine", explanation: "My words." });
+  });
+
+  it("leaves the text alone and says why when it fails, still counting the cost", async () => {
+    store = suggestStore(async () => { throw new ActionCallError("Quota reached", usage); });
+    const { edge } = await linked();
+    s().setRelation(edge, { word: "mine" });
+    await s().suggestRelation(edge);
+    expect(p().edges[edge].relation).toEqual({ word: "mine" });
+    expect(s().notices[0].message).toContain("Quota reached");
+    expect(p().usage?.calls).toBe(1);
+  });
+
+  it("works on a connection from the brief, sending no from", async () => {
+    const reqs: SuggestRelationRequest[] = [];
+    store = createProjectStore(() => repo, {
+      saveDelayMs: 0,
+      callAction: async () => ({ result: { concepts: [{ title: "Undertow", description: "d", rationale: "r" }], motifs: [] } }),
+      callSuggest: async (req) => { reqs.push(req); return { result: { word: "tidal" } }; },
+    });
+    await s().createProject("Suggest");
+    s().setBrief("Tides");
+    await s().runAction("expand", { counts: { concepts: 1, motifs: 0 } });
+    const edge = Object.values(p().edges)[0];
+    expect(edge.from).toBe(BRIEF_ID);
+    await s().suggestRelation(edge.id);
+    expect(reqs[0].from).toBeUndefined();
+    expect(p().edges[edge.id].relation).toEqual({ word: "tidal" });
   });
 });
 
@@ -205,6 +269,41 @@ describe("runs", () => {
   }
 
   const imageReply = async () => ({ imageDataUrl: PNG, text: "analysis" });
+
+  it("keeps a brief-only run's connections to the brief, without making the brief a node", async () => {
+    store = runStore(async () => ({ concepts: [{ title: "Undertow", description: "d", rationale: "r", relations: [{ input: 1, word: "tidal", explanation: "e" }] }], motifs: [] }));
+    await s().createProject("Run");
+    s().setBrief("A tide poster");
+    await s().runAction("expand", { counts: { concepts: 1, motifs: 0 } });
+    const out = visibleNodes(p()).find((n) => n.title === "Undertow")!;
+    const edges = Object.values(p().edges).filter((e) => e.to === out.id);
+    expect(edges.map((e) => [e.from, e.kind, e.relation])).toEqual([[BRIEF_ID, "derived_from", { word: "tidal", explanation: "e" }]]);
+    expect(p().nodes[BRIEF_ID]).toBeUndefined();
+    expect(treeEdges(p())).toEqual([]);
+  });
+
+  it("sends a run's connection as input, and a motif's connections back as its context", async () => {
+    const calls: Call[] = [];
+    store = runStore(async (action, req) => {
+      calls.push({ action, req: req as unknown as Record<string, unknown> });
+      return { concepts: [], motifs: [{ title: "Foam", visualQuality: "v", category: "texture", relations: [{ input: 1, word: "restless", explanation: "It churns." }] }] };
+    });
+    await s().createProject("Run");
+    const a = s().addNode({ role: "concept", title: "Ebb" })!;
+    s().setSelection([a]);
+    await s().runAction("expand", { counts: { concepts: 0, motifs: 1 } });
+    const foam = visibleNodes(p()).find((n) => n.title === "Foam")!;
+    const edge = Object.values(p().edges).find((e) => e.to === foam.id)!;
+
+    s().setSelection([edge.id]);
+    await s().runAction("expand", { counts: { concepts: 0, motifs: 1 } });
+    expect(calls[1].req.links).toEqual([expect.objectContaining({ id: edge.id, relation: { word: "restless", explanation: "It churns." } })]);
+
+    s().setSelection([foam.id]);
+    await s().runAction("expand", { counts: { concepts: 0, motifs: 1 } });
+    const inputs = calls[2].req.inputs as { details?: { howItConveysIdea?: string } }[];
+    expect(inputs[0].details?.howItConveysIdea).toBe("(Ebb) restless — It churns.");
+  });
 
   it("expands the selection into concepts and motifs with provenance, and logs start and finish", async () => {
     const calls: Call[] = [];

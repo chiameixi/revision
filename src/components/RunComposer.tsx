@@ -9,7 +9,7 @@ import { Link2, X } from "lucide-react";
 import { useProjectStore } from "@/store/projectStore";
 import { resolveSelection } from "@/domain/graph";
 import type { ActionType, IdeaNode } from "@/domain/types";
-import { DIMENSIONS } from "@/lib/dimensions";
+import { OFFERED_DIMENSIONS } from "@/lib/dimensions";
 import { DEFAULT_COUNTS, DEFAULT_IMAGES_PER_IDEA, MAX_COUNT, MAX_IMAGES_PER_IDEA } from "@/domain/wire";
 import { useImageUrl } from "./useImageUrl";
 import { ACTIONS } from "./nodeStyle";
@@ -60,14 +60,14 @@ export default function RunComposer({ action, onClose }: { action: ActionType; o
   const toggleSelected = useProjectStore((s) => s.toggleSelected);
   const runAction = useProjectStore((s) => s.runAction);
   const [instructions, setInstructions] = useState("");
-  const [dimensionIds, setDimensionIds] = useState<string[]>(DIMENSIONS.map((d) => d.id));
+  const [dimensionIds, setDimensionIds] = useState<string[]>(OFFERED_DIMENSIONS.map((d) => d.id));
   const [counts, setCounts] = useState<{ concepts: number; motifs: number }>({ ...DEFAULT_COUNTS });
   const [imagesPerIdea, setImagesPerIdea] = useState(DEFAULT_IMAGES_PER_IDEA);
 
   const meta = ACTIONS.find((a) => a.id === action)!;
   const Icon = ACTION_ICON[action];
   const { nodes, edges } = useMemo(() => resolveSelection(project, selection), [project, selection]);
-  const allDims = dimensionIds.length === DIMENSIONS.length;
+  const allDims = dimensionIds.length === OFFERED_DIMENSIONS.length;
   const ideaCount = nodes.filter((n) => n.role === "concept" || n.role === "motif").length + edges.length;
 
   // How many images this run will make, so the wait is visible up front.
@@ -111,12 +111,12 @@ export default function RunComposer({ action, onClose }: { action: ActionType; o
             {nodes.map((n) => <InputRow key={n.id} node={n} onRemove={() => toggleSelected(n.id)} />)}
             {edges.map((e) => (
               <li key={e.id} className="flex items-center gap-2.5 pl-2 pr-1 py-1.5 rounded-md border border-dashed border-ink-2">
-                <Link2 size={15} className="text-ink-2 shrink-0" aria-label="Link" />
+                <Link2 size={15} className="text-ink-2 shrink-0" aria-label="Connection" />
                 <span className="idea text-[14px] text-ink truncate flex-1">
                   {project.nodes[e.from]?.title} and {project.nodes[e.to]?.title}
-                  {e.label && <span className="text-ink-2 italic">, {e.label}</span>}
+                  {e.relation?.word && <span className="text-ink-2 italic">, {e.relation.word}</span>}
                 </span>
-                <button onClick={() => toggleSelected(e.id)} className="icon-btn" aria-label="Leave this link out of this run"><X size={14} /></button>
+                <button onClick={() => toggleSelected(e.id)} className="icon-btn" aria-label="Leave this connection out of this run"><X size={14} /></button>
               </li>
             ))}
           </ul>
@@ -140,12 +140,12 @@ export default function RunComposer({ action, onClose }: { action: ActionType; o
       )}
 
       {action === "visual_variations" && (
-        <Group title={`Arnheim dimensions (${dimensionIds.length} of ${DIMENSIONS.length})`}
-          aside={<button className="text-[13px] text-accent hover:underline" onClick={() => setDimensionIds(allDims ? [] : DIMENSIONS.map((d) => d.id))}>
+        <Group title={`Arnheim dimensions (${dimensionIds.length} of ${OFFERED_DIMENSIONS.length})`}
+          aside={<button className="text-[13px] text-accent hover:underline" onClick={() => setDimensionIds(allDims ? [] : OFFERED_DIMENSIONS.map((d) => d.id))}>
             {allDims ? "Clear all" : "Select all"}
           </button>}>
           <div className="flex flex-wrap gap-1.5" role="group" aria-label="Dimensions">
-            {DIMENSIONS.map((dim) => {
+            {OFFERED_DIMENSIONS.map((dim) => {
               const on = dimensionIds.includes(dim.id);
               return (
                 <button key={dim.id} aria-pressed={on} title={dim.summary}

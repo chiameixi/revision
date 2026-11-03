@@ -7,9 +7,9 @@
  * analysed without the app.
  */
 
-import type { AppEvent, ProjectState } from "@/domain/types";
+import type { AppEvent, ProjectState, Relation } from "@/domain/types";
 
-export const EXPORT_FORMAT = "design-workspace/study-log@1";
+export const EXPORT_FORMAT = "design-workspace/study-log@2";
 
 export interface StudyLog {
   format: typeof EXPORT_FORMAT;
@@ -19,7 +19,7 @@ export interface StudyLog {
   // What IDs in the events mean. Images are referenced by ID only.
   snapshot: {
     nodes: { id: string; role: string; title: string; body?: string; hasImage: boolean; hidden: boolean; origin: unknown; createdAt: string }[];
-    edges: { id: string; from: string; to: string; kind: string; label?: string; region?: unknown; hidden: boolean; origin: unknown }[];
+    edges: { id: string; from: string; to: string; kind: string; relation?: Relation; region?: unknown; hidden: boolean; origin: unknown }[];
     collections: { id: string; title: string; nodeIds: string[] }[];
   };
 }
@@ -38,7 +38,7 @@ export function buildStudyLog(p: ProjectState, events: AppEvent[], exportedAt: s
         hidden: !!n.hidden, origin: n.origin, createdAt: n.createdAt,
       })),
       edges: Object.values(p.edges).map((e) => ({
-        id: e.id, from: e.from, to: e.to, kind: e.kind, label: e.label, region: e.region, hidden: !!e.hidden, origin: e.origin,
+        id: e.id, from: e.from, to: e.to, kind: e.kind, relation: e.relation, region: e.region, hidden: !!e.hidden, origin: e.origin,
       })),
       collections: Object.values(p.collections).map((c) => ({ id: c.id, title: c.title, nodeIds: c.nodeIds })),
     },

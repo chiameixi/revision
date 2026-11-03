@@ -2,7 +2,7 @@
 // browser (services/generate.ts) and the server (server/registry.ts).
 // One request produces one output (or one batch of text ideas, for expand).
 
-import type { ActionType, EdgeId, NodeId, Role, RoleDetails, RunId } from "./types";
+import type { ActionType, EdgeId, NodeId, Relation, Role, RoleDetails, RunId } from "./types";
 
 // A node as sent to the server: its text, plus its image inlined if it has one.
 export interface WireNode {
@@ -14,13 +14,12 @@ export interface WireNode {
   imageDataUrl?: string;
 }
 
-// A user-drawn link sent as an input in its own right: the two ends plus
-// the user's label for what connects them.
+// A connection sent as an input in its own right: the two ends plus what connects them.
 export interface WireLink {
   id: EdgeId;
   from: WireNode;
   to: WireNode;
-  label?: string;
+  relation?: Relation;
 }
 
 interface RunMeta {
@@ -43,9 +42,16 @@ interface FromImage {
   box?: number[];
 }
 
+// How an output connects to one input. input is 1-based, in the order the inputs
+// were sent; with no inputs, 1 is the brief.
+export interface WireRelation extends Relation {
+  input: number;
+}
+
 export interface ExpandResponse {
-  concepts: ({ title: string; description: string; rationale: string } & FromImage)[];
-  motifs: ({ title: string; visualQuality: string; howItConveysIdea: string; category: string } & FromImage)[];
+  concepts: ({ title: string; description: string; rationale: string; relations?: WireRelation[] } & FromImage)[];
+  // howItConveysIdea: older responses only; it is now each relation's explanation.
+  motifs: ({ title: string; visualQuality: string; howItConveysIdea?: string; category: string; relations?: WireRelation[] } & FromImage)[];
 }
 
 export interface VisualVariationRequest extends RunMeta {
@@ -64,6 +70,13 @@ export interface ConceptualVariationRequest extends RunMeta {
   of: number;
 }
 
+// Asks the model to write one connection's word and explanation. Not a run: it makes
+// no nodes, so it isn't an ActionType.
+export interface SuggestRelationRequest extends RunMeta {
+  from?: WireNode;           // absent: the connection starts at the brief
+  to: WireNode;
+}
+
 export interface ImageResponse {
   imageDataUrl: string;
   text: string;
@@ -73,10 +86,11 @@ export interface ActionContract {
   expand: { req: ExpandRequest; res: ExpandResponse };
   visual_variations: { req: VisualVariationRequest; res: ImageResponse };
   conceptual_variations: { req: ConceptualVariationRequest; res: ImageResponse };
+  suggest_relation: { req: SuggestRelationRequest; res: Relation };
 }
 
-export type ActionRequest<A extends ActionType = ActionType> = ActionContract[A]["req"];
-export type ActionResponse<A extends ActionType = ActionType> = ActionContract[A]["res"];
+export type ActionRequest<A extends keyof ActionContract = ActionType> = ActionContract[A]["req"];
+export type ActionResponse<A extends keyof ActionContract = ActionType> = ActionContract[A]["res"];
 
 // Tokens one request used, summed over retries. Failed requests still report
 // what they used, since those calls are billed too.
@@ -89,7 +103,7 @@ export interface Usage {
 }
 
 // What the route returns: the result, or an error message.
-export type ActionReply<A extends ActionType = ActionType> =
+export type ActionReply<A extends keyof ActionContract = ActionType> =
   | { result: ActionResponse<A>; usage?: Usage }
   | { error: string; usage?: Usage };
 

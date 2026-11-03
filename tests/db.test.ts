@@ -1,5 +1,6 @@
 import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it } from "vitest";
+import Dexie from "dexie";
 import { DexieRepository } from "@/db/dexie";
 import { project, node } from "./helpers";
 
@@ -8,6 +9,31 @@ let r: DexieRepository;
 let count = 0;
 beforeEach(() => {
   r = new DexieRepository(`test_${count++}`);
+});
+
+describe("upgrading from version 1", () => {
+  it("moves edge labels to relation.word and keeps everything else", async () => {
+    const name = `old_${count++}`;
+    const old = new Dexie(name);
+    old.version(1).stores({ projects: "id, updatedAt", images: "id", events: "++seq, id, projectId" });
+    const base = { from: "a", to: "b", kind: "link", origin: { kind: "user" }, createdAt: "t" };
+    await old.table("projects").put({
+      ...project(), id: "p",
+      edges: {
+        labelled: { ...base, id: "labelled", label: " tension " },
+        empty: { ...base, id: "empty", label: "  " },
+        plain: { ...base, id: "plain", kind: "derived_from", region: "whole" },
+      },
+    });
+    old.close();
+
+    const edges = (await new DexieRepository(name).loadProject("p"))!.edges;
+    expect(edges.labelled.relation).toEqual({ word: "tension" });
+    expect(edges.labelled).not.toHaveProperty("label");
+    expect(edges.empty.relation).toBeUndefined();
+    expect(edges.empty).not.toHaveProperty("label");
+    expect(edges.plain).toMatchObject({ kind: "derived_from", region: "whole" });
+  });
 });
 
 describe("projects", () => {

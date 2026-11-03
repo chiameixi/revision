@@ -1,16 +1,17 @@
 "use client";
 
-// Landing page: every project as a card, newest first. Create, open, rename
-// and delete. Deleting asks for confirmation on the card (no browser dialogs).
+// Landing page: every project as a card, newest first. Create, upload, open,
+// rename and delete. Deleting asks for confirmation on the card (no browser dialogs).
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Download, Plus } from "lucide-react";
+import { Download, Plus, Upload } from "lucide-react";
 import { useProjectStore } from "@/store/projectStore";
 import type { ProjectSummary } from "@/domain/types";
 import { aboutUsd, PRICES_CHECKED } from "@/domain/pricing";
 import { downloadJson, exportFileName } from "@/services/exportLog";
+import { projectFileName } from "@/services/projectFile";
 import { useImageUrl } from "./useImageUrl";
 import { Menu } from "./ui";
 
@@ -30,6 +31,7 @@ function ProjectCard({ p }: { p: ProjectSummary }) {
   const renameProject = useProjectStore((s) => s.renameProject);
   const deleteProject = useProjectStore((s) => s.deleteProject);
   const exportStudyLog = useProjectStore((s) => s.exportStudyLog);
+  const exportProjectFile = useProjectStore((s) => s.exportProjectFile);
   const cover = useImageUrl(p.coverImageId);
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState(p.title);
@@ -85,6 +87,10 @@ function ProjectCard({ p }: { p: ProjectSummary }) {
         <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
           <Menu label={`Actions for ${p.title}`} items={[
             { label: "Rename", onSelect: () => setRenaming(true) },
+            { label: "Export project (with images)", onSelect: async () => {
+              const file = await exportProjectFile(p.id);
+              if (file) downloadJson(file, projectFileName(p.title, new Date()));
+            } },
             { label: "Export study log (JSON)", onSelect: async () => {
               const log = await exportStudyLog(p.id);
               if (log) downloadJson(log, exportFileName(p.title, new Date()));
@@ -102,9 +108,13 @@ export default function ProjectsGrid() {
   const projects = useProjectStore((s) => s.projects);
   const loadProjects = useProjectStore((s) => s.loadProjects);
   const createProject = useProjectStore((s) => s.createProject);
+  const uploadProject = useProjectStore((s) => s.uploadProject);
   const exportAllStudyLogs = useProjectStore((s) => s.exportAllStudyLogs);
   const [loaded, setLoaded] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const totals = projects.reduce((t, p) => ({ calls: t.calls + p.calls, costUsd: t.costUsd + p.costUsd }), { calls: 0, costUsd: 0 });
 
   useEffect(() => { loadProjects().then(() => setLoaded(true)); }, [loadProjects]);
@@ -122,6 +132,18 @@ export default function ProjectsGrid() {
     setCreating(true);
     const id = await createProject();
     router.push(`/p/${id}`);
+  }
+
+  async function upload(file: File) {
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const id = await uploadProject(await file.text());
+      router.push(`/p/${id}`);
+    } catch (err) {
+      setUploading(false);
+      setUploadError(err instanceof Error ? err.message : "Couldn't upload this project.");
+    }
   }
 
   return (
@@ -147,12 +169,29 @@ export default function ProjectsGrid() {
           )}
         </header>
 
+        {uploadError && (
+          <p role="alert" className="rounded-md bg-danger-soft px-3 py-2 text-[13px] text-danger">
+            {uploadError}
+          </p>
+        )}
+
         <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(260px,1fr))]">
           <button onClick={newProject} disabled={creating}
             className="min-h-[280px] rounded-lg border-2 border-dashed border-line-strong text-ink-2 hover:border-ink-2 hover:text-ink hover:bg-surface transition-colors flex flex-col items-center justify-center gap-2 disabled:opacity-50">
             <Plus size={28} strokeWidth={1.5} aria-hidden />
             <span className="text-[14px] font-medium">{creating ? "Creating…" : "New project"}</span>
           </button>
+          <button onClick={() => fileInput.current?.click()} disabled={uploading}
+            className="min-h-[280px] rounded-lg border-2 border-dashed border-line-strong text-ink-2 hover:border-ink-2 hover:text-ink hover:bg-surface transition-colors flex flex-col items-center justify-center gap-2 disabled:opacity-50">
+            <Upload size={28} strokeWidth={1.5} aria-hidden />
+            <span className="text-[14px] font-medium">{uploading ? "Uploading…" : "Upload project"}</span>
+          </button>
+          <input ref={fileInput} type="file" accept=".json,application/json" className="hidden" aria-hidden tabIndex={-1}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = ""; // so choosing the same file again still fires
+              if (file) upload(file);
+            }} />
           {projects.map((p) => <ProjectCard key={p.id} p={p} />)}
         </div>
       </div>

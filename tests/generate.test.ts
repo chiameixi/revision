@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { outputsFor, planRun, readableError, toRegion, type Job, type Selection } from "@/services/generate";
-import type { IdeaNode } from "@/domain/types";
+import { BRIEF_ID, type IdeaNode } from "@/domain/types";
 import type { ActionRequest } from "@/domain/wire";
+import { DIMENSION_MAP, OFFERED_DIMENSIONS } from "@/lib/dimensions";
 
 const PNG = "data:image/png;base64,iVBORw0KGgo=";
 
@@ -53,6 +54,16 @@ describe("planRun: visual variations", () => {
     expect(js[0].label).toBe("Balance variation");
   });
 
+  it("uses only the offered dimensions by default", () => {
+    const js = jobs(planRun("visual_variations", sel([img]), "b", images, "r1"));
+    expect(js.map((j) => (j.req as ActionRequest<"visual_variations">).dimensionId)).toEqual(["balance", "shape", "light", "color", "dynamics"]);
+  });
+
+  it("keeps the labels of hidden dimensions, for nodes already made with them", () => {
+    expect(DIMENSION_MAP.form).toMatchObject({ label: "Form", hidden: true });
+    expect(OFFERED_DIMENSIONS.map((d) => d.id)).not.toContain("form");
+  });
+
   it("needs an image and at least one dimension", () => {
     expect(planRun("visual_variations", sel([concept]), "b", images, "r1").ok).toBe(false);
     expect(planRun("visual_variations", sel([img]), "b", images, "r1", { dimensionIds: [] }).ok).toBe(false);
@@ -94,6 +105,30 @@ describe("outputsFor", () => {
     expect(out.images).toEqual([]);
   });
 
+  it("puts each input's relation on its edge, ignoring bad entries", () => {
+    const [job] = jobs(planRun("expand", sel([concept, img]), "b", images, "r1"));
+    const out = outputsFor(job, {
+      concepts: [],
+      motifs: [{ title: "Foam", visualQuality: "v", category: "texture", relations: [
+        { input: 2, word: " froth ", explanation: " Churning. " },
+        { input: 2, word: "second", explanation: "ignored" },
+        { input: 9, word: "bad", explanation: "" },
+        { input: 1, word: " ", explanation: "no word" },
+      ] }],
+    }, "r1");
+    const rel = (from: string) => out.edges.find((e) => e.from === from)!.relation;
+    expect(rel("img")).toEqual({ word: "froth", explanation: "Churning." });
+    expect(rel("Ebb")).toBeUndefined();
+    expect(out.edges.every((e) => e.kind === "derived_from")).toBe(true);
+  });
+
+  it("connects a brief-only expand's outputs to the brief", () => {
+    const [job] = jobs(planRun("expand", sel([]), "Tides", images, "r1"));
+    expect(job.parents).toEqual([BRIEF_ID]);
+    const out = outputsFor(job, { concepts: [{ title: "A", description: "", rationale: "", relations: [{ input: 1, word: "tidal", explanation: "e" }] }], motifs: [] }, "r1");
+    expect(out.edges.map((e) => [e.from, e.relation])).toEqual([[BRIEF_ID, { word: "tidal", explanation: "e" }]]);
+  });
+
   it("stores a variation's image separately and records the dimension", () => {
     const [job] = jobs(planRun("visual_variations", sel([img]), "b", images, "r1", { dimensionIds: ["balance"] }));
     const out = outputsFor(job, { imageDataUrl: PNG, text: "stronger balance" }, "r1");
@@ -125,14 +160,14 @@ describe("readableError", () => {
 });
 
 describe("links", () => {
-  const link = { id: "e1", from: "Ebb", to: "Waves", kind: "link" as const, label: "both pull back", origin: { kind: "user" as const }, createdAt: "t" };
+  const link = { id: "e1", from: "Ebb", to: "Waves", kind: "link" as const, relation: { word: "both pull back" }, origin: { kind: "user" as const }, createdAt: "t" };
   const linkSel = { edge: link, from: concept, to: motif };
 
   it("expand sends the link itself, its ends as inputs, and records the link on outputs", () => {
     const [job] = jobs(planRun("expand", { nodes: [], links: [linkSel] }, "b", images, "r1"));
     const req = job.req as ActionRequest<"expand">;
     expect(req.inputs.map((x) => x.id)).toEqual(["Ebb", "Waves"]);
-    expect(req.links).toEqual([{ id: "e1", from: expect.objectContaining({ id: "Ebb" }), to: expect.objectContaining({ id: "Waves" }), label: "both pull back" }]);
+    expect(req.links).toEqual([{ id: "e1", from: expect.objectContaining({ id: "Ebb" }), to: expect.objectContaining({ id: "Waves" }), relation: { word: "both pull back" } }]);
     const out = outputsFor(job, { concepts: [{ title: "Retreat", description: "", rationale: "" }], motifs: [] }, "r1");
     expect(out.nodes[0].origin).toMatchObject({ params: { sourceEdgeId: "e1" } });
     expect(out.edges.map((e) => e.from)).toEqual(["Ebb", "Waves"]);

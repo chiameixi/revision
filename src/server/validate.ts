@@ -1,13 +1,15 @@
 // Checks request bodies for POST /api/actions/[id] before any model call.
 // Pure, so it's unit-tested. Throws RequestError, which the route turns into a 400.
 
-import type { ActionType, Role } from "@/domain/types";
+import type { Role } from "@/domain/types";
 import {
   MAX_COUNT,
   MAX_IMAGES_PER_IDEA,
+  type ActionContract,
   type ActionRequest,
   type ConceptualVariationRequest,
   type ExpandRequest,
+  type SuggestRelationRequest,
   type VisualVariationRequest,
   type WireLink,
   type WireNode,
@@ -51,7 +53,11 @@ function link(v: unknown, name: string): WireLink {
   if (typeof v.id !== "string") fail(`${name} needs an id.`);
   node(v.from, `${name}.from`);
   node(v.to, `${name}.to`);
-  if (v.label !== undefined && typeof v.label !== "string") fail(`${name}.label must be text.`);
+  if (v.relation !== undefined) {
+    const r = v.relation;
+    if (!isObj(r) || typeof r.word !== "string") fail(`${name}.relation needs a word.`);
+    if (r.explanation !== undefined && typeof r.explanation !== "string") fail(`${name}.relation.explanation must be text.`);
+  }
   return v as unknown as WireLink;
 }
 
@@ -101,17 +107,25 @@ function conceptualVariations(b: Record<string, unknown>): ConceptualVariationRe
   return b as unknown as ConceptualVariationRequest;
 }
 
-const validators: { [A in ActionType]: (b: Record<string, unknown>) => ActionRequest<A> } = {
+function suggestRelation(b: Record<string, unknown>): SuggestRelationRequest {
+  meta(b);
+  if (b.from !== undefined) node(b.from, "from");
+  node(b.to, "to");
+  return b as unknown as SuggestRelationRequest;
+}
+
+const validators: { [A in keyof ActionContract]: (b: Record<string, unknown>) => ActionRequest<A> } = {
   expand,
   visual_variations: visualVariations,
   conceptual_variations: conceptualVariations,
+  suggest_relation: suggestRelation,
 };
 
-export function isActionType(id: string): id is ActionType {
+export function isActionType(id: string): id is keyof ActionContract {
   return id in validators;
 }
 
-export function validateRequest<A extends ActionType>(action: A, body: unknown): ActionRequest<A> {
+export function validateRequest<A extends keyof ActionContract>(action: A, body: unknown): ActionRequest<A> {
   if (!isObj(body)) fail("The request body must be a JSON object.");
   return validators[action](body) as ActionRequest<A>;
 }

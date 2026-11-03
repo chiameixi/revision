@@ -6,10 +6,18 @@
  */
 
 import Dexie, { type Table } from "dexie";
-import type { AppEvent, ImageId, ImageRecord, ProjectId, ProjectState, ProjectSummary } from "@/domain/types";
+import type { AppEvent, Edge, ImageId, ImageRecord, ProjectId, ProjectState, ProjectSummary } from "@/domain/types";
 import { newId, now } from "@/domain/ids";
 import { summarize } from "@/domain/graph";
 import type { NewEvent, NewImage, Repository } from "./index";
+
+function migrateEdgeLabels(project: ProjectState) {
+  for (const edge of Object.values(project.edges) as (Edge & { label?: string })[]) {
+    const word = edge.label?.trim();
+    if (word && !edge.relation) edge.relation = { word };
+    delete edge.label;
+  }
+}
 
 class WorkspaceDB extends Dexie {
   projects!: Table<ProjectState, ProjectId>;
@@ -25,6 +33,8 @@ class WorkspaceDB extends Dexie {
       images: "id",
       events: "++seq, id, projectId",
     });
+    // v2: an edge's label became relation.word.
+    this.version(2).upgrade((tx) => tx.table("projects").toCollection().modify(migrateEdgeLabels));
   }
 }
 
@@ -54,6 +64,14 @@ export class DexieRepository implements Repository {
     await this.db.transaction("rw", this.db.projects, this.db.events, async () => {
       await this.db.projects.delete(id);
       await this.db.events.where("projectId").equals(id).delete();
+    });
+  }
+
+  async importProject(project: ProjectState, images: ImageRecord[], events: AppEvent[]) {
+    await this.db.transaction("rw", this.db.projects, this.db.images, this.db.events, async () => {
+      await this.db.images.bulkPut(images);
+      await this.db.events.bulkAdd(events);
+      await this.db.projects.add(project);
     });
   }
 

@@ -67,19 +67,31 @@ export interface IdeaNode {
   createdAt: string;
 }
 
-// derived_from: provenance made by runs (from = input, to = output). Always points forward
-//   in time, so it never loops; that is why it alone sets tree depth.
-// link: a connection the user drew, optionally labelled; can be selected and expanded.
-//   Drawn on top of the tree without moving anything.
+// The brief as one end of an edge. It isn't in `nodes` (its text is ProjectState.brief),
+// but a run on the brief alone draws edges from it like from any input.
+export const BRIEF_ID = "__brief__";
+
+// What a connection says about how its two ends connect. The reading ("embodied as",
+// "connotes"…) isn't stored: it comes from the roles at each end (see relations.ts).
+export interface Relation {
+  word: string;          // 1–3 words: the gist, e.g. "restlessness"
+  explanation?: string;  // 1–2 sentences: how the two connect
+}
+
+// Where an edge came from. Either kind can carry a relation, and both can be
+// selected and expanded; the UI calls both "connections".
+// derived_from: made by a run (from = input or BRIEF_ID, to = output). Always points
+//   forward in time, so it never loops; that is why it alone sets tree depth.
+// link: drawn by the user between any two nodes. Drawn on top of the tree without moving anything.
 export type EdgeKind = "derived_from" | "link";
 
 // A connection between two nodes. Holds only their IDs, never copies of them.
 export interface Edge {
   id: EdgeId;
-  from: NodeId;
+  from: NodeId;              // a node ID, or BRIEF_ID for derived_from
   to: NodeId;
   kind: EdgeKind;
-  label?: string;
+  relation?: Relation;
   region?: Region | "whole"; // derived_from from an image: where in it the output came from
   hidden?: boolean;
   origin: Origin;

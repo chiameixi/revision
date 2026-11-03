@@ -17,6 +17,7 @@ export interface Dimension {
   id: string;
   label: string;
   summary: string;
+  hidden?: boolean;  // not offered for new runs; nodes already made with it keep their label
 }
 
 export const DIMENSIONS: Dimension[] = [
@@ -37,18 +38,21 @@ export const DIMENSIONS: Dimension[] = [
     label: "Form",
     summary:
       "roundness vs sharpness, strength vs frailty, harmony vs discord — the purely visual qualities that symbolically read as images of the human condition",
+    hidden: true,
   },
   {
     id: "growth",
     label: "Growth",
     summary:
       "progression from general to specific forms, how complexity unfolds, visual thinking that reflects something about the observer",
+    hidden: true,
   },
   {
     id: "space",
     label: "Space",
     summary:
       "spatial composition, depth cues, figure-ground relationships, and how elements occupy and define the canvas",
+    hidden: true,
   },
   {
     id: "light",
@@ -73,14 +77,18 @@ export const DIMENSIONS: Dimension[] = [
     label: "Sense of Movement",
     summary:
       "how the composition conveys a sense of motion, rhythm, and flow, guiding the viewer's eye through the artwork",
+    hidden: true,
   },
   {
     id: "expression",
     label: "Expression",
     summary:
       "overall expressive quality and emotional resonance conveyed by the composition as a unified whole",
+    hidden: true,
   },
 ];
+
+export const OFFERED_DIMENSIONS = DIMENSIONS.filter((d) => !d.hidden);
 
 export const DIMENSION_MAP: Record<string, Dimension> = Object.fromEntries(
   DIMENSIONS.map((d) => [d.id, d])

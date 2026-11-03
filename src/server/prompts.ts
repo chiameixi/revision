@@ -12,9 +12,11 @@
 
 import { Type } from "@google/genai";
 import type { Role } from "@/domain/types";
+import { readingFor } from "@/domain/relations";
 import type {
   ConceptualVariationRequest,
   ExpandRequest,
+  SuggestRelationRequest,
   VisualVariationRequest,
   WireLink,
   WireNode,
@@ -75,14 +77,33 @@ const images = (nodes: WireNode[]) => nodes.flatMap((n) => (n.imageDataUrl ? [n.
 
 const TITLE_RULE = `title (2–5 words: plain, direct label for the idea — no poetic flourishes, no metaphors, no adjective stacking; e.g. "Controlled Uncertainty" not "Whispers of Elegant Tension")`;
 
+// Reads as a sentence: "Ebb" (concept) embodied as "Foam" (motif): restlessness — <explanation>
 export function describeLink(l: WireLink): string {
-  return `"${l.from.title}" (${l.from.role}) ↔ "${l.to.title}" (${l.to.role})${l.label?.trim() ? ` — the designer sees them as connected by: ${l.label.trim()}` : ""}`;
+  const { reading } = readingFor(l.from.role, l.to.role);
+  const word = l.relation?.word.trim();
+  const explanation = l.relation?.explanation?.trim();
+  return `"${l.from.title}" (${roleName(l.from.role)}) ${reading} "${l.to.title}" (${roleName(l.to.role)})${
+    word ? `: ${word}` : ""}${explanation ? ` — ${explanation}` : ""}`;
 }
 
 function linksSection(links: WireLink[] = []): string {
   if (!links.length) return "";
-  return `\nConnections to explore (the designer drew these between two ideas):\n${links.map((l, i) => `${i + 1}. ${describeLink(l)}`).join("\n")}
+  return `\nConnections to explore (between two ideas in the designer's workspace):\n${links.map((l, i) => `${i + 1}. ${describeLink(l)}`).join("\n")}
 For these, generate ideas that sit between the two ends — what links them, what combining them would mean, what a third idea bridging them could be — rather than ideas about either end alone.\n`;
+}
+
+// The model says "image"; the code says "visual".
+const roleName = (r: Role) => (r === "visual" ? "image" : r);
+
+// How each output connects to each input (or to the brief, with no inputs). The question
+// depends on the pair of roles (see domain/relations.ts), so it's given per input.
+function relationsField(inputs: WireNode[], to: Role): string {
+  const ends = inputs.length
+    ? inputs.map((n, i) => `  ${i + 1}. "${n.title}" (${roleName(n.role)}): ${readingFor(n.role, to).question}`)
+    : [`  1. The design brief: ${readingFor("brief", to).question}`];
+  return `
+- relations (exactly one entry per input below, each with: input (its number), word (1–3 words: the gist of how this ${roleName(to)} connects to that input), explanation (1–2 sentences answering that input's question)). The inputs, each with its question:
+${ends.join("\n")}`;
 }
 
 // Asked only when images are sent, so outputs can point back to where they came from.
@@ -112,7 +133,7 @@ export function buildExpandPrompt(
       : "abstract concept directions — core design tensions, underlying values, emotional registers, and meaningful ambiguities"}. Each concept has:
 - ${TITLE_RULE}
 - description (1–2 sentences: the abstract design intention — its meaning, tension, or emotional register — not a prescription for colors, shapes, or layouts)
-- rationale (1–2 sentences: why this conceptual direction is worth pursuing)${regions}
+- rationale (1–2 sentences: why this conceptual direction is worth pursuing)${relationsField(req.inputs, "concept")}${regions}
 ${concepts === 1
   ? "Generate exactly 1 concept that names an idea, not a visual recipe."
   : `Generate exactly ${concepts} distinct concepts that name ideas, not visual recipes.`}`);
@@ -123,8 +144,7 @@ ${concepts === 1
       : "reusable visual elements or qualities that could carry these ideas visually"}. Each motif has:
 - title (2–5 words)
 - visualQuality (1–2 sentences: what it looks like, how it manifests visually)
-- howItConveysIdea (1–2 sentences: what concept, feeling, or meaning this quality communicates)
-- category (one of: color, texture, form, composition, subject, style, typography)${regions}
+- category (one of: color, texture, form, composition, subject, style, typography)${relationsField(req.inputs, "motif")}${regions}
 ${motifs === 1
   ? "Generate exactly 1 motif."
   : `Generate exactly ${motifs} distinct motifs covering different visual dimensions.`}`);
@@ -145,6 +165,14 @@ export function expandSchema(counts: ExpandRequest["counts"], withRegions = fals
   const regionProps = withRegions
     ? { sourceImage: { type: Type.INTEGER }, box: { type: Type.ARRAY, items: { type: Type.NUMBER } } }
     : {};
+  const relations = {
+    type: Type.ARRAY,
+    items: {
+      type: Type.OBJECT,
+      required: ["input", "word", "explanation"],
+      properties: { input: { type: Type.INTEGER }, word: { type: Type.STRING }, explanation: { type: Type.STRING } },
+    },
+  };
   const properties: Record<string, unknown> = {};
   const required: string[] = [];
   if (counts.concepts > 0) {
@@ -153,8 +181,8 @@ export function expandSchema(counts: ExpandRequest["counts"], withRegions = fals
       type: Type.ARRAY,
       items: {
         type: Type.OBJECT,
-        required: ["title", "description", "rationale"],
-        properties: { title: { type: Type.STRING }, description: { type: Type.STRING }, rationale: { type: Type.STRING }, ...regionProps },
+        required: ["title", "description", "rationale", "relations"],
+        properties: { title: { type: Type.STRING }, description: { type: Type.STRING }, rationale: { type: Type.STRING }, relations, ...regionProps },
       },
     };
   }
@@ -164,12 +192,12 @@ export function expandSchema(counts: ExpandRequest["counts"], withRegions = fals
       type: Type.ARRAY,
       items: {
         type: Type.OBJECT,
-        required: ["title", "visualQuality", "howItConveysIdea", "category"],
+        required: ["title", "visualQuality", "category", "relations"],
         properties: {
           title: { type: Type.STRING },
           visualQuality: { type: Type.STRING },
-          howItConveysIdea: { type: Type.STRING },
           category: { type: Type.STRING },
+          relations,
           ...regionProps,
         },
       },
@@ -177,6 +205,39 @@ export function expandSchema(counts: ExpandRequest["counts"], withRegions = fals
   }
   return { type: Type.OBJECT, required, properties };
 }
+
+// ── Suggest a connection ──────────────────────────────────────────────────────
+
+export function buildRelationPrompt(req: SuggestRelationRequest): BuiltPrompt {
+  const { from, to } = req;
+  const { reading, question } = readingFor(from?.role ?? "brief", to.role);
+  const withImages = [from, to].filter((n): n is WireNode => !!n?.imageDataUrl);
+  const imageLine = withImages.length
+    ? `\nAttached image(s), in this order: ${withImages.map((n, i) => `${i + 1}. "${n.title}"`).join(", ")}.\n`
+    : "";
+  const prompt = `You are helping a designer see how two things in their workspace connect.
+
+Design brief: ${req.brief || "(none provided)"}
+
+From: ${from ? describeNode(from) : "The design brief"}
+
+To: ${describeNode(to)}
+${imageLine}
+This connection reads: ${from ? `"${from.title}"` : "the design brief"} ${reading} "${to.title}".
+
+${question}
+
+Return a JSON object with:
+- word (1–3 words: the gist of how they connect)
+- explanation (1–2 sentences answering the question)`;
+  return { prompt, images: images(withImages) };
+}
+
+export const relationSchema = {
+  type: Type.OBJECT,
+  required: ["word", "explanation"],
+  properties: { word: { type: Type.STRING }, explanation: { type: Type.STRING } },
+};
 
 // ── Visual variations ─────────────────────────────────────────────────────────
 
